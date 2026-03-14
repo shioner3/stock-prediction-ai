@@ -5,8 +5,8 @@ import numpy as np
 # 設定
 # =========================
 
-DATA_PATH = "data/japan_stock.parquet"
-SAVE_PATH = "data/ml_dataset.parquet"
+DATA_PATH = "japan_stock.parquet"
+SAVE_PATH = "ml_dataset.parquet"
 
 HOLD_DAYS = 5
 
