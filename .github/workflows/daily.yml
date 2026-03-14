@@ -1,6 +1,6 @@
 name: Daily Stock AI
 
-# 毎朝 7:00 JST に実行（UTC 22:00 前日）
+# 毎朝 7:00 JST に自動実行（UTC 22:00 前日）
 on:
   schedule:
     - cron: '0 22 * * 1-5'  # 月〜金
@@ -14,7 +14,7 @@ jobs:
       # 1️⃣ リポジトリをチェックアウト
       - uses: actions/checkout@v3
 
-      # 2️⃣ デバッグ用：ワークスペース確認
+      # 2️⃣ デバッグ用：ワークスペースとファイル確認
       - name: Show workspace
         run: pwd
 
@@ -27,13 +27,14 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 4️⃣ ライブラリインストール（requirements.txt から）
+      # 4️⃣ ライブラリインストール
       - name: Install libraries
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
       # 5️⃣ run_daily.py 実行
+      # working-directory を指定して安全に実行
       - name: Run AI pipeline
         working-directory: ${{ github.workspace }}
         run: python run_daily.py
