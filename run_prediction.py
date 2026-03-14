@@ -98,17 +98,17 @@ X_today = today[FEATURES]
 
 today["Pred"] = model.predict(X_today)
 
-# ランク化
-today["Pred"] = today["Pred"].rank(pct=True)
+# 順位化
+today["Rank"] = today["Pred"].rank(ascending=False)
 
 
 # =========================
 # 上位銘柄抽出
 # =========================
 
-picks = today.nlargest(TOP_N, "Pred")
+picks = today.nsmallest(TOP_N, "Rank")
 
-picks = picks[["Ticker", "Pred"]]
+picks = picks[["Ticker", "Rank"]]
 
 
 # =========================
