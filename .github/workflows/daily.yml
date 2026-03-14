@@ -26,4 +26,5 @@ jobs:
           pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
 
       - name: Run AI pipeline
-        run: python stock-prediction-ai/run_daily.py
+        working-directory: ${{ github.workspace }}/stock-prediction-ai
+        run: python run_daily.py
