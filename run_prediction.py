@@ -101,15 +101,32 @@ today["Pred"] = model.predict(X_today)
 # 順位化
 today["Rank"] = today["Pred"].rank(ascending=False)
 
+# =========================
+# 銘柄名読み込み
+# =========================
+DATA_J_PATH = os.path.join(BASE_DIR, "data_j.csv")
+df_info = pd.read_csv(DATA_J_PATH, dtype=str)
+
+# Ticker → 銘柄名のマッピング
+ticker_to_name = dict(zip(df_info["コード"].str.strip(), df_info["銘柄名"].str.strip()))
 
 # =========================
 # 上位銘柄抽出
 # =========================
 
-picks = today.nsmallest(TOP_N, "Rank")
+# 上位 TOP_N 銘柄を Pred 順に抽出
+picks = today.nsmallest(TOP_N, "Rank").copy()
 
-picks = picks[["Ticker", "Rank"]]
+# 「コード」と「銘柄名」を追加
+# Ticker は元々 ".T" 付きになっているので除去してキーにする
+picks["コード"] = picks["Ticker"].str.replace(".T", "", regex=False)
+picks["銘柄名"] = picks["コード"].map(ticker_to_name)
 
+# Pred を順位に変換（1位、2位…）
+picks["PredRank"] = range(1, len(picks) + 1)
+
+# 表示列を整理
+picks = picks[["コード", "銘柄名", "PredRank"]]
 
 # =========================
 # 出力
@@ -125,3 +142,4 @@ picks.to_csv(OUTPUT_PATH, index=False)
 
 print()
 print("Saved:", OUTPUT_PATH)
+
