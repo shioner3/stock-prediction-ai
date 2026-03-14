@@ -2,8 +2,8 @@ name: Daily Stock AI
 
 on:
   schedule:
-    - cron: '0 22 * * 1-5'  # UTC 22:00 → JST 7:00 に平日実行
-  workflow_dispatch:        # 手動実行も可能
+    - cron: '0 22 * * 1-5'  # JST 7:00
+  workflow_dispatch:
 
 jobs:
   run-ai:
@@ -22,13 +22,14 @@ jobs:
           pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
 
       - name: Run AI pipeline
+        working-directory: ${{ github.workspace }}
         run: python run_daily.py
 
       - name: Check output
         run: |
-          if [ -f "today_picks.csv" ]; then
+          if [ -f "${{ github.workspace }}/today_picks.csv" ]; then
             echo "today_picks.csv が生成されました"
-            ls -l today_picks.csv
+            ls -l "${{ github.workspace }}/today_picks.csv"
           else
             echo "today_picks.csv が生成されませんでした"
             exit 1
