@@ -1,30 +1,50 @@
 name: Daily Stock AI
 
+# 毎朝 7:00 JST に実行（UTC 22:00 前日）
 on:
   schedule:
-    - cron: '0 22 * * 1-5'  # JST 7:00
-  workflow_dispatch:
+    - cron: '0 22 * * 1-5'  # 月〜金
+  workflow_dispatch:        # 手動実行も可能
 
 jobs:
   run-ai:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ リポジトリをチェックアウト
       - uses: actions/checkout@v3
 
-      # デバッグ用：ディレクトリ構造確認
-      - name: List repository files recursively
+      # 2️⃣ デバッグ用：ワークスペース確認
+      - name: Show workspace
+        run: pwd
+
+      - name: List files recursively
         run: ls -R
 
+      # 3️⃣ Python セットアップ
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
+      # 4️⃣ ライブラリインストール（requirements.txt から）
       - name: Install libraries
         run: |
-          pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
+      # 5️⃣ run_daily.py 実行
       - name: Run AI pipeline
-        working-directory: ${{ github.workspace }}/stock-prediction-ai
+        working-directory: ${{ github.workspace }}
         run: python run_daily.py
+
+      # 6️⃣ 出力ファイル確認
+      - name: Check output
+        run: |
+          if [ -f "${{ github.workspace }}/today_picks.csv" ]; then
+            echo "✅ today_picks.csv が生成されました"
+            ls -l "${{ github.workspace }}/today_picks.csv"
+          else
+            echo "❌ today_picks.csv が生成されませんでした"
+            exit 1
+          fi
