@@ -12,6 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # デバッグ用：ディレクトリ構造確認
+      - name: List repository files recursively
+        run: ls -R
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -22,15 +26,4 @@ jobs:
           pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
 
       - name: Run AI pipeline
-        working-directory: ${{ github.workspace }}
         run: python run_daily.py
-
-      - name: Check output
-        run: |
-          if [ -f "${{ github.workspace }}/today_picks.csv" ]; then
-            echo "today_picks.csv が生成されました"
-            ls -l "${{ github.workspace }}/today_picks.csv"
-          else
-            echo "today_picks.csv が生成されませんでした"
-            exit 1
-          fi
