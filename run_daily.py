@@ -11,7 +11,7 @@ def run_script(script_name):
 run_script("download_prices.py")
 
 # 2️⃣ 初回だけ Parquet を作る
-parquet_path = "data/japan_stock.parquet"
+parquet_path = "japan_stock.parquet"
 if not os.path.exists(parquet_path):
     print("Parquet file not found. Creating from CSV...")
     df_csv = pd.read_csv("data_j.csv", dtype=str)
