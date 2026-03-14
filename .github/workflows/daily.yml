@@ -2,7 +2,7 @@ name: Daily Stock AI
 
 on:
   schedule:
-    - cron: '0 22 * * 1-5'
+    - cron: '0 22 * * 1-5'  # 日本時間 22:00 に平日実行
   workflow_dispatch:
 
 jobs:
@@ -10,19 +10,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ リポジトリをチェックアウト
       - uses: actions/checkout@v3
 
+      # 2️⃣ 現在のディレクトリとファイル一覧を確認
+      - name: Show current directory
+        run: pwd
+
+      - name: List all files
+        run: ls -R
+
+      # 3️⃣ Python セットアップ
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
+      # 4️⃣ 必要ライブラリをインストール
       - name: Install libraries
         run: |
           pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn
 
+      # 5️⃣ run_daily.py が存在するか確認
       - name: Check run_daily.py exists
-        run: ls -l run_daily.py
+        run: |
+          if [ ! -f "${{ github.workspace }}/run_daily.py" ]; then
+            echo "run_daily.py が見つかりません"
+            exit 1
+          fi
 
+      # 6️⃣ AI スクリプト実行
       - name: Run AI
+        working-directory: ${{ github.workspace }}
         run: python run_daily.py
