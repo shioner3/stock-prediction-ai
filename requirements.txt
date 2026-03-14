@@ -1,7 +1,8 @@
 pandas
 numpy
 yfinance
+lightgbm
 tqdm
 pyarrow
 scikit-learn
-lightgbm
+streamlit
