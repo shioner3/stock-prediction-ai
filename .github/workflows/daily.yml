@@ -13,8 +13,8 @@ jobs:
       # 1️⃣ リポジトリをフルチェックアウト
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0                # フル履歴取得
-          sparse-checkout-cone-mode: false  # sparse checkout 無効化
+          fetch-depth: 0
+          sparse-checkout-cone-mode: false
           persist-credentials: true
           clean: true
 
@@ -37,12 +37,27 @@ jobs:
           pip install --upgrade pip
           pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
 
-      # 5️⃣ run_daily.py 実行
+      # 5️⃣ キャッシュ復元
+      - name: Restore parquet cache
+        uses: actions/cache@v3
+        with:
+          path: data/japan_stock.parquet
+          key: stock-data-${{ runner.os }}
+          restore-keys: stock-data-
+
+      # 6️⃣ run_daily.py 実行
       - name: Run AI pipeline
         working-directory: ${{ github.workspace }}
         run: python run_daily.py
 
-      # 6️⃣ 出力ファイル確認
+      # 7️⃣ キャッシュ保存
+      - name: Save parquet cache
+        uses: actions/cache@v3
+        with:
+          path: data/japan_stock.parquet
+          key: stock-data-${{ runner.os }}
+
+      # 8️⃣ 出力ファイル確認
       - name: Check output
         run: |
           if [ -f "${{ github.workspace }}/today_picks.csv" ]; then
