@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-st.title("株AI予測")
+st.title("5日後に上昇していそうな株")
 
 df = pd.read_csv("today_picks.csv")
 
