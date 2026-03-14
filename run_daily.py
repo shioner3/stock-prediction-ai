@@ -14,7 +14,7 @@ run_script("download_prices.py")
 parquet_path = "data/japan_stock.parquet"
 if not os.path.exists(parquet_path):
     print("Parquet file not found. Creating from CSV...")
-    df_csv = pd.read_csv("data/data_j.csv", dtype=str)
+    df_csv = pd.read_csv("data_j.csv", dtype=str)
     # 仮に日付カラムや必要カラムを入れる
     if 'Date' not in df_csv.columns:
         from datetime import datetime
