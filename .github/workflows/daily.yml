@@ -26,4 +26,4 @@ jobs:
           pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
 
       - name: Run AI pipeline
-        run: python run_daily.py
+        run: python stock-prediction-ai/run_daily.py
