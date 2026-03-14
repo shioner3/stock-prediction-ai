@@ -1,12 +1,19 @@
+import subprocess
 import os
 
-print("Updating prices...")
-os.system("python download_prices.py")
+# 現在のスクリプトのディレクトリを取得
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-print("Creating features...")
-os.system("python feature_engineering.py")
+def run_script(script_name):
+    script_path = os.path.join(BASE_DIR, script_name)
+    print(f"Running {script_name}...")
+    subprocess.run(["python3", script_path], check=True)
 
-print("Running AI prediction...")
-os.system("python run_prediction.py")
+# =========================
+# 実行
+# =========================
+run_script("download_prices.py")
+run_script("feature_engineering.py")
+run_script("run_prediction.py")
 
 print("Done.")
