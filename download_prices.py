@@ -3,8 +3,8 @@ import yfinance as yf
 from tqdm import tqdm
 import os
 
-CSV_FILE = "data/data_j.csv"
-PARQUET_FILE = "data/japan_stock.parquet"
+CSV_FILE = "data_j.csv"
+PARQUET_FILE = "japan_stock.parquet"
 
 # =========================
 # 銘柄読み込み
