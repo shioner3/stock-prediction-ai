@@ -19,7 +19,7 @@ con = duckdb.connect(DB_FILE)
 
 df = con.execute("""
 SELECT *
-FROM prices
+FROM stock_prices
 ORDER BY Ticker, Date
 """).df()
 
