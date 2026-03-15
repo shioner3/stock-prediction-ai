@@ -57,31 +57,29 @@ print("取得開始日:", start_date)
 # =========================
 # 差分取得
 # =========================
+# tickerごとの最新日を取得
+last_dates_df = con.execute("""
+SELECT Ticker, MAX(Date) AS last_date
+FROM stock_prices
+GROUP BY Ticker
+""").fetchdf()
+last_dates_dict = dict(zip(last_dates_df['Ticker'], last_dates_df['last_date']))
+
 dfs = []
 
 for ticker in tqdm(tickers):
+    start_date = (pd.to_datetime(last_dates_dict.get(ticker, "2018-01-01")) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     try:
-        data = yf.download(
-            ticker,
-            start=start_date,
-            progress=False
-        )
-
+        data = yf.download(ticker, start=start_date, progress=False)
         if data.empty:
             continue
-
-        # マルチインデックス解消
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
-
-        data = data.reset_index()  # インデックスをリセット
+        data = data.reset_index()
         data["Ticker"] = ticker
         data = data[["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]]
-
-        # 重複行を削除してから append
         data = data.drop_duplicates()
         dfs.append(data)
-
     except Exception as e:
         print(f"Error downloading {ticker}: {e}")
         continue
