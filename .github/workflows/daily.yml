@@ -1,4 +1,4 @@
-name: Daily Stock AI
+name: Daily Stock AI 
 
 on:
   workflow_dispatch:
