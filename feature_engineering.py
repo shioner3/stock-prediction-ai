@@ -18,7 +18,7 @@ HOLD_DAYS = 5
 con = duckdb.connect(DB_FILE)
 
 df = con.execute("""
-SELECT *
+SELECT Date, Ticker, Open, High, Low, Close, Volume
 FROM stock_prices
 ORDER BY Ticker, Date
 """).df()
