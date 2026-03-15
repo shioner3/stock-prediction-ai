@@ -5,7 +5,7 @@ import pandas as pd
 def run_script(script_name):
     print(f"Running {script_name}...")
     script_path = os.path.join(os.getcwd(), script_name)
-    subprocess.run(["python3", script_path], check=True)
+    subprocess.run(["python", script_path], check=True)
 
 # 1️⃣ データ取得
 run_script("download_prices.py")
