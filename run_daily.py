@@ -20,14 +20,14 @@ if not os.path.exists(DB_FILE):
     con = duckdb.connect(DB_FILE)
 
     con.execute("""
-    CREATE TABLE IF NOT EXISTS prices(
+    CREATE TABLE IF NOT EXISTS stock_prices(
         Date DATE,
-        Ticker VARCHAR,
         Open DOUBLE,
         High DOUBLE,
         Low DOUBLE,
         Close DOUBLE,
-        Volume DOUBLE
+        Volume BIGINT,
+        Ticker VARCHAR
     )
     """)
 
