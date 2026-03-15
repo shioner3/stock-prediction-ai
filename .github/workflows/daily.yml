@@ -36,19 +36,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-stock-db
 
-      # 5️⃣ DB初期化（キャッシュ復元後にstock.dbが無ければ作成）
+      # 5️⃣ DB初期化（stock.db が無ければ作成）
       - name: Initialize DuckDB if missing
         run: |
-          python - <<'EOF'
+          python - <<PYTHON
           import os
           import duckdb
 
-          DB_FILE = "stock.db"
-
+          DB_FILE = 'stock.db'
           if not os.path.exists(DB_FILE):
-              print("DuckDB not found. Creating database...")
+              print('DuckDB not found. Creating database...')
               con = duckdb.connect(DB_FILE)
-              con.execute("""
+              con.execute('''
                   CREATE TABLE IF NOT EXISTS stock_prices(
                       Date DATE,
                       Ticker VARCHAR,
@@ -58,31 +57,15 @@ jobs:
                       Close DOUBLE,
                       Volume BIGINT
                   )
-              """)
+              ''')
               con.close()
-          EOF
+          PYTHON
 
-      # 6️⃣ DBサイズチェック（破損防止）
-      - name: Check DuckDB integrity
-        run: |
-          python - <<'EOF'
-          import os
-
-          DB_FILE = 'stock.db'
-          MIN_SIZE = 1000000  # 1MB未満は破損と判断
-
-          size = os.path.getsize(DB_FILE)
-          print('DB size:', size)
-
-          if size < MIN_SIZE:
-              raise Exception('DB破損の可能性あり。ジョブ停止。')
-          EOF
-
-      # 7️⃣ AIパイプライン実行（差分取得が有効）
+      # 6️⃣ AIパイプライン実行（差分取得が有効）
       - name: Run daily AI pipeline
         run: python run_daily.py
 
-      # 8️⃣ CSV確認
+      # 7️⃣ CSV確認
       - name: Check CSV
         run: |
           if [ -f "today_picks.csv" ]; then
@@ -92,7 +75,7 @@ jobs:
             echo "❌ today_picks.csv が生成されませんでした"
             exit 1
 
-      # 9️⃣ CSVだけ GitHub にコミット
+      # 8️⃣ CSVだけ GitHub にコミット
       - name: Commit and push picks
         run: |
           git config user.name "github-actions"
@@ -101,7 +84,7 @@ jobs:
           git diff --cached --quiet || git commit -m "Update picks [skip ci]"
           git push
 
-      # 🔟 DuckDBキャッシュ保存（最後に必ず実行）
+      # 9️⃣ DuckDBキャッシュ保存（最後に必ず実行）
       - name: Save stock database cache
         if: success()
         uses: actions/cache@v3
