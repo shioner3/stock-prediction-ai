@@ -1,10 +1,11 @@
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
+import duckdb
 import os
 
 CSV_FILE = "data_j.csv"
-PARQUET_FILE = "japan_stock.parquet"
+DB_FILE = "stock.db"
 
 # =========================
 # 銘柄読み込み
@@ -25,22 +26,37 @@ tickers = [t + ".T" for t in tickers]
 print("銘柄数:", len(tickers))
 
 # =========================
-# 既存データ読み込み
+# DB接続
 # =========================
 
-if os.path.exists(PARQUET_FILE):
+con = duckdb.connect(DB_FILE)
 
-    df_old = pd.read_parquet(PARQUET_FILE)
+# テーブル作成（初回のみ）
 
-    last_date = df_old["Date"].max()
+con.execute("""
+CREATE TABLE IF NOT EXISTS prices (
+    Date DATE,
+    Open DOUBLE,
+    High DOUBLE,
+    Low DOUBLE,
+    Close DOUBLE,
+    Volume DOUBLE,
+    Ticker VARCHAR
+)
+""")
 
-    print("既存データ最終日:", last_date)
+# =========================
+# 既存データ確認
+# =========================
 
-else:
+last_date = con.execute(
+    "SELECT MAX(Date) FROM prices"
+).fetchone()[0]
 
-    df_old = pd.DataFrame()
-
+if last_date is None:
     last_date = "2018-01-01"
+
+print("既存データ最終日:", last_date)
 
 # =========================
 # 差分取得
@@ -77,27 +93,37 @@ for ticker in tqdm(tickers):
         continue
 
 # =========================
-# 結合
+# DBに追加
 # =========================
 
 if dfs:
 
     df_new = pd.concat(dfs, ignore_index=True)
 
-    df = pd.concat([df_old, df_new], ignore_index=True)
+    con.register("temp_df", df_new)
 
-    df = df.drop_duplicates(
-        ["Date","Ticker"]
-    ).sort_values(["Date","Ticker"])
+    con.execute("""
+    INSERT INTO prices
+    SELECT *
+    FROM temp_df
+    """)
 
-else:
+    # 重複削除
 
-    df = df_old
+    con.execute("""
+    CREATE OR REPLACE TABLE prices AS
+    SELECT DISTINCT *
+    FROM prices
+    """)
 
 # =========================
-# 保存
+# 保存確認
 # =========================
 
-df.to_parquet(PARQUET_FILE)
+count = con.execute(
+    "SELECT COUNT(*) FROM prices"
+).fetchone()[0]
 
-print("保存完了:", df.shape)
+print("保存完了:", count)
+
+con.close()
