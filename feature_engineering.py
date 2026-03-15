@@ -1,59 +1,52 @@
 import pandas as pd
 import numpy as np
+import duckdb
 
 # =========================
 # 設定
 # =========================
 
-DATA_PATH = "japan_stock.parquet"
+DB_FILE = "stock.db"
 SAVE_PATH = "ml_dataset.parquet"
 
 HOLD_DAYS = 5
-
 
 # =========================
 # データ読み込み
 # =========================
 
-df = pd.read_parquet(DATA_PATH)
+con = duckdb.connect(DB_FILE)
+
+df = con.execute("""
+SELECT *
+FROM prices
+ORDER BY Ticker, Date
+""").df()
 
 print("元データサイズ:", df.shape)
-print(df.head())
-print(df.isna().sum())
-
-df = df.sort_values(["Ticker","Date"])
-
 
 # =========================
 # 銘柄内特徴量
 # =========================
 
-# 日次リターン
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 
-# 移動平均
 df["MA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean())
 df["MA25"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(25).mean())
 df["MA75"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(75).mean())
 
-# 移動平均乖離
 df["MA5_ratio"] = df["Close"] / df["MA5"]
 df["MA25_ratio"] = df["Close"] / df["MA25"]
 df["MA75_ratio"] = df["Close"] / df["MA75"]
 
-# ボラティリティ
 df["Volatility"] = (
     df.groupby("Ticker")["Return_1"]
     .transform(lambda x: x.rolling(20).std())
 )
 
-# 出来高変化
 df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change()
 
-# 日中値幅
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
-
-
 
 # =========================
 # RSI
@@ -70,7 +63,6 @@ avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(14).mean())
 rs = avg_gain / avg_loss
 
 df["RSI"] = 100 - (100 / (1 + rs))
-
 
 # =========================
 # クロスセクション特徴量
@@ -94,7 +86,6 @@ for col in rank_features:
         .rank(pct=True)
     )
 
-
 # =========================
 # Target
 # =========================
@@ -107,7 +98,6 @@ df["Target"] = (
     df.groupby("Date")["FutureReturn_5"]
     .rank(pct=True)
 )
-
 
 # =========================
 # データ整理
@@ -126,7 +116,6 @@ df = df.dropna(subset=[
     "RSI_rank",
     "FutureReturn_5"
 ])
-
 
 # =========================
 # 保存
