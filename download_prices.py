@@ -34,14 +34,14 @@ con = duckdb.connect(DB_FILE)
 # テーブル作成（初回のみ）
 
 con.execute("""
-CREATE TABLE IF NOT EXISTS prices (
+CREATE TABLE IF NOT EXISTS stock_prices (
     Date DATE,
+    Ticker TEXT,
     Open DOUBLE,
     High DOUBLE,
     Low DOUBLE,
     Close DOUBLE,
-    Volume DOUBLE,
-    Ticker VARCHAR
+    Volume BIGINT
 )
 """)
 
