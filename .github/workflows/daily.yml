@@ -1,9 +1,9 @@
 name: Daily Stock AI
 
 on:
-  schedule:
-    - cron: '0 22 * * 1-5'  # 月〜金 7:00 JST
   workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * 1-5'  # 月〜金 7:00 JS
 
 jobs:
   run-ai:
