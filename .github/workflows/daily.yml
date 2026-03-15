@@ -1,9 +1,9 @@
-name: Daily Stock AI 
+name: Daily Stock AI
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 22 * * 1-5'  # 月〜金 7:00 JS
+    - cron: '0 22 * * 1-5'  # 月〜金 7:00 JST
 
 jobs:
   run-ai:
@@ -60,7 +60,7 @@ jobs:
                   )
               """)
               con.close()
-EOF
+          EOF
 
       # 6️⃣ DBサイズチェック（破損防止）
       - name: Check DuckDB integrity
@@ -68,14 +68,15 @@ EOF
           python - <<'EOF'
           import os
 
-          DB_FILE = "stock.db"
+          DB_FILE = 'stock.db'
           MIN_SIZE = 1000000  # 1MB未満は破損と判断
 
           size = os.path.getsize(DB_FILE)
-          print("DB size:", size)
+          print('DB size:', size)
+
           if size < MIN_SIZE:
-              raise Exception("DB破損の可能性あり。ジョブ停止。")
-EOF
+              raise Exception('DB破損の可能性あり。ジョブ停止。')
+          EOF
 
       # 7️⃣ AIパイプライン実行（差分取得が有効）
       - name: Run daily AI pipeline
