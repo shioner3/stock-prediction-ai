@@ -2,7 +2,7 @@ name: Daily Stock AI
 
 on:
   schedule:
-    - cron: '0 22 * * 1-5'  # 月〜金 朝7時JST
+    - cron: '0 22 * * 1-5'  # 月〜金 7:00 JST
   workflow_dispatch:        # 手動実行も可能
 
 jobs:
@@ -10,59 +10,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ リポジトリをフルチェックアウト
+      # 1️⃣ リポジトリをチェックアウト
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          sparse-checkout-cone-mode: false
-          persist-credentials: true
-          clean: true
 
-      # 2️⃣ デバッグ用：作業ディレクトリ確認
-      - name: Show workspace
-        run: pwd
-
-      - name: List files recursively
-        run: ls -R
-
-      # 3️⃣ Python セットアップ
+      # 2️⃣ Python 環境セットアップ
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      # 4️⃣ ライブラリインストール
-      - name: Install libraries
+      # 3️⃣ ライブラリインストール
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas numpy yfinance lightgbm tqdm pyarrow scikit-learn streamlit
+          pip install -r requirements.txt
 
-      # 5️⃣ キャッシュ復元
-      - name: Restore parquet cache
-        uses: actions/cache@v3
-        with:
-          path: data/japan_stock.parquet
-          key: stock-data-${{ runner.os }}
-          restore-keys: stock-data-
-
-      # 6️⃣ run_daily.py 実行
-      - name: Run AI pipeline
-        working-directory: ${{ github.workspace }}
+      # 4️⃣ run_daily.py 実行
+      - name: Run daily AI pipeline
         run: python run_daily.py
 
-      # 7️⃣ キャッシュ保存
-      - name: Save parquet cache
-        uses: actions/cache@v3
-        with:
-          path: data/japan_stock.parquet
-          key: stock-data-${{ runner.os }}
-
-      # 8️⃣ 出力ファイル確認
-      - name: Check output
+      # 5️⃣ 出力ファイル確認
+      - name: Check CSV
         run: |
-          if [ -f "${{ github.workspace }}/today_picks.csv" ]; then
+          if [ -f "today_picks.csv" ]; then
             echo "✅ today_picks.csv が生成されました"
-            ls -l "${{ github.workspace }}/today_picks.csv"
+            ls -l today_picks.csv
           else
             echo "❌ today_picks.csv が生成されませんでした"
             exit 1
