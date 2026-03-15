@@ -12,8 +12,6 @@ jobs:
     steps:
       # 1️⃣ リポジトリ取得
       - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
 
       # 2️⃣ Python
       - name: Setup Python
@@ -27,12 +25,11 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4️⃣ データキャッシュ
-      - name: Cache stock data
+      # 4️⃣ DBキャッシュ
+      - name: Cache stock database
         uses: actions/cache@v3
         with:
-          path: |
-            stock.db
+          path: stock.db
           key: ${{ runner.os }}-stock-db
           restore-keys: |
             ${{ runner.os }}-stock-db
@@ -52,11 +49,11 @@ jobs:
             exit 1
           fi
 
-      # 7️⃣ データ保存
-      - name: Commit and push data
+      # 7️⃣ picksだけ保存
+      - name: Commit and push picks
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add today_picks.csv stock.db
-          git diff --cached --quiet || git commit -m "Update data [skip ci]"
+          git add today_picks.csv
+          git diff --cached --quiet || git commit -m "Update picks [skip ci]"
           git push
