@@ -3,46 +3,45 @@ name: Daily Stock AI
 on:
   schedule:
     - cron: '0 22 * * 1-5'  # 月〜金 7:00 JST
-  workflow_dispatch:        # 手動実行も可能
+  workflow_dispatch:
 
 jobs:
   run-ai:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ リポジトリをチェックアウト
+      # 1️⃣ リポジトリ取得
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      # 2️⃣ Python 環境セットアップ
+      # 2️⃣ Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      # 3️⃣ ライブラリインストール
+      # 3️⃣ 依存関係
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4️⃣ 株価データキャッシュ
+      # 4️⃣ データキャッシュ
       - name: Cache stock data
         uses: actions/cache@v3
-        id: stock-cache
         with:
           path: |
-            japan_stock.parquet
-          key: ${{ runner.os }}-stock-data
+            stock.db
+          key: ${{ runner.os }}-stock-db
           restore-keys: |
-            ${{ runner.os }}-stock-data
+            ${{ runner.os }}-stock-db
 
-      # 5️⃣ run_daily.py 実行
+      # 5️⃣ AI実行
       - name: Run daily AI pipeline
         run: python run_daily.py
 
-      # 6️⃣ 出力ファイル確認
+      # 6️⃣ CSV確認
       - name: Check CSV
         run: |
           if [ -f "today_picks.csv" ]; then
@@ -52,13 +51,12 @@ jobs:
             echo "❌ today_picks.csv が生成されませんでした"
             exit 1
           fi
-          
-      # 7️⃣ データを GitHub にコミット＆プッシュ
+
+      # 7️⃣ データ保存
       - name: Commit and push data
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add today_picks.csv japan_stock.parquet
+          git add today_picks.csv stock.db
           git diff --cached --quiet || git commit -m "Update data [skip ci]"
           git push
-
