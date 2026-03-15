@@ -41,3 +41,13 @@ jobs:
             echo "❌ today_picks.csv が生成されませんでした"
             exit 1
           fi
+
+      # 6️⃣ today_picks.csv を GitHub にコミット＆プッシュ
+      - name: Commit and push today_picks.csv
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add today_picks.csv
+          # 変更があればコミット
+          git diff --cached --quiet || git commit -m "Update today_picks.csv [skip ci]"
+          git push
