@@ -1,27 +1,54 @@
 import subprocess
 import os
-import pandas as pd
+import duckdb
 
 def run_script(script_name):
     print(f"Running {script_name}...")
     script_path = os.path.join(os.getcwd(), script_name)
     subprocess.run(["python", script_path], check=True)
 
-parquet_path = "japan_stock.parquet"
+DB_FILE = "stock.db"
 
-# ① Parquetが無ければ初期作成
-if not os.path.exists(parquet_path):
-    print("Parquet file not found. Creating empty base...")
-    df = pd.DataFrame()
-    df.to_parquet(parquet_path)
+# =========================
+# DB初期化
+# =========================
 
-# ② 株価データ取得（差分更新）
+if not os.path.exists(DB_FILE):
+
+    print("DuckDB not found. Creating database...")
+
+    con = duckdb.connect(DB_FILE)
+
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS prices(
+        Date DATE,
+        Ticker VARCHAR,
+        Open DOUBLE,
+        High DOUBLE,
+        Low DOUBLE,
+        Close DOUBLE,
+        Volume DOUBLE
+    )
+    """)
+
+    con.close()
+
+# =========================
+# ① 株価データ取得（差分更新）
+# =========================
+
 run_script("download_prices.py")
 
-# ③ 特徴量作成
+# =========================
+# ② 特徴量作成
+# =========================
+
 run_script("feature_engineering.py")
 
-# ④ 予測
+# =========================
+# ③ 予測
+# =========================
+
 run_script("run_prediction.py")
 
-print("Done.")
+print("Pipeline finished.")
