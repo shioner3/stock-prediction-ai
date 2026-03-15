@@ -74,6 +74,7 @@ jobs:
           else
             echo "❌ today_picks.csv が生成されませんでした"
             exit 1
+          fi
 
       # 8️⃣ CSVだけ GitHub にコミット
       - name: Commit and push picks
