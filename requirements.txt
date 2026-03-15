@@ -6,3 +6,4 @@ tqdm
 pyarrow
 scikit-learn
 streamlit
+duckdb
