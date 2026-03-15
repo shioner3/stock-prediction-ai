@@ -11,11 +11,9 @@ DB_FILE = "stock.db"
 # 銘柄読み込み
 # =========================
 df_list = pd.read_csv(CSV_FILE, dtype=str)
-
 df_list = df_list[
     df_list["市場・商品区分"].str.contains(
-        "プライム|スタンダード|グロース",
-        na=False
+        "プライム|スタンダード|グロース", na=False
     )
 ]
 
@@ -45,13 +43,13 @@ CREATE TABLE IF NOT EXISTS stock_prices (
 # =========================
 # 既存データ確認
 # =========================
-existing_data = con.execute("SELECT Ticker, Date FROM stock_prices").df()
-existing_index = set(zip(existing_data["Ticker"], existing_data["Date"]))
+last_date = con.execute(
+    "SELECT MAX(Date) FROM stock_prices"
+).fetchone()[0]
 
-if existing_data.empty:
+if last_date is None:
     start_date = "2018-01-01"
 else:
-    last_date = con.execute("SELECT MAX(Date) FROM stock_prices").fetchone()[0]
     start_date = (pd.to_datetime(last_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
 print("取得開始日:", start_date)
@@ -72,23 +70,20 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
-        # インデックスの階層を解消
+        # マルチインデックス解消
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        data = data.reset_index()
+        data = data.reset_index()  # インデックスをリセット
         data["Ticker"] = ticker
-
         data = data[["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]]
 
-        # 既存DBと重複する行を除外
-        data = data[~data.set_index(['Ticker', 'Date']).index.isin(existing_index)]
-
-        if not data.empty:
-            dfs.append(data.reset_index(drop=True))
+        # 重複行を削除してから append
+        data = data.drop_duplicates()
+        dfs.append(data)
 
     except Exception as e:
-        print(f"Error fetching {ticker}: {e}")
+        print(f"Error downloading {ticker}: {e}")
         continue
 
 # =========================
@@ -96,15 +91,18 @@ for ticker in tqdm(tickers):
 # =========================
 if dfs:
     df_new = pd.concat(dfs, ignore_index=True)
+
+    # concat後も重複行を削除
+    df_new = df_new.drop_duplicates(subset=["Date", "Ticker"])
+
     con.register("temp_df", df_new)
 
     con.execute("""
     INSERT INTO stock_prices
-    SELECT *
-    FROM temp_df
+    SELECT * FROM temp_df
     """)
 
-    # 重複削除
+    # DB全体の重複削除（念のため）
     con.execute("""
     CREATE OR REPLACE TABLE stock_prices AS
     SELECT DISTINCT *
