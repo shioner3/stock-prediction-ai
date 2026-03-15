@@ -36,12 +36,12 @@ con = duckdb.connect(DB_FILE)
 con.execute("""
 CREATE TABLE IF NOT EXISTS stock_prices (
     Date DATE,
-    Ticker TEXT,
     Open DOUBLE,
     High DOUBLE,
     Low DOUBLE,
     Close DOUBLE,
-    Volume BIGINT
+    Volume BIGINT,
+    Ticker TEXT
 )
 """)
 
@@ -50,13 +50,17 @@ CREATE TABLE IF NOT EXISTS stock_prices (
 # =========================
 
 last_date = con.execute(
-    "SELECT MAX(Date) FROM prices"
+    "SELECT MAX(Date) FROM stock_prices"
 ).fetchone()[0]
 
 if last_date is None:
-    last_date = "2018-01-01"
+    start_date = "2018-01-01"
+else:
+    start_date = (
+        pd.to_datetime(last_date) + pd.Timedelta(days=1)
+    ).strftime("%Y-%m-%d")
 
-print("既存データ最終日:", last_date)
+print("取得開始日:", start_date)
 
 # =========================
 # 差分取得
@@ -70,7 +74,7 @@ for ticker in tqdm(tickers):
 
         data = yf.download(
             ticker,
-            start=last_date,
+            start=start_date,
             progress=False
         )
 
@@ -84,7 +88,7 @@ for ticker in tqdm(tickers):
         data["Ticker"] = ticker
 
         data = data[
-            ["Date","Open","High","Low","Close","Volume","Ticker"]
+            ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]
         ]
 
         dfs.append(data)
@@ -103,7 +107,7 @@ if dfs:
     con.register("temp_df", df_new)
 
     con.execute("""
-    INSERT INTO prices
+    INSERT INTO stock_prices
     SELECT *
     FROM temp_df
     """)
@@ -111,9 +115,9 @@ if dfs:
     # 重複削除
 
     con.execute("""
-    CREATE OR REPLACE TABLE prices AS
+    CREATE OR REPLACE TABLE stock_prices AS
     SELECT DISTINCT *
-    FROM prices
+    FROM stock_prices
     """)
 
 # =========================
@@ -121,7 +125,7 @@ if dfs:
 # =========================
 
 count = con.execute(
-    "SELECT COUNT(*) FROM prices"
+    "SELECT COUNT(*) FROM stock_prices"
 ).fetchone()[0]
 
 print("保存完了:", count)
