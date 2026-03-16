@@ -6,7 +6,7 @@ import duckdb
 # 設定
 # =========================
 
-DB_FILE = "stock.db"
+PARQUET_FILE = "stock_data/prices.parquet"
 SAVE_PATH = "ml_dataset.parquet"
 
 HOLD_DAYS = 5
@@ -15,11 +15,11 @@ HOLD_DAYS = 5
 # データ読み込み
 # =========================
 
-con = duckdb.connect(DB_FILE)
+con = duckdb.connect()
 
-df = con.execute("""
+df = con.execute(f"""
 SELECT Date, Ticker, Open, High, Low, Close, Volume
-FROM stock_prices
+FROM '{PARQUET_FILE}'
 ORDER BY Ticker, Date
 """).df()
 
