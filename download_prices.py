@@ -38,12 +38,7 @@ con = duckdb.connect()
 # =========================
 if os.path.exists(PARQUET_FILE):
 
-    df_existing = con.execute(
-        f"""
-        SELECT *
-        FROM '{PARQUET_FILE}'
-        """
-    ).fetchdf()
+    df_existing = pd.read_parquet(PARQUET_FILE)
 
 else:
 
@@ -81,19 +76,34 @@ print(tickers[:5])
 # =========================
 dfs = []
 
+today = pd.Timestamp.today().normalize()
+
+api_calls = 0
+
 for ticker in tqdm(tickers):
 
     last_date = last_dates_dict.get(ticker)
 
-    start_date = (
-        (pd.to_datetime(last_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        if last_date
-        else "2018-01-01"
-    )
+    if last_date:
+        start_dt = pd.to_datetime(last_date) + pd.Timedelta(days=1)
+    else:
+        start_dt = pd.Timestamp("2018-01-01")
+
+    # 今日以降なら取得しない
+    if start_dt >= today:
+        continue
+
+    start_date = start_dt.strftime("%Y-%m-%d")
 
     try:
 
-        data = yf.download(ticker, start=start_date, progress=False)
+        api_calls += 1
+
+        data = yf.download(
+            ticker,
+            start=start_date,
+            progress=False
+        )
 
         if data.empty:
             continue
@@ -140,6 +150,12 @@ if dfs:
 
     df_all.to_parquet(PARQUET_FILE, index=False)
 
+    print("追加行数:", len(df_new))
+
+else:
+
+    print("追加データなし")
+
 # =========================
 # 保存確認
 # =========================
@@ -149,6 +165,8 @@ df_check = con.execute(
     """
 ).fetchone()[0]
 
-print("保存完了:", df_check)
+print("保存完了 行数:", df_check)
+
+print("API呼び出し回数:", api_calls)
 
 con.close()
