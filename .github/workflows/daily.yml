@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements_ai.txt
 
       # 4️⃣ データディレクトリ作成
       - name: Create data directory
