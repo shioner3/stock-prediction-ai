@@ -26,20 +26,18 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4️⃣ Parquetキャッシュ復元
-      - name: Restore price data cache
+      # 4️⃣ データディレクトリ作成
+      - name: Create data directory
+        run: mkdir -p stock_data
+
+      # 5️⃣ Parquetキャッシュ復元（＋保存）
+      - name: Cache price data
         uses: actions/cache@v3
-        id: price-cache
         with:
           path: stock_data/prices.parquet
-          key: ${{ runner.os }}-prices-${{ github.run_id }}
+          key: ${{ runner.os }}-prices-v1
           restore-keys: |
-            ${{ runner.os }}-prices
-
-      # 5️⃣ データディレクトリ作成
-      - name: Create data directory
-        run: |
-          mkdir -p stock_data
+            ${{ runner.os }}-prices-
 
       # 6️⃣ AIパイプライン実行
       - name: Run daily AI pipeline
@@ -64,13 +62,3 @@ jobs:
           git add today_picks.csv
           git commit -m "Update picks [skip ci]" || echo "no change"
           git push
-
-      # 9️⃣ Parquetキャッシュ保存
-      - name: Save price data cache
-        if: success()
-        uses: actions/cache@v3
-        with:
-          path: stock_data/prices.parquet
-          key: ${{ runner.os }}-prices-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-prices
