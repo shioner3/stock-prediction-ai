@@ -14,7 +14,6 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
-
 FEATURES = [
     "Return_1_rank",
     "MA5_ratio_rank",
@@ -49,18 +48,25 @@ print("Prediction Date:", latest_date.date())
 
 
 # =========================
-# モデル読み込み or 学習
+# 再学習判定
 # =========================
+weekday = latest_date.weekday()  # 月=0
 
-if os.path.exists(MODEL_PATH):
+retrain = False
 
-    print("Loading model...")
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
+if weekday == 0:  # 月曜日
+    retrain = True
 
-else:
+if not os.path.exists(MODEL_PATH):
+    retrain = True
 
-    print("Training model...")
+
+# =========================
+# モデル学習
+# =========================
+if retrain:
+
+    print("Weekly retrain...")
 
     train = df[df["Date"] < latest_date]
 
@@ -82,11 +88,17 @@ else:
     with open(MODEL_PATH, "wb") as f:
         pickle.dump(model, f)
 
+else:
+
+    print("Loading existing model...")
+
+    with open(MODEL_PATH, "rb") as f:
+        model = pickle.load(f)
+
 
 # =========================
 # 今日のデータ
 # =========================
-
 today = df[df["Date"] == latest_date].copy()
 
 X_today = today[FEATURES]
@@ -95,11 +107,10 @@ X_today = today[FEATURES]
 # =========================
 # 予測
 # =========================
-
 today["Pred"] = model.predict(X_today)
 
-# 順位化
 today["Rank"] = today["Pred"].rank(ascending=False)
+
 
 # =========================
 # 銘柄名読み込み
@@ -107,39 +118,37 @@ today["Rank"] = today["Pred"].rank(ascending=False)
 DATA_J_PATH = os.path.join(BASE_DIR, "data_j.csv")
 df_info = pd.read_csv(DATA_J_PATH, dtype=str)
 
-# Ticker → 銘柄名のマッピング
-ticker_to_name = dict(zip(df_info["コード"].str.strip(), df_info["銘柄名"].str.strip()))
+ticker_to_name = dict(
+    zip(
+        df_info["コード"].str.strip(),
+        df_info["銘柄名"].str.strip()
+    )
+)
+
 
 # =========================
-# 上位銘柄抽出
+# 上位銘柄
 # =========================
-
-# 上位 TOP_N 銘柄を Pred 順に抽出
 picks = today.nsmallest(TOP_N, "Rank").copy()
 
-# 「コード」と「銘柄名」を追加
-# Ticker は元々 ".T" 付きになっているので除去してキーにする
 picks["コード"] = picks["Ticker"].str.replace(".T", "", regex=False)
 picks["銘柄名"] = picks["コード"].map(ticker_to_name)
 
-# Pred を順位に変換（1位、2位…）
 picks["PredRank"] = range(1, len(picks) + 1)
 
-# 表示列を整理
 picks = picks[["コード", "銘柄名", "PredRank"]]
+
 
 # =========================
 # 出力
 # =========================
-
 print()
 print("===== Today Picks =====")
 print(picks)
 
-# CSV保存
 OUTPUT_PATH = os.path.join(BASE_DIR, "today_picks.csv")
+
 picks.to_csv(OUTPUT_PATH, index=False)
 
 print()
 print("Saved:", OUTPUT_PATH)
-
