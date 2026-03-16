@@ -5,12 +5,13 @@ import duckdb
 import os
 
 CSV_FILE = "data_j.csv"
-DB_FILE = "stock.db"
+PARQUET_FILE = "stock_data/prices.parquet"
 
 # =========================
 # 銘柄読み込み
 # =========================
 df_list = pd.read_csv(CSV_FILE, dtype=str)
+
 df_list = df_list[
     df_list["市場・商品区分"].str.contains(
         "プライム|スタンダード|グロース", na=False
@@ -18,41 +19,60 @@ df_list = df_list[
 ]
 
 tickers = df_list["コード"].tolist()
-tickers = [t + ".T" for t in tickers]  # DBでも同じ形式で保存
+tickers = [t + ".T" for t in tickers]
 
 print("銘柄数:", len(tickers))
 
 # =========================
-# DB接続
+# データフォルダ作成
 # =========================
-con = duckdb.connect(DB_FILE)
-
-# テーブル作成（初回のみ）
-con.execute("""
-CREATE TABLE IF NOT EXISTS stock_prices (
-    Date DATE,
-    Open DOUBLE,
-    High DOUBLE,
-    Low DOUBLE,
-    Close DOUBLE,
-    Volume BIGINT,
-    Ticker TEXT
-)
-""")
+os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# tickerごとの最新日を取得
+# DuckDB接続（SQL用）
 # =========================
-last_dates_df = con.execute("""
-SELECT Ticker, MAX(Date) AS last_date
-FROM stock_prices
-GROUP BY Ticker
-""").fetchdf()
-last_dates_dict = dict(zip(last_dates_df['Ticker'], last_dates_df['last_date']))
+con = duckdb.connect()
 
-# 確認用出力
-print("DBに保存されている各Tickerの最新日:")
+# =========================
+# 既存Parquet読み込み
+# =========================
+if os.path.exists(PARQUET_FILE):
+
+    df_existing = con.execute(
+        f"""
+        SELECT *
+        FROM '{PARQUET_FILE}'
+        """
+    ).fetchdf()
+
+else:
+
+    df_existing = pd.DataFrame(
+        columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]
+    )
+
+# =========================
+# tickerごとの最新日取得
+# =========================
+if not df_existing.empty:
+
+    last_dates_df = con.execute(
+        f"""
+        SELECT Ticker, MAX(Date) AS last_date
+        FROM '{PARQUET_FILE}'
+        GROUP BY Ticker
+        """
+    ).fetchdf()
+
+else:
+
+    last_dates_df = pd.DataFrame(columns=["Ticker", "last_date"])
+
+last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
+
+print("Parquetに保存されている各Tickerの最新日:")
 print(last_dates_df.head())
+
 print("取得対象のtickers例:")
 print(tickers[:5])
 
@@ -62,14 +82,20 @@ print(tickers[:5])
 dfs = []
 
 for ticker in tqdm(tickers):
-    # DBにない場合は初期日付から
+
     last_date = last_dates_dict.get(ticker)
-    start_date = (pd.to_datetime(last_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d") if last_date else "2018-01-01"
+
+    start_date = (
+        (pd.to_datetime(last_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        if last_date
+        else "2018-01-01"
+    )
 
     try:
+
         data = yf.download(ticker, start=start_date, progress=False)
+
         if data.empty:
-            # データなし（上場廃止や週末等）はスキップ
             continue
 
         # マルチインデックス解消
@@ -78,9 +104,19 @@ for ticker in tqdm(tickers):
 
         data = data.reset_index()
         data["Ticker"] = ticker
-        data = data[["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]]
 
-        # DBにすでにある日付は削除
+        data = data[
+            [
+                "Date",
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume",
+                "Ticker",
+            ]
+        ]
+
         if last_date:
             data = data[data["Date"] > pd.to_datetime(last_date)]
 
@@ -92,28 +128,27 @@ for ticker in tqdm(tickers):
         continue
 
 # =========================
-# DBに追加
+# Parquetに追加保存
 # =========================
 if dfs:
+
     df_new = pd.concat(dfs, ignore_index=True)
-    df_new = df_new.drop_duplicates(subset=["Date", "Ticker"])
 
-    con.register("temp_df", df_new)
+    df_all = pd.concat([df_existing, df_new], ignore_index=True)
 
-    # すでにDBにある日付は挿入しない
-    con.execute("""
-    INSERT INTO stock_prices
-    SELECT * FROM temp_df t
-    WHERE NOT EXISTS (
-        SELECT 1 FROM stock_prices s
-        WHERE s.Ticker = t.Ticker AND s.Date = t.Date
-    )
-    """)
+    df_all = df_all.drop_duplicates(subset=["Date", "Ticker"])
+
+    df_all.to_parquet(PARQUET_FILE, index=False)
 
 # =========================
 # 保存確認
 # =========================
-count = con.execute("SELECT COUNT(*) FROM stock_prices").fetchone()[0]
-print("保存完了:", count)
+df_check = con.execute(
+    f"""
+    SELECT COUNT(*) FROM '{PARQUET_FILE}'
+    """
+).fetchone()[0]
+
+print("保存完了:", df_check)
 
 con.close()
