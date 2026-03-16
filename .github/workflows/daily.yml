@@ -26,42 +26,22 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4️⃣ DuckDBキャッシュ復元
-      - name: Restore stock database cache
+      # 4️⃣ Parquetキャッシュ復元
+      - name: Restore price data cache
         uses: actions/cache@v3
-        id: stock-cache
+        id: price-cache
         with:
-          path: stock.db
-          key: ${{ runner.os }}-stock-db
+          path: stock_data/prices.parquet
+          key: ${{ runner.os }}-prices-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-stock-db
+            ${{ runner.os }}-prices
 
-      # 5️⃣ DB初期化（stock.db が無ければ作成）
-      - name: Initialize DuckDB if missing
+      # 5️⃣ データディレクトリ作成
+      - name: Create data directory
         run: |
-          python - <<PYTHON
-          import os
-          import duckdb
+          mkdir -p stock_data
 
-          DB_FILE = 'stock.db'
-          if not os.path.exists(DB_FILE):
-              print('DuckDB not found. Creating database...')
-              con = duckdb.connect(DB_FILE)
-              con.execute('''
-                  CREATE TABLE IF NOT EXISTS stock_prices(
-                      Date DATE,
-                      Ticker VARCHAR,
-                      Open DOUBLE,
-                      High DOUBLE,
-                      Low DOUBLE,
-                      Close DOUBLE,
-                      Volume BIGINT
-                  )
-              ''')
-              con.close()
-          PYTHON
-
-      # 6️⃣ AIパイプライン実行（差分取得が有効）
+      # 6️⃣ AIパイプライン実行
       - name: Run daily AI pipeline
         run: python run_daily.py
 
@@ -82,13 +62,15 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add today_picks.csv
-          git diff --cached --quiet || git commit -m "Update picks [skip ci]"
+          git commit -m "Update picks [skip ci]" || echo "no change"
           git push
 
-      # 9️⃣ DuckDBキャッシュ保存（最後に必ず実行）
-      - name: Save stock database cache
+      # 9️⃣ Parquetキャッシュ保存
+      - name: Save price data cache
         if: success()
         uses: actions/cache@v3
         with:
-          path: stock.db
-          key: ${{ runner.os }}-stock-db
+          path: stock_data/prices.parquet
+          key: ${{ runner.os }}-prices-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-prices
