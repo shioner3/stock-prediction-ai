@@ -1,9 +1,10 @@
-pandas
 numpy
 yfinance
 lightgbm
 tqdm
 pyarrow
 scikit-learn
-streamlit
 duckdb
+streamlit==1.32.2
+altair==4.2.2
+pandas
