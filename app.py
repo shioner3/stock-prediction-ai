@@ -1,14 +1,21 @@
-import streamlit as st
+import gradio as gr
 import pandas as pd
 import os
 
-st.title("毎日更新♪株予測AI(*^^*)")
+def load_data():
+    if os.path.exists("today_picks.csv"):
+        df = pd.read_csv("today_picks.csv")
+        return df
+    else:
+        return "CSVがまだありません"
 
-csv_path = "today_picks.csv"
+demo = gr.Interface(
+    fn=load_data,
+    inputs=None,
+    outputs="dataframe",
+    title="毎日更新♪株予測AI(*^^*)",
+    description="5日後に上がりそうな5銘柄"
+)
 
-if os.path.exists(csv_path):
-    df = pd.read_csv(csv_path)
-    st.subheader("5日後に上がりそうな5銘柄")
-    st.dataframe(df)
-else:
-    st.warning("CSV がまだ生成されていません。GitHub Actions で Run Daily を先に実行してください。")
+if __name__ == "__main__":
+    demo.launch()
