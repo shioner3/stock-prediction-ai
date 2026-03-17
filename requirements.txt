@@ -1,1 +1,2 @@
-streamlit==1.32.2
+gradio==4.44.0
+pandas==2.2.2
