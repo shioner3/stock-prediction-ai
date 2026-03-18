@@ -70,7 +70,7 @@ jobs:
           git config --global user.name "github-actions"
 
           # Spaceをclone（ここにトークン使う）
-          git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner3/stock-prediction-ai hf_space
+          git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner/Stock-Prediction-Ai hf_space
 
           # CSVコピー
           cp today_picks.csv hf_space/
