@@ -64,8 +64,15 @@ jobs:
       - name: Push CSV to Hugging Face
         run: |
           git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner/Stock-Prediction-Ai hf_space
+
           cp today_picks.csv hf_space/
+
           cd hf_space
+
+          # 👇これ追加（超重要）
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
           git add today_picks.csv
           git commit -m "auto update csv" || echo "no change"
           git push
