@@ -1,73 +1,87 @@
-import os
-import shutil
 import subprocess
-from datetime import datetime
+import os
+
+PARQUET_FILE = "stock_data/prices.parquet"
+ARTICLE_FILE = "note_article.txt"
+
+
+def run_script(script_name):
+    print(f"Running {script_name}...")
+    script_path = os.path.join(os.getcwd(), script_name)
+    subprocess.run(["python", script_path], check=True)
+
 
 # =========================
-# 設定
+# 1️⃣ Parquet確認
 # =========================
-OUTPUT_DIR = "daily_reports"
+if not os.path.exists(PARQUET_FILE):
+    print("Parquet not found. It will be created by download_prices.py")
 
 # =========================
-# 実行
+# 2️⃣ 株価データ取得
 # =========================
-def main():
-    today = datetime.now().strftime("%Y-%m-%d")
+run_script("download_prices.py")
 
-    print("🚀 日次処理開始:", today)
-    print("📂 作業ディレクトリ:", os.getcwd())
+# =========================
+# 3️⃣ 特徴量作成
+# =========================
+run_script("feature_engineering.py")
 
-    # =========================
-    # ① 予測スクリプト実行（重要修正）
-    # =========================
-    print("📊 予測実行中...")
+# =========================
+# 4️⃣ 予測
+# =========================
+run_script("run_prediction.py")
 
-    try:
-        subprocess.run(["python", "run_prediction.py"], check=True)
-    except subprocess.CalledProcessError as e:
-        print("❌ run_prediction.py 実行失敗")
-        raise e
+# =========================
+# 5️⃣ 🆕 記事生成
+# =========================
+def generate_article():
+    print("📝 記事生成開始...")
 
-    # =========================
-    # ② ファイル存在チェック
-    # =========================
-    print("📂 生成ファイル確認:", os.listdir())
+    # run_prediction.py が出した結果を使う想定
+    result_path = "today_picks.csv"
 
-    if not os.path.exists("today_picks.csv"):
-        print("❌ today_picks.csv が見つかりません")
-        return
+    if not os.path.exists(result_path):
+        raise Exception("today_picks.csv が存在しません")
 
-    if not os.path.exists("note_article.txt"):
-        print("❌ note_article.txt が見つかりません")
-        print("📂 現在のファイル一覧:", os.listdir())
-        return
+    # CSV読み込み
+    import pandas as pd
+    df = pd.read_csv(result_path)
 
-    # =========================
-    # ③ フォルダ作成
-    # =========================
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    article = []
+    article.append("【AI株式分析レポート】\n")
+    article.append("本日の注目銘柄TOPリスト\n")
 
-    # =========================
-    # ④ 日付付き保存
-    # =========================
-    csv_name = f"{OUTPUT_DIR}/{today}_picks.csv"
-    note_name = f"{OUTPUT_DIR}/{today}_article.txt"
+    for i, row in df.iterrows():
+        ticker = row["ticker"]
+        score = row["score"]
+        ret = row["pred_return"]
 
-    shutil.copy("today_picks.csv", csv_name)
-    shutil.copy("note_article.txt", note_name)
+        article.append(f"""
+■ {i+1}. {ticker}
+AIスコア: {score:.3f}
+期待リターン: {ret*100:.2f}%
 
-    print("✅ 保存完了:")
-    print(csv_name)
-    print(note_name)
+→ 短期的に注目度の高い銘柄です
+""")
 
-    # =========================
-    # ⑤ ログ
-    # =========================
-    with open(f"{OUTPUT_DIR}/log.txt", "a", encoding="utf-8") as f:
-        f.write(f"{today} 実行完了\n")
+    text = "\n".join(article)
 
-    print("🎉 日次処理完了")
+    with open(ARTICLE_FILE, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    print("📝 note_article.txt 生成完了")
 
 
-if __name__ == "__main__":
-    main()
+generate_article()
+
+# =========================
+# 6️⃣ サイズチェック
+# =========================
+size = os.path.getsize(PARQUET_FILE)
+print("Parquet size:", size)
+
+if size < 1000000:
+    raise Exception("Parquet破損の可能性あり。保存停止。")
+
+print("Pipeline finished.")
