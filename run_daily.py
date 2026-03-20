@@ -1,43 +1,63 @@
-import subprocess
 import os
-
-PARQUET_FILE = "stock_data/prices.parquet"
-
-
-def run_script(script_name):
-    print(f"Running {script_name}...")
-    script_path = os.path.join(os.getcwd(), script_name)
-    subprocess.run(["python", script_path], check=True)
-
+import shutil
+from datetime import datetime
 
 # =========================
-# 1️⃣ Parquet初期化確認
+# 設定
 # =========================
-if not os.path.exists(PARQUET_FILE):
-    print("Parquet not found. It will be created by download_prices.py")
+OUTPUT_DIR = "daily_reports"
 
 # =========================
-# 2️⃣ 株価データ取得（差分更新）
+# 実行
 # =========================
-run_script("download_prices.py")
+def main():
+    today = datetime.now().strftime("%Y-%m-%d")
 
-# =========================
-# 3️⃣ 特徴量作成
-# =========================
-run_script("feature_engineering.py")
+    print("🚀 日次処理開始:", today)
 
-# =========================
-# 4️⃣ 予測
-# =========================
-run_script("run_prediction.py")
+    # =========================
+    # ① 予測スクリプト実行
+    # =========================
+    print("📊 予測実行中...")
+    os.system("python run_prediction.py")
 
-print("Pipeline finished.")
+    # =========================
+    # ② 出力確認
+    # =========================
+    if not os.path.exists("today_picks.csv"):
+        print("❌ today_picks.csv が見つかりません")
+        return
 
-# =========================
-# 5️⃣ Parquetサイズチェック
-# =========================
-size = os.path.getsize(PARQUET_FILE)
-print("Parquet size:", size)
+    if not os.path.exists("note_article.txt"):
+        print("❌ note_article.txt が見つかりません")
+        return
 
-if size < 1000000:
-    raise Exception("Parquet破損の可能性あり。保存停止。")
+    # =========================
+    # ③ フォルダ作成
+    # =========================
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # =========================
+    # ④ 日付付き保存
+    # =========================
+    csv_name = f"{OUTPUT_DIR}/{today}_picks.csv"
+    note_name = f"{OUTPUT_DIR}/{today}_article.txt"
+
+    shutil.copy("today_picks.csv", csv_name)
+    shutil.copy("note_article.txt", note_name)
+
+    print("✅ 保存完了:")
+    print(csv_name)
+    print(note_name)
+
+    # =========================
+    # ⑤ ログ（簡易実績用）
+    # =========================
+    with open(f"{OUTPUT_DIR}/log.txt", "a", encoding="utf-8") as f:
+        f.write(f"{today} 実行完了\n")
+
+    print("🎉 日次処理完了")
+
+
+if __name__ == "__main__":
+    main()
