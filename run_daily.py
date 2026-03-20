@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 from datetime import datetime
 
 # =========================
@@ -14,22 +15,31 @@ def main():
     today = datetime.now().strftime("%Y-%m-%d")
 
     print("🚀 日次処理開始:", today)
+    print("📂 作業ディレクトリ:", os.getcwd())
 
     # =========================
-    # ① 予測スクリプト実行
+    # ① 予測スクリプト実行（重要修正）
     # =========================
     print("📊 予測実行中...")
-    os.system("python run_prediction.py")
+
+    try:
+        subprocess.run(["python", "run_prediction.py"], check=True)
+    except subprocess.CalledProcessError as e:
+        print("❌ run_prediction.py 実行失敗")
+        raise e
 
     # =========================
-    # ② 出力確認
+    # ② ファイル存在チェック
     # =========================
+    print("📂 生成ファイル確認:", os.listdir())
+
     if not os.path.exists("today_picks.csv"):
         print("❌ today_picks.csv が見つかりません")
         return
 
     if not os.path.exists("note_article.txt"):
         print("❌ note_article.txt が見つかりません")
+        print("📂 現在のファイル一覧:", os.listdir())
         return
 
     # =========================
@@ -51,7 +61,7 @@ def main():
     print(note_name)
 
     # =========================
-    # ⑤ ログ（簡易実績用）
+    # ⑤ ログ
     # =========================
     with open(f"{OUTPUT_DIR}/log.txt", "a", encoding="utf-8") as f:
         f.write(f"{today} 実行完了\n")
