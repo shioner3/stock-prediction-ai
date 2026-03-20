@@ -1,137 +1,154 @@
-# =========================
-# IMPORT
-# =========================
 import pandas as pd
 import numpy as np
 import os
+import pickle
 from lightgbm import LGBMRegressor
+
 
 # =========================
 # 設定
 # =========================
 TOP_N = 5
-DATA_PATH = "ml_dataset.parquet"
+
+BASE_DIR = os.path.dirname(__file__)
+DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
+MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
+
+FEATURES = [
+    "Return_1_rank",
+    "MA5_ratio_rank",
+    "MA25_ratio_rank",
+    "MA75_ratio_rank",
+    "Volatility_rank",
+    "Volume_change_rank",
+    "HL_range_rank",
+    "RSI_rank"
+]
+
+TARGET = "Target"
+
 
 # =========================
 # データ読み込み
 # =========================
+print("Loading dataset...")
+
 df = pd.read_parquet(DATA_PATH)
 
-# =========================
-# 特徴量・ターゲット
-# =========================
-FEATURES = [col for col in df.columns if col not in ["Date", "ticker", "target"]]
+df["Date"] = pd.to_datetime(df["Date"])
+df = df.sort_values(["Date", "Ticker"])
 
-X = df[FEATURES]
-y = df["target"]
+
+# =========================
+# 最新日取得
+# =========================
+latest_date = df["Date"].max()
+
+print("Prediction Date:", latest_date.date())
+
+
+# =========================
+# 再学習判定
+# =========================
+weekday = latest_date.weekday()  # 月=0
+
+retrain = False
+
+if weekday == 0:  # 月曜日
+    retrain = True
+
+if not os.path.exists(MODEL_PATH):
+    retrain = True
+
 
 # =========================
 # モデル学習
 # =========================
-model = LGBMRegressor(
-    n_estimators=100,
-    learning_rate=0.05,
-    random_state=42
+if retrain:
+
+    print("Weekly retrain...")
+
+    train = df[df["Date"] < latest_date]
+
+    X_train = train[FEATURES]
+    y_train = train[TARGET]
+
+    model = LGBMRegressor(
+        n_estimators=300,
+        learning_rate=0.03,
+        max_depth=6,
+        num_leaves=63,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    )
+
+    model.fit(X_train, y_train)
+
+    with open(MODEL_PATH, "wb") as f:
+        pickle.dump(model, f)
+
+else:
+
+    print("Loading existing model...")
+
+    with open(MODEL_PATH, "rb") as f:
+        model = pickle.load(f)
+
+
+# =========================
+# 今日のデータ
+# =========================
+today = df[df["Date"] == latest_date].copy()
+
+X_today = today[FEATURES]
+
+
+# =========================
+# 予測
+# =========================
+today["Pred"] = model.predict(X_today)
+
+today["Rank"] = today["Pred"].rank(ascending=False)
+
+
+# =========================
+# 銘柄名読み込み
+# =========================
+DATA_J_PATH = os.path.join(BASE_DIR, "data_j.csv")
+df_info = pd.read_csv(DATA_J_PATH, dtype=str)
+
+ticker_to_name = dict(
+    zip(
+        df_info["コード"].str.strip(),
+        df_info["銘柄名"].str.strip()
+    )
 )
 
-model.fit(X, y)
 
 # =========================
-# 最新データで予測
+# 上位銘柄
 # =========================
-latest_df = df.sort_values("Date").groupby("ticker").tail(1)
+picks = today.nsmallest(TOP_N, "Rank").copy()
 
-X_latest = latest_df[FEATURES]
-latest_df["score"] = model.predict(X_latest)
+picks["コード"] = picks["Ticker"].str.replace(".T", "", regex=False)
+picks["銘柄名"] = picks["コード"].map(ticker_to_name)
 
-# 予測リターン（仮：そのままtarget扱い）
-latest_df["pred_return"] = latest_df["score"]
+picks["PredRank"] = range(1, len(picks) + 1)
 
-# ボラティリティ（簡易）
-latest_df["volatility"] = np.random.uniform(0.05, 0.2, len(latest_df))
+picks = picks[["コード", "銘柄名", "PredRank"]]
 
-# =========================
-# 上位銘柄抽出
-# =========================
-result_df = latest_df.sort_values("score", ascending=False).head(TOP_N)
 
 # =========================
-# CSV出力（無料部分）
+# 出力
 # =========================
-result_df[["ticker", "score", "pred_return"]].to_csv("today_picks.csv", index=False)
-print("✅ today_picks.csv 出力完了")
+print()
+print("===== Today Picks =====")
+print(picks)
 
-# =========================
-# 解説生成関数
-# =========================
-def generate_comment(row, rank):
-    ticker = row["ticker"]
-    score = row["score"]
-    ret = row["pred_return"]
-    vol = row["volatility"]
+OUTPUT_PATH = os.path.join(BASE_DIR, "today_picks.csv")
 
-    # トレンド判定
-    if score > 0.85:
-        trend = "強い上昇トレンド"
-    elif score > 0.75:
-        trend = "上昇トレンド"
-    else:
-        trend = "やや不安定"
+picks.to_csv(OUTPUT_PATH, index=False)
 
-    # リスク
-    if vol < 0.1:
-        risk = "低リスク"
-    elif vol < 0.15:
-        risk = "中リスク"
-    else:
-        risk = "高リスク"
-
-    # シグナル
-    if score > 0.85:
-        signal = "非常に強い買いシグナル"
-    elif score > 0.75:
-        signal = "強めの買いシグナル"
-    else:
-        signal = "様子見"
-
-    text = f"""
-========================
-{rank}位: {ticker}
-========================
-
-■ 期待リターン
-{ret*100:.2f}%
-
-■ AI評価
-{signal}
-
-■ 判断理由
-{trend}かつ{risk}のため、
-リスクリワードの良い銘柄と判断。
-
-■ 戦略
-・エントリー：押し目
-・利確目安：+{ret*100:.2f}%
-・損切り：-2%
-
-"""
-    return text
-
-# =========================
-# 記事生成
-# =========================
-def generate_article(df):
-    articles = []
-    for i, row in enumerate(df.to_dict("records"), 1):
-        articles.append(generate_comment(row, i))
-    return "\n".join(articles)
-
-# =========================
-# note記事出力（有料部分）
-# =========================
-article_text = generate_article(result_df)
-
-with open("note_article.txt", "w", encoding="utf-8") as f:
-    f.write(article_text)
-
-print("📝 note_article.txt 生成完了")
+print()
+print("Saved:", OUTPUT_PATH)s
