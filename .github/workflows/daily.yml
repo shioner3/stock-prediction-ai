@@ -8,14 +8,13 @@ on:
 jobs:
   run-ai:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
 
       # 1️⃣ リポジトリ取得
       - uses: actions/checkout@v3
 
-      # 2️⃣ キャッシュ復元
+      # 2️⃣ キャッシュ復元（★最重要）
       - name: Cache price data
         uses: actions/cache@v3
         with:
@@ -38,7 +37,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements_ai.txt
 
-      # 6️⃣ AIパイプライン（ここでCSV＋記事生成される）
+      # 6️⃣ AIパイプライン
       - name: Run daily AI pipeline
         run: python run_daily.py
 
@@ -52,48 +51,28 @@ jobs:
             exit 1
           fi
 
-      # 8️⃣ 記事確認（追加）
-      - name: Check Article
-        run: |
-          if [ -f "note_article.txt" ]; then
-            echo "📝 記事生成OK"
-          else
-            echo "❌ 記事なし"
-            exit 1
-          fi
-
-      # 9️⃣ GitHubへ保存（CSV + 記事 + 履歴）
-      - name: Commit and push all outputs
+      # 8️⃣ GitHubへ保存
+      - name: Commit and push picks
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add today_picks.csv note_article.txt daily_reports/
-          git commit -m "auto: daily report [skip ci]" || echo "no change"
+          git add today_picks.csv
+          git commit -m "Update picks [skip ci]" || echo "no change"
           git push
 
-      # 🔟 Artifacts（ダウンロード用）
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-report
-          path: |
-            today_picks.csv
-            note_article.txt
-            daily_reports/
-
-      # 1️⃣1️⃣ HuggingFaceへpush（CSV＋記事）
-      - name: Push to Hugging Face
+      # 9️⃣ HuggingFaceへpush
+      - name: Push CSV to Hugging Face
         run: |
           git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner/Stock-Prediction-Ai hf_space
 
           cp today_picks.csv hf_space/
-          cp note_article.txt hf_space/
 
           cd hf_space
 
+          # 👇これ追加（超重要）
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add today_picks.csv note_article.txt
-          git commit -m "auto update data" || echo "no change"
+          git add today_picks.csv
+          git commit -m "auto update csv" || echo "no change"
           git push
