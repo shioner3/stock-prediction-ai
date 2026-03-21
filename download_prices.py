@@ -18,7 +18,8 @@ df_list = df_list[
     )
 ]
 
-tickers = df_list["コード"].tolist()
+# 🔥 修正①：strip + 型統一
+tickers = df_list["コード"].astype(str).str.strip().tolist()
 tickers = [t + ".T" for t in tickers]
 
 print("銘柄数:", len(tickers))
@@ -29,7 +30,7 @@ print("銘柄数:", len(tickers))
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# DuckDB接続（SQL用）
+# DuckDB接続
 # =========================
 con = duckdb.connect()
 
@@ -40,6 +41,9 @@ if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
 
+    # 🔥 修正②：Tickerも正規化
+    df_existing["Ticker"] = df_existing["Ticker"].astype(str).str.strip()
+
 else:
 
     df_existing = pd.DataFrame(
@@ -47,7 +51,7 @@ else:
     )
 
 # =========================
-# tickerごとの最新日取得
+# 最新日取得
 # =========================
 if not df_existing.empty:
 
@@ -59,17 +63,27 @@ if not df_existing.empty:
         """
     ).fetchdf()
 
+    # 🔥 修正③：ここ超重要
+    last_dates_df["Ticker"] = last_dates_df["Ticker"].astype(str).str.strip()
+
 else:
 
     last_dates_df = pd.DataFrame(columns=["Ticker", "last_date"])
 
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
-print("Parquetに保存されている各Tickerの最新日:")
-print(last_dates_df.head())
+# =========================
+# デバッグ（絶対確認）
+# =========================
+missing = 0
+for ticker in tickers:
+    if ticker not in last_dates_dict:
+        missing += 1
 
-print("取得対象のtickers例:")
-print(tickers[:5])
+print("=== DEBUG ===")
+print("Existing rows:", len(df_existing))
+print("missing ticker count:", missing)
+print("==============")
 
 # =========================
 # 差分取得
@@ -77,7 +91,6 @@ print(tickers[:5])
 dfs = []
 
 today = pd.Timestamp.today().normalize()
-
 api_calls = 0
 
 for ticker in tqdm(tickers):
@@ -89,7 +102,6 @@ for ticker in tqdm(tickers):
     else:
         start_dt = pd.Timestamp("2018-01-01")
 
-    # 今日以降なら取得しない
     if start_dt >= today:
         continue
 
@@ -108,7 +120,6 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
-        # マルチインデックス解消
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -116,15 +127,7 @@ for ticker in tqdm(tickers):
         data["Ticker"] = ticker
 
         data = data[
-            [
-                "Date",
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-                "Ticker",
-            ]
+            ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]
         ]
 
         if last_date:
@@ -138,14 +141,13 @@ for ticker in tqdm(tickers):
         continue
 
 # =========================
-# Parquetに追加保存
+# 保存
 # =========================
 if dfs:
 
     df_new = pd.concat(dfs, ignore_index=True)
 
     df_all = pd.concat([df_existing, df_new], ignore_index=True)
-
     df_all = df_all.drop_duplicates(subset=["Date", "Ticker"])
 
     df_all.to_parquet(PARQUET_FILE, index=False)
@@ -153,20 +155,16 @@ if dfs:
     print("追加行数:", len(df_new))
 
 else:
-
     print("追加データなし")
 
 # =========================
-# 保存確認
+# 確認
 # =========================
 df_check = con.execute(
-    f"""
-    SELECT COUNT(*) FROM '{PARQUET_FILE}'
-    """
+    f"SELECT COUNT(*) FROM '{PARQUET_FILE}'"
 ).fetchone()[0]
 
 print("保存完了 行数:", df_check)
-
 print("API呼び出し回数:", api_calls)
 
 con.close()
