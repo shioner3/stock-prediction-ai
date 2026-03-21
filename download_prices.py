@@ -1,6 +1,7 @@
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
+import duckdb
 import os
 
 CSV_FILE = "data_j.csv"
@@ -17,25 +18,27 @@ df_list = df_list[
     )
 ]
 
-tickers = df_list["コード"].astype(str).str.strip()
-tickers = (tickers + ".T").tolist()
+tickers = df_list["コード"].tolist()
+tickers = [t + ".T" for t in tickers]
 
 print("銘柄数:", len(tickers))
 
 # =========================
-# データフォルダ
+# データフォルダ作成
 # =========================
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# 既存データ
+# DuckDB接続（SQL用）
+# =========================
+con = duckdb.connect()
+
+# =========================
+# 既存Parquet読み込み
 # =========================
 if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
-
-    df_existing["Ticker"] = df_existing["Ticker"].astype(str).str.strip()
-    df_existing["Date"] = pd.to_datetime(df_existing["Date"]).dt.tz_localize(None)
 
 else:
 
@@ -44,16 +47,17 @@ else:
     )
 
 # =========================
-# 最新日取得
+# tickerごとの最新日取得
 # =========================
 if not df_existing.empty:
 
-    last_dates_df = (
-        df_existing.groupby("Ticker")["Date"]
-        .max()
-        .reset_index()
-        .rename(columns={"Date": "last_date"})
-    )
+    last_dates_df = con.execute(
+        f"""
+        SELECT Ticker, MAX(Date) AS last_date
+        FROM '{PARQUET_FILE}'
+        GROUP BY Ticker
+        """
+    ).fetchdf()
 
 else:
 
@@ -61,24 +65,18 @@ else:
 
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
-# =========================
-# デバッグ
-# =========================
-missing = sum([1 for t in tickers if t not in last_dates_dict])
+print("Parquetに保存されている各Tickerの最新日:")
+print(last_dates_df.head())
 
-print("=== DEBUG ===")
-print("Existing rows:", len(df_existing))
-print("missing ticker count:", missing)
-print("==============")
+print("取得対象のtickers例:")
+print(tickers[:5])
 
 # =========================
 # 差分取得
 # =========================
 dfs = []
 
-# 🔥 JST & tz除去（ここが最重要）
-today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
-today = today.normalize().tz_localize(None)
+today = pd.Timestamp.today().normalize()
 
 api_calls = 0
 
@@ -86,26 +84,19 @@ for ticker in tqdm(tickers):
 
     last_date = last_dates_dict.get(ticker)
 
-    if last_date is not None:
-        last_date = pd.to_datetime(last_date, errors="coerce")
-
-        if pd.isna(last_date):
-            start_dt = pd.Timestamp("2018-01-01")
-        else:
-            last_date = last_date.tz_localize(None)
-
-            # 🔥 差分判定
-            if (today - last_date).days <= 3:
-                continue
-
-            start_dt = last_date + pd.Timedelta(days=1)
-
+    if last_date:
+        start_dt = pd.to_datetime(last_date) + pd.Timedelta(days=1)
     else:
         start_dt = pd.Timestamp("2018-01-01")
+
+    # 今日以降なら取得しない
+    if start_dt >= today:
+        continue
 
     start_date = start_dt.strftime("%Y-%m-%d")
 
     try:
+
         api_calls += 1
 
         data = yf.download(
@@ -117,6 +108,7 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
+        # マルチインデックス解消
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -124,11 +116,19 @@ for ticker in tqdm(tickers):
         data["Ticker"] = ticker
 
         data = data[
-            ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]
+            [
+                "Date",
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume",
+                "Ticker",
+            ]
         ]
 
-        if last_date is not None:
-            data = data[data["Date"] > last_date]
+        if last_date:
+            data = data[data["Date"] > pd.to_datetime(last_date)]
 
         if not data.empty:
             dfs.append(data)
@@ -138,13 +138,14 @@ for ticker in tqdm(tickers):
         continue
 
 # =========================
-# 保存
+# Parquetに追加保存
 # =========================
 if dfs:
 
     df_new = pd.concat(dfs, ignore_index=True)
 
     df_all = pd.concat([df_existing, df_new], ignore_index=True)
+
     df_all = df_all.drop_duplicates(subset=["Date", "Ticker"])
 
     df_all.to_parquet(PARQUET_FILE, index=False)
@@ -152,10 +153,20 @@ if dfs:
     print("追加行数:", len(df_new))
 
 else:
+
     print("追加データなし")
 
 # =========================
-# 確認
+# 保存確認
 # =========================
-print("保存完了 行数:", len(df_existing) + (len(df_new) if dfs else 0))
+df_check = con.execute(
+    f"""
+    SELECT COUNT(*) FROM '{PARQUET_FILE}'
+    """
+).fetchone()[0]
+
+print("保存完了 行数:", df_check)
+
 print("API呼び出し回数:", api_calls)
+
+con.close()
