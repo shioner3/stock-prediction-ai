@@ -95,7 +95,7 @@ for ticker in tqdm(tickers):
             last_date = last_date.tz_localize(None)
 
             # 🔥 差分判定
-            if (today - last_date).days <= 2:
+            if (today - last_date).days <= 3:
                 continue
 
             start_dt = last_date + pd.Timedelta(days=1)
