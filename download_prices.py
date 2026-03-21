@@ -95,7 +95,7 @@ for ticker in tqdm(tickers):
 
     # 🔥 未来はスキップ
     if last_date is not None:
-        if (today - last_date).days <= 1:
+        if (today - last_date).days <= 2:
             continue
         
 
