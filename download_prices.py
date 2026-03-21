@@ -18,7 +18,7 @@ df_list = df_list[
     )
 ]
 
-# 🔥 ticker統一（安全版）
+# 🔥 ticker統一
 tickers = df_list["コード"].astype(str).tolist()
 tickers = [t if t.endswith(".T") else t + ".T" for t in tickers]
 
@@ -30,7 +30,7 @@ print("銘柄数:", len(tickers))
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# DuckDB接続（SQL用）
+# DuckDB接続
 # =========================
 con = duckdb.connect()
 
@@ -41,7 +41,7 @@ if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
 
-    # 🔥 Ticker統一（最重要）
+    # 🔥 Ticker統一（超重要）
     df_existing["Ticker"] = df_existing["Ticker"].astype(str)
     df_existing["Ticker"] = df_existing["Ticker"].apply(
         lambda x: x if x.endswith(".T") else x + ".T"
@@ -54,7 +54,7 @@ else:
     )
 
 # =========================
-# tickerごとの最新日取得
+# 最新日取得
 # =========================
 if not df_existing.empty:
 
@@ -73,7 +73,7 @@ else:
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
 # =========================
-# 🔍 デバッグ（超重要）
+# デバッグ
 # =========================
 print("=== DEBUG ===")
 print("Existing rows:", len(df_existing))
@@ -90,8 +90,8 @@ print(tickers[:5])
 # =========================
 dfs = []
 
-# 🔥 UTCに統一（重要）
-today = pd.Timestamp.utcnow().normalize()
+# 🔥 tz-naiveに統一（重要）
+today = pd.Timestamp.today().normalize()
 
 api_calls = 0
 
@@ -100,11 +100,11 @@ for ticker in tqdm(tickers):
     last_date = last_dates_dict.get(ticker)
 
     if last_date:
-        start_dt = pd.to_datetime(last_date) + pd.Timedelta(days=1)
+        start_dt = pd.to_datetime(last_date).tz_localize(None) + pd.Timedelta(days=1)
     else:
         start_dt = pd.Timestamp("2018-01-01")
 
-    # 🔥 条件緩和
+    # 🔥 比較OK（tz統一済み）
     if start_dt > today:
         continue
 
@@ -123,7 +123,7 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
-        # マルチインデックス解消
+        # マルチインデックス対策
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -154,7 +154,7 @@ for ticker in tqdm(tickers):
         continue
 
 # =========================
-# Parquetに追加保存
+# 保存
 # =========================
 if dfs:
 
@@ -173,7 +173,7 @@ else:
     print("追加データなし")
 
 # =========================
-# 保存確認
+# 確認
 # =========================
 df_check = con.execute(
     f"""
