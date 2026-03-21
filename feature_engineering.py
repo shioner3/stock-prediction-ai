@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import os
+import duckdb
 
 # =========================
 # 設定
@@ -12,20 +12,16 @@ SAVE_PATH = "ml_dataset.parquet"
 HOLD_DAYS = 5
 
 # =========================
-# データ読み込み（Pandas版）
+# データ読み込み
 # =========================
 
-if not os.path.exists(PARQUET_FILE):
-    raise FileNotFoundError("prices.parquet が存在しません")
+con = duckdb.connect()
 
-df = pd.read_parquet(PARQUET_FILE)
-
-# 🔥 型統一（超重要）
-df["Date"] = pd.to_datetime(df["Date"])
-df["Ticker"] = df["Ticker"].astype(str).str.strip()
-
-# 並び替え
-df = df.sort_values(["Ticker", "Date"])
+df = con.execute(f"""
+SELECT Date, Ticker, Open, High, Low, Close, Volume
+FROM '{PARQUET_FILE}'
+ORDER BY Ticker, Date
+""").df()
 
 print("元データサイズ:", df.shape)
 
@@ -84,17 +80,24 @@ rank_features = [
 ]
 
 for col in rank_features:
-    df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
+
+    df[col + "_rank"] = (
+        df.groupby("Date")[col]
+        .rank(pct=True)
+    )
 
 # =========================
-# Target（未来リターン）
+# Target
 # =========================
 
 df["FutureReturn_5"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-df["Target"] = df.groupby("Date")["FutureReturn_5"].rank(pct=True)
+df["Target"] = (
+    df.groupby("Date")["FutureReturn_5"]
+    .rank(pct=True)
+)
 
 # =========================
 # データ整理
@@ -118,7 +121,7 @@ df = df.dropna(subset=[
 # 保存
 # =========================
 
-df.to_parquet(SAVE_PATH, index=False)
+df.to_parquet(SAVE_PATH)
 
 print("MLデータ保存完了")
 print("行数:", len(df))
