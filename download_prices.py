@@ -94,8 +94,10 @@ for ticker in tqdm(tickers):
         start_dt = pd.Timestamp("2018-01-01")
 
     # 🔥 未来はスキップ
-    if start_dt >= today:
+    if last_date is not None:
+    if (today - last_date).days <= 1:
         continue
+        
 
     start_date = start_dt.strftime("%Y-%m-%d")
 
