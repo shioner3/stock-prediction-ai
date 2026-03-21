@@ -18,8 +18,9 @@ df_list = df_list[
     )
 ]
 
-tickers = df_list["コード"].tolist()
-tickers = [t + ".T" for t in tickers]
+# 🔥 ticker統一（安全版）
+tickers = df_list["コード"].astype(str).tolist()
+tickers = [t if t.endswith(".T") else t + ".T" for t in tickers]
 
 print("銘柄数:", len(tickers))
 
@@ -39,6 +40,12 @@ con = duckdb.connect()
 if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
+
+    # 🔥 Ticker統一（最重要）
+    df_existing["Ticker"] = df_existing["Ticker"].astype(str)
+    df_existing["Ticker"] = df_existing["Ticker"].apply(
+        lambda x: x if x.endswith(".T") else x + ".T"
+    )
 
 else:
 
@@ -65,8 +72,15 @@ else:
 
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
-print("Parquetに保存されている各Tickerの最新日:")
+# =========================
+# 🔍 デバッグ（超重要）
+# =========================
+print("=== DEBUG ===")
+print("Existing rows:", len(df_existing))
+print("Ticker sample:", df_existing["Ticker"].unique()[:5] if not df_existing.empty else "EMPTY")
+print("Last dates sample:")
 print(last_dates_df.head())
+print("==============")
 
 print("取得対象のtickers例:")
 print(tickers[:5])
@@ -76,7 +90,8 @@ print(tickers[:5])
 # =========================
 dfs = []
 
-today = pd.Timestamp.today().normalize()
+# 🔥 UTCに統一（重要）
+today = pd.Timestamp.utcnow().normalize()
 
 api_calls = 0
 
@@ -89,8 +104,8 @@ for ticker in tqdm(tickers):
     else:
         start_dt = pd.Timestamp("2018-01-01")
 
-    # 今日以降なら取得しない
-    if start_dt >= today:
+    # 🔥 条件緩和
+    if start_dt > today:
         continue
 
     start_date = start_dt.strftime("%Y-%m-%d")
@@ -127,6 +142,7 @@ for ticker in tqdm(tickers):
             ]
         ]
 
+        # 🔥 念のため差分フィルタ
         if last_date:
             data = data[data["Date"] > pd.to_datetime(last_date)]
 
@@ -166,7 +182,6 @@ df_check = con.execute(
 ).fetchone()[0]
 
 print("保存完了 行数:", df_check)
-
 print("API呼び出し回数:", api_calls)
 
 con.close()
