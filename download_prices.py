@@ -81,23 +81,33 @@ print("==============")
 # =========================
 dfs = []
 
-today = pd.Timestamp.today().normalize()
+# 🔥 JSTに修正（超重要）
+today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
+today = today.normalize()
+
 api_calls = 0
 
 for ticker in tqdm(tickers):
 
     last_date = last_dates_dict.get(ticker)
 
+    # 🔥 型統一
     if last_date is not None:
-        start_dt = last_date + pd.Timedelta(days=1)
+        last_date = pd.to_datetime(last_date, errors="coerce")
+
+        if pd.isna(last_date):
+            start_dt = pd.Timestamp("2018-01-01")
+        else:
+            last_date = last_date.tz_localize(None)
+
+            # 🔥 ここが最重要（完全版）
+            if (today - last_date).days <= 2:
+                continue
+
+            start_dt = last_date + pd.Timedelta(days=1)
+
     else:
         start_dt = pd.Timestamp("2018-01-01")
-
-    # 🔥 未来はスキップ
-    if last_date is not None:
-        if (today - last_date).days <= 2:
-            continue
-        
 
     start_date = start_dt.strftime("%Y-%m-%d")
 
@@ -113,7 +123,6 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
-        # カラム整形
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -124,7 +133,6 @@ for ticker in tqdm(tickers):
             ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]
         ]
 
-        # 念のためフィルタ
         if last_date is not None:
             data = data[data["Date"] > last_date]
 
