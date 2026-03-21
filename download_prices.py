@@ -18,9 +18,8 @@ df_list = df_list[
     )
 ]
 
-# 🔥 ticker統一
-tickers = df_list["コード"].astype(str).tolist()
-tickers = [t if t.endswith(".T") else t + ".T" for t in tickers]
+tickers = df_list["コード"].tolist()
+tickers = [t + ".T" for t in tickers]
 
 print("銘柄数:", len(tickers))
 
@@ -30,7 +29,7 @@ print("銘柄数:", len(tickers))
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# DuckDB接続
+# DuckDB接続（SQL用）
 # =========================
 con = duckdb.connect()
 
@@ -41,12 +40,6 @@ if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
 
-    # 🔥 Ticker統一（超重要）
-    df_existing["Ticker"] = df_existing["Ticker"].astype(str)
-    df_existing["Ticker"] = df_existing["Ticker"].apply(
-        lambda x: x if x.endswith(".T") else x + ".T"
-    )
-
 else:
 
     df_existing = pd.DataFrame(
@@ -54,7 +47,7 @@ else:
     )
 
 # =========================
-# 最新日取得
+# tickerごとの最新日取得
 # =========================
 if not df_existing.empty:
 
@@ -72,15 +65,8 @@ else:
 
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
-# =========================
-# デバッグ
-# =========================
-print("=== DEBUG ===")
-print("Existing rows:", len(df_existing))
-print("Ticker sample:", df_existing["Ticker"].unique()[:5] if not df_existing.empty else "EMPTY")
-print("Last dates sample:")
+print("Parquetに保存されている各Tickerの最新日:")
 print(last_dates_df.head())
-print("==============")
 
 print("取得対象のtickers例:")
 print(tickers[:5])
@@ -90,7 +76,6 @@ print(tickers[:5])
 # =========================
 dfs = []
 
-# 🔥 tz-naiveに統一（重要）
 today = pd.Timestamp.today().normalize()
 
 api_calls = 0
@@ -100,12 +85,12 @@ for ticker in tqdm(tickers):
     last_date = last_dates_dict.get(ticker)
 
     if last_date:
-        start_dt = pd.to_datetime(last_date).tz_localize(None) + pd.Timedelta(days=1)
+        start_dt = pd.to_datetime(last_date) + pd.Timedelta(days=1)
     else:
         start_dt = pd.Timestamp("2018-01-01")
 
-    # 🔥 比較OK（tz統一済み）
-    if start_dt > today:
+    # 今日以降なら取得しない
+    if start_dt >= today:
         continue
 
     start_date = start_dt.strftime("%Y-%m-%d")
@@ -123,7 +108,7 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
-        # マルチインデックス対策
+        # マルチインデックス解消
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -142,7 +127,6 @@ for ticker in tqdm(tickers):
             ]
         ]
 
-        # 🔥 念のため差分フィルタ
         if last_date:
             data = data[data["Date"] > pd.to_datetime(last_date)]
 
@@ -154,7 +138,7 @@ for ticker in tqdm(tickers):
         continue
 
 # =========================
-# 保存
+# Parquetに追加保存
 # =========================
 if dfs:
 
@@ -173,7 +157,7 @@ else:
     print("追加データなし")
 
 # =========================
-# 確認
+# 保存確認
 # =========================
 df_check = con.execute(
     f"""
@@ -182,6 +166,7 @@ df_check = con.execute(
 ).fetchone()[0]
 
 print("保存完了 行数:", df_check)
+
 print("API呼び出し回数:", api_calls)
 
 con.close()
