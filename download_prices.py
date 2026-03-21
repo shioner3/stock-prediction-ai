@@ -17,28 +17,25 @@ df_list = df_list[
     )
 ]
 
-# 🔥 空白除去＋統一
 tickers = df_list["コード"].astype(str).str.strip()
-tickers = tickers + ".T"
-tickers = tickers.tolist()
+tickers = (tickers + ".T").tolist()
 
 print("銘柄数:", len(tickers))
 
 # =========================
-# データフォルダ作成
+# データフォルダ
 # =========================
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# 既存Parquet読み込み
+# 既存データ
 # =========================
 if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
 
-    # 🔥 正規化
     df_existing["Ticker"] = df_existing["Ticker"].astype(str).str.strip()
-    df_existing["Date"] = pd.to_datetime(df_existing["Date"])
+    df_existing["Date"] = pd.to_datetime(df_existing["Date"]).dt.tz_localize(None)
 
 else:
 
@@ -47,13 +44,12 @@ else:
     )
 
 # =========================
-# 最新日取得（Pandas版）
+# 最新日取得
 # =========================
 if not df_existing.empty:
 
     last_dates_df = (
-        df_existing
-        .groupby("Ticker")["Date"]
+        df_existing.groupby("Ticker")["Date"]
         .max()
         .reset_index()
         .rename(columns={"Date": "last_date"})
@@ -63,7 +59,6 @@ else:
 
     last_dates_df = pd.DataFrame(columns=["Ticker", "last_date"])
 
-# dict化
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
 # =========================
@@ -81,9 +76,9 @@ print("==============")
 # =========================
 dfs = []
 
-# 🔥 JSTに修正（超重要）
+# 🔥 JST & tz除去（ここが最重要）
 today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
-today = today.normalize()
+today = today.normalize().tz_localize(None)
 
 api_calls = 0
 
@@ -91,7 +86,6 @@ for ticker in tqdm(tickers):
 
     last_date = last_dates_dict.get(ticker)
 
-    # 🔥 型統一
     if last_date is not None:
         last_date = pd.to_datetime(last_date, errors="coerce")
 
@@ -100,7 +94,7 @@ for ticker in tqdm(tickers):
         else:
             last_date = last_date.tz_localize(None)
 
-            # 🔥 ここが最重要（完全版）
+            # 🔥 差分判定
             if (today - last_date).days <= 2:
                 continue
 
@@ -151,8 +145,6 @@ if dfs:
     df_new = pd.concat(dfs, ignore_index=True)
 
     df_all = pd.concat([df_existing, df_new], ignore_index=True)
-
-    # 重複削除
     df_all = df_all.drop_duplicates(subset=["Date", "Ticker"])
 
     df_all.to_parquet(PARQUET_FILE, index=False)
@@ -163,7 +155,7 @@ else:
     print("追加データなし")
 
 # =========================
-# 最終確認
+# 確認
 # =========================
 print("保存完了 行数:", len(df_existing) + (len(df_new) if dfs else 0))
 print("API呼び出し回数:", api_calls)
