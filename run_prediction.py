@@ -151,4 +151,4 @@ OUTPUT_PATH = os.path.join(BASE_DIR, "today_picks.csv")
 picks.to_csv(OUTPUT_PATH, index=False)
 
 print()
-print("Saved:", OUTPUT_PATH)
+print("Saved:", OUTPUT_PATH)s
