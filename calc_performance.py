@@ -33,7 +33,7 @@ df_pred["target_date"] = pd.to_datetime(df_pred["target_date"])
 today = pd.Timestamp.today().normalize()
 
 # =========================
-# 既存パフォーマンス読み込み（重複防止）
+# 既存パフォーマンス読み込み
 # =========================
 if os.path.exists(PERF_LOG):
     df_perf_existing = pd.read_csv(PERF_LOG)
@@ -48,7 +48,7 @@ if not df_perf_existing.empty:
     )
 
 # =========================
-# 実績計算
+# 🔥 実績計算
 # =========================
 results = []
 
@@ -60,11 +60,9 @@ for _, row in df_pred.iterrows():
 
     key = f"{ticker}_{predict_date}"
 
-    # すでに計算済みならスキップ
     if key in existing_keys:
         continue
 
-    # まだ未来ならスキップ
     if target_date > today:
         continue
 
@@ -78,12 +76,25 @@ for _, row in df_pred.iterrows():
 
     ret = (end_price.values[0] / start_price.values[0]) - 1
 
+    # 🔥 市場スコアをここで付与（重要）
+    market_score = row["Pred"]
+
+    if market_score > 0.55:
+        regime = "strong"
+    elif market_score > 0.52:
+        regime = "slightly_strong"
+    elif market_score > 0.5:
+        regime = "neutral"
+    else:
+        regime = "weak"
+
     results.append({
         "ticker": ticker,
         "predict_date": predict_date.strftime("%Y-%m-%d"),
         "target_date": target_date.strftime("%Y-%m-%d"),
         "return": ret,
-        "win": int(ret > 0)
+        "win": int(ret > 0),
+        "regime": regime
     })
 
 # =========================
@@ -104,18 +115,41 @@ else:
     print("追加データなし")
 
 # =========================
-# 指標計算
+# 🔥 指標計算（全体）
 # =========================
 if os.path.exists(PERF_LOG):
     df = pd.read_csv(PERF_LOG)
 
+    print("\n📊 全体実績")
+
     win_rate = df["win"].mean()
     avg_return = df["return"].mean()
     std = df["return"].std()
-
     sharpe = avg_return / std if std != 0 else 0
 
-    print("\n📊 実績サマリー")
     print("勝率:", round(win_rate, 3))
     print("平均リターン:", round(avg_return, 4))
     print("Sharpe:", round(sharpe, 3))
+
+    # =========================
+    # 🔥 レジーム別（ここが本質）
+    # =========================
+    print("\n📊 市場別実績")
+
+    for regime in ["strong", "slightly_strong", "neutral", "weak"]:
+
+        df_r = df[df["regime"] == regime]
+
+        if len(df_r) < 10:
+            print(f"{regime}: データ不足")
+            continue
+
+        win_rate = df_r["win"].mean()
+        avg_return = df_r["return"].mean()
+        std = df_r["return"].std()
+        sharpe = avg_return / std if std != 0 else 0
+
+        print(f"\n[{regime}]")
+        print("勝率:", round(win_rate, 3))
+        print("平均リターン:", round(avg_return, 4))
+        print("Sharpe:", round(sharpe, 3))
