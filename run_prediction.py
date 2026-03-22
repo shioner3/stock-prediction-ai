@@ -71,7 +71,46 @@ def get_regime(score):
 
 
 # =========================
-# 🔥 実績取得
+# 🔥 最適銘柄数取得（超重要）
+# =========================
+def get_best_n(regime):
+
+    if not os.path.exists(PERF_LOG):
+        return 3, "（実績なし）"
+
+    df = pd.read_csv(PERF_LOG)
+
+    df_r = df[df["regime"] == regime]
+
+    if df_r.empty or "n" not in df_r.columns:
+        return 3, "（データ不足）"
+
+    best_n = 3
+    best_sharpe = -999
+
+    for n in sorted(df_r["n"].unique()):
+
+        df_n = df_r[df_r["n"] == n]
+
+        if len(df_n) < 10:
+            continue
+
+        avg = df_n["avg_return"].mean()
+        std = df_n["avg_return"].std()
+
+        sharpe = avg / std if std != 0 else 0
+
+        if sharpe > best_sharpe:
+            best_sharpe = sharpe
+            best_n = n
+
+    comment = f"最適銘柄数: {best_n}（Sharpe最大）"
+
+    return best_n, comment
+
+
+# =========================
+# 🔥 実績コメント
 # =========================
 def get_performance_comment(regime):
 
@@ -79,14 +118,13 @@ def get_performance_comment(regime):
         return "\n（実績データなし）\n"
 
     df = pd.read_csv(PERF_LOG)
-
     df_r = df[df["regime"] == regime]
 
     if len(df_r) < 10:
         return "\n（データ不足）\n"
 
     win = df_r["win"].mean()
-    avg = df_r["return"].mean()
+    avg = df_r["avg_return"].mean()
 
     return f"""
 ■ 過去類似局面の実績
@@ -103,21 +141,20 @@ def generate_daily_decision(picks_df, full_df):
     market_score = full_df["Pred"].mean()
     regime = get_regime(market_score)
 
+    best_n, best_comment = get_best_n(regime)
+
     if regime == "strong":
         trend = "強気"
-        action = "フルエントリー"
-        pos = "100%"
-
+        action = "積極エントリー"
+        pos = "80〜100%"
     elif regime == "slightly_strong":
         trend = "やや強気"
         action = "選別エントリー"
         pos = "50〜70%"
-
     elif regime == "neutral":
         trend = "中立"
         action = "様子見"
         pos = "30%"
-
     else:
         trend = "弱気"
         action = "見送り"
@@ -134,19 +171,26 @@ def generate_daily_decision(picks_df, full_df):
 行動: {action}
 推奨ポジション: {pos}
 
+■ 最適戦略
+{best_comment}
+
 {perf_text}
 """
 
-    return text, regime
+    return text, regime, best_n
 
 
 # =========================
 # 🔥 記事生成
 # =========================
-def generate_article(df, daily_comment):
+def generate_article(df, daily_comment, best_n):
+
     texts = [daily_comment, generate_global_strategy()]
 
-    for _, row in df.iterrows():
+    # 🔥 採用銘柄のみ表示
+    selected = df.head(best_n)
+
+    for _, row in selected.iterrows():
         texts.append(f"""
 ========================
 {row["PredRank"]}位: {row["銘柄名"]} ({row["コード"]})
@@ -174,7 +218,6 @@ retrain = (latest_date.weekday() == 0) or (not os.path.exists(MODEL_PATH))
 
 if retrain:
     train = df[df["Date"] < latest_date]
-
     model = LGBMRegressor()
     model.fit(train[FEATURES], train[TARGET])
 
@@ -208,54 +251,49 @@ picks["銘柄名"] = picks["コード"].map(ticker_to_name)
 picks["PredRank"] = range(1, len(picks) + 1)
 
 # =========================
-# 🔥 日次判断（＋regime取得）
+# 🔥 日次判断
 # =========================
-daily_comment, regime = generate_daily_decision(picks, today)
+daily_comment, regime, best_n = generate_daily_decision(picks, today)
 
 # =========================
-# CSV
+# CSV（無料）
 # =========================
 picks[["Ticker", "コード", "銘柄名"]].to_csv("today_picks.csv", index=False)
 
 # =========================
-# 🔥 記事
+# 🔥 記事（有料）
 # =========================
-article = generate_article(picks, daily_comment)
+article = generate_article(picks, daily_comment, best_n)
 
 with open("note_article.txt", "w", encoding="utf-8") as f:
     f.write(article)
 
 # =========================
-# 🔥 ログ保存（regime追加）
+# 🔥 ログ保存
 # =========================
 today_dt = datetime.now()
 target_dt = today_dt + BDay(5)
 
 picks["predict_date"] = today_dt.strftime("%Y-%m-%d")
 picks["target_date"] = target_dt.strftime("%Y-%m-%d")
-picks["regime"] = regime  # 🔥追加
+picks["regime"] = regime
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
+save_cols = [
+    "Ticker",
+    "コード",
+    "銘柄名",
+    "Pred",
+    "PredRank",
+    "predict_date",
+    "target_date",
+    "regime"
+]
+
 log_path = os.path.join(LOG_DIR, "predictions.csv")
 
-# 初回 or カラム違いなら上書き
-if not os.path.exists(log_path):
-    picks[save_cols].to_csv(log_path, index=False)
-else:
-    df_old = pd.read_csv(log_path)
-
-    # カラム一致チェック
-    if list(df_old.columns) != save_cols:
-        print("⚠ カラム不一致 → 上書き")
-        picks[save_cols].to_csv(log_path, index=False)
-    else:
-        picks[save_cols].to_csv(
-            log_path,
-            mode="a",
-            header=False,
-            index=False
-        )
+picks[save_cols].to_csv(log_path, index=False)
 
 print("✅ 完全処理完了")
