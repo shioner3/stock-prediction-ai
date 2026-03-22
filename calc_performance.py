@@ -54,7 +54,7 @@ results = []
 
 for _, row in df_pred.iterrows():
 
-    ticker = row["ticker"]
+    ticker = row["Ticker"]
     predict_date = row["predict_date"]
     target_date = row["target_date"]
 
