@@ -240,11 +240,22 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 log_path = os.path.join(LOG_DIR, "predictions.csv")
 
-picks.to_csv(
-    log_path,
-    mode="a",
-    header=not os.path.exists(log_path),
-    index=False
-)
+# 初回 or カラム違いなら上書き
+if not os.path.exists(log_path):
+    picks[save_cols].to_csv(log_path, index=False)
+else:
+    df_old = pd.read_csv(log_path)
+
+    # カラム一致チェック
+    if list(df_old.columns) != save_cols:
+        print("⚠ カラム不一致 → 上書き")
+        picks[save_cols].to_csv(log_path, index=False)
+    else:
+        picks[save_cols].to_csv(
+            log_path,
+            mode="a",
+            header=False,
+            index=False
+        )
 
 print("✅ 完全処理完了")
