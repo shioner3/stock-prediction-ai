@@ -32,21 +32,13 @@ TARGET = "Target"
 
 
 # =========================
-# 🔥 モデル準拠 戦略
+# 🔥 共通戦略（前提）
 # =========================
-def generate_model_strategy(row):
-    rank = row["PredRank"]
-
-    if rank == 1:
-        confidence = "最高"
-    elif rank <= 3:
-        confidence = "高"
-    else:
-        confidence = "中"
-
-    return f"""
-■ AI評価
-{rank}位（信頼度: {confidence}）
+def generate_global_strategy():
+    return """
+========================
+■ AI戦略の前提（重要）
+========================
 
 ■ エントリー
 当日の寄付き or 引けで即エントリー
@@ -63,6 +55,31 @@ def generate_model_strategy(row):
 ■ 根拠
 本モデルは5営業日後のリターンを予測しているため、
 即エントリーが最も再現性が高い。
+
+------------------------
+
+■ 注意事項
+本戦略は短期トレードを前提としています。
+市場状況によりパフォーマンスは変動します。
+"""
+
+
+# =========================
+# 🔥 銘柄評価（簡略化）
+# =========================
+def generate_model_comment(row):
+    rank = row["PredRank"]
+
+    if rank == 1:
+        confidence = "最高"
+    elif rank <= 3:
+        confidence = "高"
+    else:
+        confidence = "中"
+
+    return f"""
+■ AI評価
+{rank}位（信頼度: {confidence}）
 """
 
 
@@ -105,11 +122,10 @@ def generate_daily_decision(picks_df, full_df):
 市場評価: {trend}
 行動: {action}
 推奨ポジション: {position}
-
 """
 
     if max_n == 0:
-        text += "👉 本日はノートレード推奨\n"
+        text += "\n👉 本日はノートレード推奨\n"
     else:
         selected = picks_df.head(max_n)
         text += "\n■ 採用銘柄\n"
@@ -124,15 +140,22 @@ def generate_daily_decision(picks_df, full_df):
 # 🔥 記事生成
 # =========================
 def generate_article(df, daily_comment):
-    texts = [daily_comment]
+    texts = []
 
+    # ① 日次判断
+    texts.append(daily_comment)
+
+    # ② 共通戦略（ここが今回の改善）
+    texts.append(generate_global_strategy())
+
+    # ③ 銘柄別
     for _, row in df.iterrows():
         text = f"""
 ========================
 {row["PredRank"]}位: {row["銘柄名"]} ({row["コード"]})
 ========================
 
-{row["Strategy"]}
+{generate_model_comment(row)}
 """
         texts.append(text)
 
@@ -212,12 +235,6 @@ picks = picks[["Ticker", "コード", "銘柄名", "Pred", "PredRank"]]
 
 
 # =========================
-# 🔥 戦略追加
-# =========================
-picks["Strategy"] = picks.apply(generate_model_strategy, axis=1)
-
-
-# =========================
 # 🔥 日次判断
 # =========================
 daily_comment = generate_daily_decision(picks, today)
@@ -241,7 +258,7 @@ print("📝 note_article.txt 生成完了")
 
 
 # =========================
-# 🔥 実績ログ
+# 🔥 実績ログ（列固定）
 # =========================
 today_dt = datetime.now()
 target_dt = today_dt + BDay(5)
@@ -252,10 +269,22 @@ picks["target_date"] = target_dt.strftime("%Y-%m-%d")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-picks.to_csv(
-    os.path.join(LOG_DIR, "predictions.csv"),
+save_cols = [
+    "Ticker",
+    "コード",
+    "銘柄名",
+    "Pred",
+    "PredRank",
+    "predict_date",
+    "target_date"
+]
+
+log_path = os.path.join(LOG_DIR, "predictions.csv")
+
+picks[save_cols].to_csv(
+    log_path,
     mode="a",
-    header=not os.path.exists(os.path.join(LOG_DIR, "predictions.csv")),
+    header=not os.path.exists(log_path),
     index=False
 )
 
