@@ -15,6 +15,7 @@ TOP_N = 5
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
+PERF_LOG = os.path.join(BASE_DIR, "logs/performance.csv")
 
 
 FEATURES = [
@@ -32,7 +33,7 @@ TARGET = "Target"
 
 
 # =========================
-# 🔥 共通戦略（前提）
+# 🔥 共通戦略
 # =========================
 def generate_global_strategy():
     return """
@@ -42,77 +43,87 @@ def generate_global_strategy():
 
 ■ エントリー
 当日の寄付き or 引けで即エントリー
-
 ■ 保有期間
 5営業日
-
 ■ 利確
 5営業日後に決済
-
 ■ 損切り
 -3%
 
-■ 根拠
-本モデルは5営業日後のリターンを予測しているため、
-即エントリーが最も再現性が高い。
-
 ------------------------
-
 ■ 注意事項
-本戦略は短期トレードを前提としています。
-市場状況によりパフォーマンスは変動します。
+本戦略は短期トレードです
 """
 
 
 # =========================
-# 🔥 銘柄評価（簡略化）
+# 🔥 レジーム判定
 # =========================
-def generate_model_comment(row):
-    rank = row["PredRank"]
-
-    if rank == 1:
-        confidence = "最高"
-    elif rank <= 3:
-        confidence = "高"
+def get_regime(score):
+    if score > 0.55:
+        return "strong"
+    elif score > 0.52:
+        return "slightly_strong"
+    elif score > 0.5:
+        return "neutral"
     else:
-        confidence = "中"
+        return "weak"
+
+
+# =========================
+# 🔥 実績取得
+# =========================
+def get_performance_comment(regime):
+
+    if not os.path.exists(PERF_LOG):
+        return "\n（実績データなし）\n"
+
+    df = pd.read_csv(PERF_LOG)
+
+    df_r = df[df["regime"] == regime]
+
+    if len(df_r) < 10:
+        return "\n（データ不足）\n"
+
+    win = df_r["win"].mean()
+    avg = df_r["return"].mean()
 
     return f"""
-■ AI評価
-{rank}位（信頼度: {confidence}）
+■ 過去類似局面の実績
+勝率: {win:.2%}
+平均リターン: {avg:.2%}
 """
 
 
 # =========================
-# 🔥 日次判断AI
+# 🔥 日次判断
 # =========================
 def generate_daily_decision(picks_df, full_df):
 
     market_score = full_df["Pred"].mean()
+    regime = get_regime(market_score)
 
-    if market_score > 0.55:
+    if regime == "strong":
         trend = "強気"
-        action = "積極エントリー"
-        position = "80〜100%"
-        max_n = 5
+        action = "フルエントリー"
+        pos = "100%"
 
-    elif market_score > 0.52:
+    elif regime == "slightly_strong":
         trend = "やや強気"
         action = "選別エントリー"
-        position = "50〜70%"
-        max_n = 3
+        pos = "50〜70%"
 
-    elif market_score > 0.5:
+    elif regime == "neutral":
         trend = "中立"
         action = "様子見"
-        position = "30%"
-        max_n = 1
+        pos = "30%"
 
     else:
         trend = "弱気"
         action = "見送り"
-        position = "0%"
-        max_n = 0
+        pos = "0%"
+
+    perf_text = get_performance_comment(regime)
 
     text = f"""
 ========================
@@ -121,43 +132,29 @@ def generate_daily_decision(picks_df, full_df):
 
 市場評価: {trend}
 行動: {action}
-推奨ポジション: {position}
+推奨ポジション: {pos}
+
+{perf_text}
 """
 
-    if max_n == 0:
-        text += "\n👉 本日はノートレード推奨\n"
-    else:
-        selected = picks_df.head(max_n)
-        text += "\n■ 採用銘柄\n"
-
-        for i, row in enumerate(selected.itertuples(), 1):
-            text += f"{i}. {row.銘柄名} ({row.コード})\n"
-
-    return text
+    return text, regime
 
 
 # =========================
 # 🔥 記事生成
 # =========================
 def generate_article(df, daily_comment):
-    texts = []
+    texts = [daily_comment, generate_global_strategy()]
 
-    # ① 日次判断
-    texts.append(daily_comment)
-
-    # ② 共通戦略（ここが今回の改善）
-    texts.append(generate_global_strategy())
-
-    # ③ 銘柄別
     for _, row in df.iterrows():
-        text = f"""
+        texts.append(f"""
 ========================
 {row["PredRank"]}位: {row["銘柄名"]} ({row["コード"]})
 ========================
 
-{generate_model_comment(row)}
-"""
-        texts.append(text)
+■ AI評価
+{row["PredRank"]}位
+""")
 
     return "\n".join(texts)
 
@@ -165,15 +162,10 @@ def generate_article(df, daily_comment):
 # =========================
 # データ読み込み
 # =========================
-print("Loading dataset...")
-
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values(["Date", "Ticker"])
 
 latest_date = df["Date"].max()
-print("Prediction Date:", latest_date.date())
-
 
 # =========================
 # モデル
@@ -181,29 +173,16 @@ print("Prediction Date:", latest_date.date())
 retrain = (latest_date.weekday() == 0) or (not os.path.exists(MODEL_PATH))
 
 if retrain:
-    print("Weekly retrain...")
     train = df[df["Date"] < latest_date]
 
-    model = LGBMRegressor(
-        n_estimators=300,
-        learning_rate=0.03,
-        max_depth=6,
-        num_leaves=63,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
-
+    model = LGBMRegressor()
     model.fit(train[FEATURES], train[TARGET])
 
     with open(MODEL_PATH, "wb") as f:
         pickle.dump(model, f)
-
 else:
-    print("Loading existing model...")
     with open(MODEL_PATH, "rb") as f:
         model = pickle.load(f)
-
 
 # =========================
 # 今日データ
@@ -213,14 +192,11 @@ today = df[df["Date"] == latest_date].copy()
 today["Pred"] = model.predict(today[FEATURES])
 today["Rank"] = today["Pred"].rank(ascending=False)
 
-
 # =========================
 # 銘柄名
 # =========================
 df_info = pd.read_csv(os.path.join(BASE_DIR, "data_j.csv"), dtype=str)
-
 ticker_to_name = dict(zip(df_info["コード"], df_info["銘柄名"]))
-
 
 # =========================
 # picks
@@ -231,57 +207,40 @@ picks["コード"] = picks["Ticker"].str.replace(".T", "", regex=False)
 picks["銘柄名"] = picks["コード"].map(ticker_to_name)
 picks["PredRank"] = range(1, len(picks) + 1)
 
-picks = picks[["Ticker", "コード", "銘柄名", "Pred", "PredRank"]]
-
+# =========================
+# 🔥 日次判断（＋regime取得）
+# =========================
+daily_comment, regime = generate_daily_decision(picks, today)
 
 # =========================
-# 🔥 日次判断
-# =========================
-daily_comment = generate_daily_decision(picks, today)
-
-
-# =========================
-# CSV（無料）
+# CSV
 # =========================
 picks[["Ticker", "コード", "銘柄名"]].to_csv("today_picks.csv", index=False)
 
-
 # =========================
-# 🔥 記事生成（有料）
+# 🔥 記事
 # =========================
 article = generate_article(picks, daily_comment)
 
 with open("note_article.txt", "w", encoding="utf-8") as f:
     f.write(article)
 
-print("📝 note_article.txt 生成完了")
-
-
 # =========================
-# 🔥 実績ログ（列固定）
+# 🔥 ログ保存（regime追加）
 # =========================
 today_dt = datetime.now()
 target_dt = today_dt + BDay(5)
 
 picks["predict_date"] = today_dt.strftime("%Y-%m-%d")
 picks["target_date"] = target_dt.strftime("%Y-%m-%d")
+picks["regime"] = regime  # 🔥追加
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-save_cols = [
-    "Ticker",
-    "コード",
-    "銘柄名",
-    "Pred",
-    "PredRank",
-    "predict_date",
-    "target_date"
-]
-
 log_path = os.path.join(LOG_DIR, "predictions.csv")
 
-picks[save_cols].to_csv(
+picks.to_csv(
     log_path,
     mode="a",
     header=not os.path.exists(log_path),
