@@ -17,7 +17,6 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
-# ログディレクトリ
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -38,6 +37,26 @@ FEATURES = [
 ]
 
 TARGET = "Target"
+
+
+# =========================
+# 🔥 列名吸収（最小追加）
+# =========================
+def normalize_columns(df):
+    df = df.copy()
+
+    rename_map = {}
+
+    if "コード" not in df.columns and "Ticker" in df.columns:
+        rename_map["Ticker"] = "コード"
+
+    if "銘柄名" not in df.columns and "Name" in df.columns:
+        rename_map["Name"] = "銘柄名"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df
 
 
 # =========================
@@ -69,7 +88,7 @@ def get_regime(score):
 
 
 # =========================
-# 戦略テンプレ
+# 戦略
 # =========================
 def generate_global_strategy():
     return """
@@ -130,14 +149,13 @@ def generate_daily_decision(full_df):
 
 
 # =========================
-# 記事生成（premium依存）
+# 記事生成
 # =========================
 def generate_article(premium_df, daily_comment):
 
     texts = [daily_comment, generate_global_strategy()]
 
     selected = premium_df.copy()
-
     selected = selected.head(TOP_N)
     selected = normalize(selected)
 
@@ -157,6 +175,7 @@ Regime: {row.get("regime","-")}
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
+df = normalize_columns(df)   # 🔥追加
 df["Date"] = pd.to_datetime(df["Date"])
 latest_date = df["Date"].max()
 
@@ -193,8 +212,7 @@ daily_comment, regime, best_n, weak_picks = generate_daily_decision(today)
 
 
 # =========================
-# =========================
-# ① FREE CSV（外向き・SNS用）
+# FREE CSV
 # =========================
 free_csv = today[["コード", "銘柄名", "PredRank"]].copy()
 free_csv = free_csv.rename(columns={"PredRank": "順位"})
@@ -202,7 +220,7 @@ free_csv.to_csv(FREE_CSV_PATH, index=False)
 
 
 # =========================
-# ② PREMIUM CSV（内部用）
+# PREMIUM CSV
 # =========================
 premium_df = today.copy()
 
@@ -214,7 +232,7 @@ premium_df.to_csv(PREMIUM_CSV_PATH, index=False)
 
 
 # =========================
-# ③ ARTICLE（premium依存）
+# ARTICLE
 # =========================
 article = generate_article(premium_df, daily_comment)
 
@@ -223,23 +241,16 @@ with open("note_article.txt", "w", encoding="utf-8") as f:
 
 
 # =========================
-# 🔥 予測ログ（追跡用）
+# LOG
 # =========================
-log_df = premium_df[[
-    "コード",
-    "銘柄名",
-    "Pred",
-    "PredRank",
-    "regime",
-    "predict_date",
-    "target_date"
-]].copy()
+log_df = premium_df[
+    ["コード", "銘柄名", "Pred", "PredRank", "regime", "predict_date", "target_date"]
+].copy()
 
 if os.path.exists(PRED_LOG_PATH):
     old = pd.read_csv(PRED_LOG_PATH)
     log_df = pd.concat([old, log_df], ignore_index=True)
 
 log_df.to_csv(PRED_LOG_PATH, index=False)
-
 
 print("✅ 完全処理完了（FREE / PREMIUM / ARTICLE 分離完了）")
