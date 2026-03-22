@@ -1,172 +1,130 @@
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
-import duckdb
-import os
+from multiprocessing import Pool, cpu_count, freeze_support
+import time
+import random
 
-CSV_FILE = "data_j.csv"
+# =========================
+# 設定
+# =========================
+CSV_FILE = "data_j.csv"  # 銘柄マスタ（コード + Name）
 PARQUET_FILE = "stock_data/prices.parquet"
 
-# =========================
-# 銘柄読み込み
-# =========================
-df_list = pd.read_csv(CSV_FILE, dtype=str)
-
-df_list = df_list[
-    df_list["市場・商品区分"].str.contains(
-        "プライム|スタンダード|グロース", na=False
-    )
-]
-
-tickers = df_list["コード"].tolist()
-tickers = [t + ".T" for t in tickers]
-
-print("銘柄数:", len(tickers))
+DAYS = 5
+TIMEOUT = 10
+RETRY_LIMIT = 5
+WAIT_TIME = 10
+MAX_SLEEP_TIME = 3
 
 # =========================
-# データフォルダ作成
+# 銘柄コード正規化
 # =========================
-os.makedirs("stock_data", exist_ok=True)
-
-# =========================
-# DuckDB接続（SQL用）
-# =========================
-con = duckdb.connect()
+def normalize_ticker(ticker):
+    if not ticker.endswith(".T"):
+        ticker += ".T"
+    return ticker
 
 # =========================
-# 既存Parquet読み込み
+# 株価取得
 # =========================
-if os.path.exists(PARQUET_FILE):
+def fetch_price(row):
+    ticker = normalize_ticker(row["コード"])
+    name = row["銘柄名"]
 
-    df_existing = pd.read_parquet(PARQUET_FILE)
+    retry_count = 0
 
-else:
+    while retry_count < RETRY_LIMIT:
+        try:
+            data = yf.download(
+                ticker,
+                period=f"{DAYS}d",
+                interval="1d",
+                timeout=TIMEOUT,
+                progress=False
+            )
 
-    df_existing = pd.DataFrame(
-        columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"]
-    )
+            if data.empty:
+                return None
 
-# =========================
-# tickerごとの最新日取得
-# =========================
-if not df_existing.empty:
+            data = data.reset_index()
 
-    last_dates_df = con.execute(
-        f"""
-        SELECT Ticker, MAX(Date) AS last_date
-        FROM '{PARQUET_FILE}'
-        GROUP BY Ticker
-        """
-    ).fetchdf()
+            # =========================
+            # メタ情報付与（重要）
+            # =========================
+            data["Ticker"] = ticker
+            data["Name"] = name
 
-else:
-
-    last_dates_df = pd.DataFrame(columns=["Ticker", "last_date"])
-
-last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
-
-print("Parquetに保存されている各Tickerの最新日:")
-print(last_dates_df.head())
-
-print("取得対象のtickers例:")
-print(tickers[:5])
-
-# =========================
-# 差分取得
-# =========================
-dfs = []
-
-today = pd.Timestamp.today().normalize()
-
-api_calls = 0
-
-for ticker in tqdm(tickers):
-
-    last_date = last_dates_dict.get(ticker)
-
-    if last_date:
-        start_dt = pd.to_datetime(last_date) + pd.Timedelta(days=1)
-    else:
-        start_dt = pd.Timestamp("2018-01-01")
-
-    # 今日以降なら取得しない
-    if start_dt >= today:
-        continue
-
-    start_date = start_dt.strftime("%Y-%m-%d")
-
-    try:
-
-        api_calls += 1
-
-        data = yf.download(
-            ticker,
-            start=start_date,
-            progress=False
-        )
-
-        if data.empty:
-            continue
-
-        # マルチインデックス解消
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-
-        data = data.reset_index()
-        data["Ticker"] = ticker
-
-        data = data[
-            [
+            # 列整理
+            data = data[[
                 "Date",
+                "Ticker",
+                "Name",
                 "Open",
                 "High",
                 "Low",
                 "Close",
-                "Volume",
-                "Ticker",
-            ]
-        ]
+                "Volume"
+            ]]
 
-        if last_date:
-            data = data[data["Date"] > pd.to_datetime(last_date)]
+            return data
 
-        if not data.empty:
-            dfs.append(data)
+        except Exception as e:
+            print(f"エラー {ticker}: {e}")
+            retry_count += 1
+            time.sleep(WAIT_TIME)
 
-    except Exception as e:
-        print(f"Error downloading {ticker}: {e}")
-        continue
+        time.sleep(random.uniform(1, MAX_SLEEP_TIME))
 
-# =========================
-# Parquetに追加保存
-# =========================
-if dfs:
-
-    df_new = pd.concat(dfs, ignore_index=True)
-
-    df_all = pd.concat([df_existing, df_new], ignore_index=True)
-
-    df_all = df_all.drop_duplicates(subset=["Date", "Ticker"])
-
-    df_all.to_parquet(PARQUET_FILE, index=False)
-
-    print("追加行数:", len(df_new))
-
-else:
-
-    print("追加データなし")
+    return None
 
 # =========================
-# 保存確認
+# メイン
 # =========================
-df_check = con.execute(
-    f"""
-    SELECT COUNT(*) FROM '{PARQUET_FILE}'
-    """
-).fetchone()[0]
+def main():
 
-print("保存完了 行数:", df_check)
+    # 銘柄マスタ読み込み
+    df_list = pd.read_csv(CSV_FILE, dtype=str)
 
-print("API呼び出し回数:", api_calls)
+    # 市場フィルタ
+    df_list = df_list[
+        df_list["市場・商品区分"].str.contains(
+            "プライム|スタンダード|グロース",
+            na=False
+        )
+    ]
 
-con.close()
+    print(f"対象銘柄数: {len(df_list)}")
+
+    # multiprocessing用にdict化
+    rows = df_list[["コード", "銘柄名"]].to_dict("records")
+
+    # =========================
+    # 並列取得
+    # =========================
+    results = []
+
+    with Pool(cpu_count()) as pool:
+        for res in tqdm(pool.imap_unordered(fetch_price, rows), total=len(rows)):
+            if res is not None:
+                results.append(res)
+
+    # =========================
+    # 結合
+    # =========================
+    df = pd.concat(results, ignore_index=True)
+
+    print("最終データサイズ:", df.shape)
+    print(df.head())
+
+    # =========================
+    # 保存
+    # =========================
+    df.to_parquet(PARQUET_FILE)
+
+    print("Parquet保存完了:", PARQUET_FILE)
+
+
+if __name__ == "__main__":
+    freeze_support()
+    main()
