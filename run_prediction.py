@@ -7,13 +7,23 @@ from datetime import datetime
 from pandas.tseries.offsets import BDay
 
 
+# =========================
+# 設定
+# =========================
 TOP_N = 5
 WEAK_TOP_PERCENT = 0.01
 
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
-PERF_LOG = os.path.join(BASE_DIR, "logs/performance.csv")
+
+# ログディレクトリ
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+FREE_CSV_PATH = "today_picks_free.csv"
+PREMIUM_CSV_PATH = os.path.join(LOG_DIR, "today_picks_premium.csv")
+PRED_LOG_PATH = os.path.join(LOG_DIR, "predictions.csv")
 
 
 FEATURES = [
@@ -31,16 +41,21 @@ TARGET = "Target"
 
 
 # =========================
-# 共通ユーティリティ（⭐追加）
+# ランク正規化
 # =========================
 def normalize(df):
     df = df.copy()
+    if "Pred" not in df.columns:
+        raise KeyError("Pred column missing")
+
     df["PredRank"] = df["Pred"].rank(ascending=False, method="first")
     df = df.sort_values("PredRank")
     df["PredRank"] = range(1, len(df) + 1)
     return df
 
 
+# =========================
+# レジーム判定
 # =========================
 def get_regime(score):
     if score > 0.55:
@@ -54,12 +69,13 @@ def get_regime(score):
 
 
 # =========================
+# 戦略テンプレ
+# =========================
 def generate_global_strategy():
     return """
 ========================
 ■ AI戦略の前提
 ========================
-
 ■ エントリー：即時
 ■ 保有：5営業日
 ■ 利確：5営業日後
@@ -68,13 +84,14 @@ def generate_global_strategy():
 
 
 # =========================
+# 日次判断
+# =========================
 def generate_daily_decision(full_df):
 
     market_score = full_df["Pred"].mean()
     regime = get_regime(market_score)
 
     best_n = 3
-
     weak_picks = pd.DataFrame()
 
     if regime == "weak":
@@ -91,25 +108,20 @@ def generate_daily_decision(full_df):
     if regime == "strong":
         trend = "強気"
         action = "積極エントリー"
-        pos = "80〜100%"
     elif regime == "slightly_strong":
         trend = "やや強気"
         action = "選別エントリー"
-        pos = "50〜70%"
     elif regime == "neutral":
         trend = "中立"
         action = "様子見"
-        pos = "30%"
     else:
         trend = "弱気"
         action = "見送り（例外あり）"
-        pos = "0%"
 
     text = f"""
 ========================
 ■ 本日のAI判断
 ========================
-
 市場評価: {trend}
 行動: {action}
 """
@@ -118,26 +130,24 @@ def generate_daily_decision(full_df):
 
 
 # =========================
-def generate_article(df, daily_comment, best_n, weak_picks, regime):
+# 記事生成（premium依存）
+# =========================
+def generate_article(premium_df, daily_comment):
 
     texts = [daily_comment, generate_global_strategy()]
 
-    # =========================
-    # ★ここが修正ポイント
-    # =========================
-    if regime == "weak" and len(weak_picks) > 0:
-        selected = weak_picks.head(best_n).copy()
-    else:
-        selected = df.head(best_n).copy()
+    selected = premium_df.copy()
 
-    # ⭐必ずrank付け（ここで完全保証）
+    selected = selected.head(TOP_N)
     selected = normalize(selected)
 
     for _, row in selected.iterrows():
         texts.append(f"""
 ========================
-{row["PredRank"]}位
+{row["PredRank"]}位: {row.get("銘柄名","-")} ({row.get("コード","-")})
 ========================
+Pred: {row["Pred"]:.4f}
+Regime: {row.get("regime","-")}
 """)
 
     return "\n".join(texts)
@@ -169,23 +179,11 @@ else:
 
 
 # =========================
-# 今日
+# 今日データ
 # =========================
 today = df[df["Date"] == latest_date].copy()
-
 today["Pred"] = model.predict(today[FEATURES])
-
-
-# =========================
-# ⭐ここ重要（Rank廃止してPred基準に統一）
-# =========================
 today = normalize(today)
-
-
-# =========================
-# picks
-# =========================
-picks = today.head(TOP_N).copy()
 
 
 # =========================
@@ -195,18 +193,53 @@ daily_comment, regime, best_n, weak_picks = generate_daily_decision(today)
 
 
 # =========================
-# CSV
 # =========================
-picks.to_csv("today_picks.csv", index=False)
+# ① FREE CSV（外向き・SNS用）
+# =========================
+free_csv = today[["コード", "銘柄名", "PredRank"]].copy()
+free_csv = free_csv.rename(columns={"PredRank": "順位"})
+free_csv.to_csv(FREE_CSV_PATH, index=False)
 
 
 # =========================
-# 記事
+# ② PREMIUM CSV（内部用）
 # =========================
-article = generate_article(picks, daily_comment, best_n, weak_picks, regime)
+premium_df = today.copy()
+
+premium_df["regime"] = regime
+premium_df["predict_date"] = datetime.now().strftime("%Y-%m-%d")
+premium_df["target_date"] = (datetime.now() + BDay(5)).strftime("%Y-%m-%d")
+
+premium_df.to_csv(PREMIUM_CSV_PATH, index=False)
+
+
+# =========================
+# ③ ARTICLE（premium依存）
+# =========================
+article = generate_article(premium_df, daily_comment)
 
 with open("note_article.txt", "w", encoding="utf-8") as f:
     f.write(article)
 
 
-print("✅ 完全処理完了")
+# =========================
+# 🔥 予測ログ（追跡用）
+# =========================
+log_df = premium_df[[
+    "コード",
+    "銘柄名",
+    "Pred",
+    "PredRank",
+    "regime",
+    "predict_date",
+    "target_date"
+]].copy()
+
+if os.path.exists(PRED_LOG_PATH):
+    old = pd.read_csv(PRED_LOG_PATH)
+    log_df = pd.concat([old, log_df], ignore_index=True)
+
+log_df.to_csv(PRED_LOG_PATH, index=False)
+
+
+print("✅ 完全処理完了（FREE / PREMIUM / ARTICLE 分離完了）")
