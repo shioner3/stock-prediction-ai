@@ -14,7 +14,7 @@ jobs:
       # 1️⃣ リポジトリ取得
       - uses: actions/checkout@v3
 
-      # 2️⃣ キャッシュ復元（★最重要）
+      # 2️⃣ キャッシュ復元
       - name: Cache price data
         uses: actions/cache@v3
         with:
@@ -23,7 +23,7 @@ jobs:
 
       # 3️⃣ ディレクトリ作成
       - name: Create data directory
-        run: mkdir -p stock_data
+        run: mkdir -p stock_data logs
 
       # 4️⃣ Python環境
       - name: Setup Python
@@ -51,16 +51,23 @@ jobs:
             exit 1
           fi
 
-      # 8️⃣ GitHubへ保存
-      - name: Commit and push picks
+      # 8️⃣ logs確認（デバッグ用）
+      - name: Check logs
+        run: |
+          ls -R logs || echo "logsフォルダなし"
+
+      # 9️⃣ GitHubへ保存（picks + logs）
+      - name: Commit and push all outputs
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add today_picks.csv
-          git commit -m "Update picks [skip ci]" || echo "no change"
+
+          git add today_picks.csv logs/ || true
+
+          git commit -m "Update picks & logs [skip ci]" || echo "no change"
           git push
 
-      # 9️⃣ HuggingFaceへpush
+      # 🔟 HuggingFaceへpush
       - name: Push CSV to Hugging Face
         run: |
           git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner/Stock-Prediction-Ai hf_space
@@ -69,22 +76,9 @@ jobs:
 
           cd hf_space
 
-          # 👇これ追加（超重要）
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
           git add today_picks.csv
           git commit -m "auto update csv" || echo "no change"
-          git push
-
-　　　　# 🔟 logs保存
-　　　　- name: Commit logs
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          git add logs/predictions.csv logs/performance.csv || true
-
-          git commit -m "update logs [skip ci]" || echo "no change"
-
           git push
