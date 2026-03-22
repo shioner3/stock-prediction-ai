@@ -76,3 +76,15 @@ jobs:
           git add today_picks.csv
           git commit -m "auto update csv" || echo "no change"
           git push
+
+　　　　# 🔟 logs保存
+　　　　- name: Commit logs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add logs/predictions.csv logs/performance.csv || true
+
+          git commit -m "update logs [skip ci]" || echo "no change"
+
+          git push
