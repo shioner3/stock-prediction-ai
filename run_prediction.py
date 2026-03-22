@@ -155,8 +155,13 @@ print("Saved:", OUTPUT_PATH)
 # =========================
 print("📊 予測ログ保存中...")
 
+from datetime import datetime
+from pandas.tseries.offsets import BDay
+
 today_dt = datetime.now()
-target_dt = today_dt + timedelta(days=5)
+
+# 👇ここ修正
+target_dt = today_dt + BDay(5)
 
 picks["predict_date"] = today_dt.strftime("%Y-%m-%d")
 picks["target_date"] = target_dt.strftime("%Y-%m-%d")
