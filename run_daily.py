@@ -41,3 +41,5 @@ print("Parquet size:", size)
 
 if size < 1000000:
     raise Exception("Parquet破損の可能性あり。保存停止。")
+
+run_script("calc_performance.py")
