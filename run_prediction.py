@@ -3,6 +3,7 @@ import numpy as np
 import os
 import pickle
 from lightgbm import LGBMRegressor
+from datetime import datetime, timedelta
 
 
 # =========================
@@ -50,11 +51,11 @@ print("Prediction Date:", latest_date.date())
 # =========================
 # 再学習判定
 # =========================
-weekday = latest_date.weekday()  # 月=0
+weekday = latest_date.weekday()
 
 retrain = False
 
-if weekday == 0:  # 月曜日
+if weekday == 0:
     retrain = True
 
 if not os.path.exists(MODEL_PATH):
@@ -108,7 +109,6 @@ X_today = today[FEATURES]
 # 予測
 # =========================
 today["Pred"] = model.predict(X_today)
-
 today["Rank"] = today["Pred"].rank(ascending=False)
 
 
@@ -136,19 +136,41 @@ picks["銘柄名"] = picks["コード"].map(ticker_to_name)
 
 picks["PredRank"] = range(1, len(picks) + 1)
 
-picks = picks[["コード", "銘柄名", "PredRank"]]
+picks = picks[["Ticker", "コード", "銘柄名", "Pred", "PredRank"]]
 
 
 # =========================
-# 出力
+# CSV出力（無料）
 # =========================
-print()
-print("===== Today Picks =====")
-print(picks)
-
 OUTPUT_PATH = os.path.join(BASE_DIR, "today_picks.csv")
 
 picks.to_csv(OUTPUT_PATH, index=False)
 
 print()
 print("Saved:", OUTPUT_PATH)
+
+
+# =========================
+# 🔥 実績ログ保存（追加）
+# =========================
+print("📊 予測ログ保存中...")
+
+today_dt = datetime.now()
+target_dt = today_dt + timedelta(days=5)
+
+picks["predict_date"] = today_dt.strftime("%Y-%m-%d")
+picks["target_date"] = target_dt.strftime("%Y-%m-%d")
+
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+PRED_LOG_PATH = os.path.join(LOG_DIR, "predictions.csv")
+
+picks.to_csv(
+    PRED_LOG_PATH,
+    mode="a",
+    header=not os.path.exists(PRED_LOG_PATH),
+    index=False
+)
+
+print("✅ predictions.csv 更新完了")
