@@ -51,20 +51,31 @@ jobs:
             exit 1
           fi
 
+      # 7.5️⃣ 記事確認（追加）
+      - name: Check article
+        run: |
+          if [ -f "note_article.txt" ]; then
+            echo "📝 note_article.txt 生成OK"
+          else
+            echo "❌ 記事なし"
+            exit 1
+          fi
+
       # 8️⃣ logs確認（デバッグ用）
       - name: Check logs
         run: |
           ls -R logs || echo "logsフォルダなし"
 
-      # 9️⃣ GitHubへ保存（picks + logs）
+      # 9️⃣ GitHubへ保存（🔥ここ修正）
       - name: Commit and push all outputs
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add today_picks.csv logs/ || true
+          # 👇ここが重要
+          git add today_picks.csv note_article.txt logs/ || true
 
-          git commit -m "Update picks & logs [skip ci]" || echo "no change"
+          git commit -m "Update picks, article & logs [skip ci]" || echo "no change"
           git push
 
       # 🔟 HuggingFaceへpush
