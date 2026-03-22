@@ -163,6 +163,7 @@ def generate_daily_decision(picks_df, full_df):
     perf_text = get_performance_comment(regime)
 
     text = f"""
+    
 ========================
 ■ 本日のAI判断
 ========================
@@ -171,8 +172,15 @@ def generate_daily_decision(picks_df, full_df):
 行動: {action}
 推奨ポジション: {pos}
 
-■ 最適戦略
-{best_comment}
+------------------------
+
+■ 今日の最適銘柄数
+{best_n}銘柄（過去実績ベース）
+
+■ 理由
+Sharpe最大
+
+------------------------
 
 {perf_text}
 """
