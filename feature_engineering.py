@@ -5,7 +5,6 @@ import duckdb
 # =========================
 # 設定
 # =========================
-
 PARQUET_FILE = "stock_data/prices.parquet"
 SAVE_PATH = "ml_dataset.parquet"
 
@@ -14,11 +13,18 @@ HOLD_DAYS = 5
 # =========================
 # データ読み込み
 # =========================
-
 con = duckdb.connect()
 
 df = con.execute(f"""
-SELECT Date, Ticker, Open, High, Low, Close, Volume
+SELECT 
+    Date,
+    Ticker,
+    Name,
+    Open,
+    High,
+    Low,
+    Close,
+    Volume
 FROM '{PARQUET_FILE}'
 ORDER BY Ticker, Date
 """).df()
@@ -28,7 +34,6 @@ print("元データサイズ:", df.shape)
 # =========================
 # 銘柄内特徴量
 # =========================
-
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 
 df["MA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean())
@@ -51,7 +56,6 @@ df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 # =========================
 # RSI
 # =========================
-
 delta = df.groupby("Ticker")["Close"].diff()
 
 gain = delta.clip(lower=0)
@@ -67,7 +71,6 @@ df["RSI"] = 100 - (100 / (1 + rs))
 # =========================
 # クロスセクション特徴量
 # =========================
-
 rank_features = [
     "Return_1",
     "MA5_ratio",
@@ -80,29 +83,24 @@ rank_features = [
 ]
 
 for col in rank_features:
-
     df[col + "_rank"] = (
-        df.groupby("Date")[col]
-        .rank(pct=True)
+        df.groupby("Date")[col].rank(pct=True)
     )
 
 # =========================
 # Target
 # =========================
-
 df["FutureReturn_5"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
 df["Target"] = (
-    df.groupby("Date")["FutureReturn_5"]
-    .rank(pct=True)
+    df.groupby("Date")["FutureReturn_5"].rank(pct=True)
 )
 
 # =========================
 # データ整理
 # =========================
-
 df = df.replace([np.inf, -np.inf], np.nan)
 
 df = df.dropna(subset=[
@@ -118,12 +116,18 @@ df = df.dropna(subset=[
 ])
 
 # =========================
+# 🔥 重要：メタデータを保持
+# =========================
+df = df.reset_index(drop=True)
+
+# =========================
 # 保存
 # =========================
-
 df.to_parquet(SAVE_PATH)
 
 print("MLデータ保存完了")
 print("行数:", len(df))
 print("列数:", len(df.columns))
-print("最終データサイズ:", df.shape)
+
+# 重要チェック
+print("columns:", df.columns)
