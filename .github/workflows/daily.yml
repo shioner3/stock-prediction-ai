@@ -65,12 +65,23 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add today_picks_free.csv note_article.txgit commit -m "Update outputs [skip ci]" || echo "no change"
+          # 🔥 まず全部add（これ重要）
+          git add -A
 
-          # 🔥 これが重要
-          git pull --rebase origin main
+          # commit（変更なければスキップ）
+          git commit -m "Update outputs [skip ci]" || echo "no change"
 
-          git push
+          # 🔥 rebase前に作業ツリーをクリーンにする
+          git stash || echo "no stash"
+
+          # 最新取得
+          git pull --rebase origin main || echo "pull skipped"
+
+          # stash戻す
+          git stash pop || echo "no stash pop"
+
+          # push
+          git push || echo "push skipped"
 
       - name: Push FREE CSV to Hugging Face
         run: |
