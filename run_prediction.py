@@ -23,9 +23,12 @@ os.makedirs(LOG_DIR, exist_ok=True)
 FREE_CSV_PATH = "today_picks_free.csv"
 PREMIUM_CSV_PATH = os.path.join(LOG_DIR, "today_picks_premium.csv")
 
-# 🔥 月分割ログ
+# 月分割ログ
 month_str = datetime.now().strftime("%Y-%m")
 PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
+
+# 🔥 実績ログ（ここ追加）
+PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
 
 
 FEATURES = [
@@ -106,6 +109,51 @@ def generate_global_strategy():
 
 
 # =========================
+# 🔥 実績読み込み（追加）
+# =========================
+def load_performance():
+
+    if not os.path.exists(PERF_LOG_PATH):
+        return None
+
+    df = pd.read_csv(PERF_LOG_PATH)
+
+    if len(df) < 10:
+        return None
+
+    # 直近100件
+    df = df.tail(100)
+
+    result = {}
+
+    # 全体
+    result["all"] = {
+        "win_rate": df["win"].mean(),
+        "avg_return": df["return"].mean(),
+        "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
+    }
+
+    # レジーム別
+    result["regime"] = {}
+
+    for r in ["strong", "slightly_strong", "neutral", "weak"]:
+        df_r = df[df["regime"] == r]
+
+        if len(df_r) < 5:
+            continue
+
+        result["regime"][r] = {
+            "win_rate": df_r["win"].mean(),
+            "avg_return": df_r["return"].mean(),
+            "sharpe": df_r["return"].mean() / df_r["return"].std() if df_r["return"].std() != 0 else 0
+        }
+
+    return result
+
+
+# =========================
+# 日次判断
+# =========================
 def generate_daily_decision(full_df):
 
     market_score = full_df["Pred"].mean()
@@ -150,10 +198,36 @@ def generate_daily_decision(full_df):
 
 
 # =========================
+# 記事生成（🔥実績追加）
+# =========================
 def generate_article(premium_df, daily_comment):
 
     texts = [daily_comment, generate_global_strategy()]
 
+    # 🔥 実績追加
+    perf = load_performance()
+
+    if perf is not None:
+
+        texts.append("\n========================\n■ 実績（直近）\n========================")
+
+        texts.append(f"""
+勝率: {perf["all"]["win_rate"]:.2%}
+平均リターン: {perf["all"]["avg_return"]:.2%}
+Sharpe: {perf["all"]["sharpe"]:.2f}
+""")
+
+        texts.append("\n■ レジーム別")
+
+        for r, v in perf["regime"].items():
+            texts.append(f"""
+[{r}]
+勝率: {v["win_rate"]:.2%}
+平均リターン: {v["avg_return"]:.2%}
+Sharpe: {v["sharpe"]:.2f}
+""")
+
+    # 銘柄
     selected = premium_df.head(TOP_N).copy()
     selected = normalize(selected)
 
@@ -197,7 +271,7 @@ else:
 
 
 # =========================
-# 今日データ
+# 今日
 # =========================
 today = df[df["Date"] == latest_date].copy()
 today["Pred"] = model.predict(today[FEATURES])
@@ -211,7 +285,7 @@ daily_comment, regime, best_n, weak_picks = generate_daily_decision(today)
 
 
 # =========================
-# FREE CSV（上位5）
+# FREE CSV
 # =========================
 free_csv = today.head(TOP_N)[["コード", "銘柄名", "PredRank"]].copy()
 free_csv = free_csv.rename(columns={"PredRank": "順位"})
@@ -219,7 +293,7 @@ free_csv.to_csv(FREE_CSV_PATH, index=False)
 
 
 # =========================
-# PREMIUM CSV（全銘柄）
+# PREMIUM CSV
 # =========================
 premium_df = today.copy()
 
@@ -253,4 +327,4 @@ if os.path.exists(PRED_LOG_PATH):
 log_df.to_csv(PRED_LOG_PATH, index=False)
 
 
-print(f"✅ 完了（ログ: {month_str} に保存）")
+print(f"✅ 完了（実績込み記事生成）")
