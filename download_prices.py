@@ -94,6 +94,10 @@ missing = sum([1 for t in tickers if t not in last_dates_dict])
 print("=== DEBUG ===")
 print("Existing rows:", len(df_existing))
 print("missing ticker count:", missing)
+print("NaT:", df_existing["Date"].isna().sum())
+print("Rows:", len(df_existing))
+print("Unique tickers:", df_existing["Ticker"].nunique())
+print("None last_date:", sum([1 for t in tickers if last_dates_dict.get(t) is None]))
 print("==============")
 
 # =========================
