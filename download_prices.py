@@ -1,130 +1,174 @@
 import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count, freeze_support
-import time
-import random
+import os
 
-# =========================
-# 設定
-# =========================
-CSV_FILE = "data_j.csv"  # 銘柄マスタ（コード + Name）
+CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
-DAYS = 5
-TIMEOUT = 10
-RETRY_LIMIT = 5
-WAIT_TIME = 10
-MAX_SLEEP_TIME = 3
+# =========================
+# 銘柄マスタ読み込み
+# =========================
+df_list = pd.read_csv(CSV_FILE, dtype=str)
+
+df_list = df_list[
+    df_list["市場・商品区分"].str.contains(
+        "プライム|スタンダード|グロース", na=False
+    )
+]
+
+# 🔥 重要：Ticker + Name対応
+df_list["Ticker"] = df_list["コード"].astype(str).str.strip() + ".T"
+df_list["Name"] = df_list["銘柄名"].astype(str).str.strip()
+
+tickers = df_list["Ticker"].tolist()
+
+# 👉 Name辞書（超重要）
+name_dict = dict(zip(df_list["Ticker"], df_list["Name"]))
+
+print("銘柄数:", len(tickers))
 
 # =========================
-# 銘柄コード正規化
+# データフォルダ
 # =========================
-def normalize_ticker(ticker):
-    if not ticker.endswith(".T"):
-        ticker += ".T"
-    return ticker
+os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# 株価取得
+# 既存データ
 # =========================
-def fetch_price(row):
-    ticker = normalize_ticker(row["コード"])
-    name = row["銘柄名"]
+if os.path.exists(PARQUET_FILE):
 
-    retry_count = 0
+    df_existing = pd.read_parquet(PARQUET_FILE)
 
-    while retry_count < RETRY_LIMIT:
-        try:
-            data = yf.download(
-                ticker,
-                period=f"{DAYS}d",
-                interval="1d",
-                timeout=TIMEOUT,
-                progress=False
-            )
+    df_existing["Ticker"] = df_existing["Ticker"].astype(str).str.strip()
+    df_existing["Date"] = pd.to_datetime(df_existing["Date"]).dt.tz_localize(None)
 
-            if data.empty:
-                return None
+    # 🔥 Nameが無い場合は補完
+    if "Name" not in df_existing.columns:
+        df_existing["Name"] = df_existing["Ticker"].map(name_dict)
 
-            data = data.reset_index()
+else:
 
-            # =========================
-            # メタ情報付与（重要）
-            # =========================
-            data["Ticker"] = ticker
-            data["Name"] = name
-
-            # 列整理
-            data = data[[
-                "Date",
-                "Ticker",
-                "Name",
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume"
-            ]]
-
-            return data
-
-        except Exception as e:
-            print(f"エラー {ticker}: {e}")
-            retry_count += 1
-            time.sleep(WAIT_TIME)
-
-        time.sleep(random.uniform(1, MAX_SLEEP_TIME))
-
-    return None
+    df_existing = pd.DataFrame(
+        columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
+    )
 
 # =========================
-# メイン
+# 最新日取得
 # =========================
-def main():
+if not df_existing.empty:
 
-    # 銘柄マスタ読み込み
-    df_list = pd.read_csv(CSV_FILE, dtype=str)
+    last_dates_df = (
+        df_existing.groupby("Ticker")["Date"]
+        .max()
+        .reset_index()
+        .rename(columns={"Date": "last_date"})
+    )
 
-    # 市場フィルタ
-    df_list = df_list[
-        df_list["市場・商品区分"].str.contains(
-            "プライム|スタンダード|グロース",
-            na=False
+else:
+    last_dates_df = pd.DataFrame(columns=["Ticker", "last_date"])
+
+last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
+
+# =========================
+# デバッグ
+# =========================
+missing = sum([1 for t in tickers if t not in last_dates_dict])
+
+print("=== DEBUG ===")
+print("Existing rows:", len(df_existing))
+print("missing ticker count:", missing)
+print("==============")
+
+# =========================
+# 差分取得
+# =========================
+dfs = []
+
+today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
+today = today.normalize().tz_localize(None)
+
+api_calls = 0
+
+for ticker in tqdm(tickers):
+
+    last_date = last_dates_dict.get(ticker)
+
+    if last_date is not None:
+        last_date = pd.to_datetime(last_date, errors="coerce")
+
+        if pd.isna(last_date):
+            start_dt = pd.Timestamp("2018-01-01")
+        else:
+            last_date = last_date.tz_localize(None)
+
+            if (today - last_date).days <= 2:
+                continue
+
+            start_dt = last_date + pd.Timedelta(days=1)
+
+    else:
+        start_dt = pd.Timestamp("2018-01-01")
+
+    start_date = start_dt.strftime("%Y-%m-%d")
+
+    try:
+        api_calls += 1
+
+        data = yf.download(
+            ticker,
+            start=start_date,
+            progress=False
         )
-    ]
 
-    print(f"対象銘柄数: {len(df_list)}")
+        if data.empty:
+            continue
 
-    # multiprocessing用にdict化
-    rows = df_list[["コード", "銘柄名"]].to_dict("records")
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
 
-    # =========================
-    # 並列取得
-    # =========================
-    results = []
+        data = data.reset_index()
 
-    with Pool(cpu_count()) as pool:
-        for res in tqdm(pool.imap_unordered(fetch_price, rows), total=len(rows)):
-            if res is not None:
-                results.append(res)
+        # =========================
+        # 🔥 Name追加（重要）
+        # =========================
+        data["Ticker"] = ticker
+        data["Name"] = name_dict.get(ticker, None)
 
-    # =========================
-    # 結合
-    # =========================
-    df = pd.concat(results, ignore_index=True)
+        data = data[
+            ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
+        ]
 
-    print("最終データサイズ:", df.shape)
-    print(df.head())
+        if last_date is not None:
+            data = data[data["Date"] > last_date]
 
-    # =========================
-    # 保存
-    # =========================
-    df.to_parquet(PARQUET_FILE)
+        if not data.empty:
+            dfs.append(data)
 
-    print("Parquet保存完了:", PARQUET_FILE)
+    except Exception as e:
+        print(f"Error downloading {ticker}: {e}")
+        continue
 
+# =========================
+# 保存
+# =========================
+if dfs:
 
-if __name__ == "__main__":
-    freeze_support()
-    main()
+    df_new = pd.concat(dfs, ignore_index=True)
+
+    df_all = pd.concat([df_existing, df_new], ignore_index=True)
+
+    df_all = df_all.drop_duplicates(subset=["Date", "Ticker"])
+
+    df_all.to_parquet(PARQUET_FILE, index=False)
+
+    print("追加行数:", len(df_new))
+
+else:
+    print("追加データなし")
+
+# =========================
+# 確認
+# =========================
+print("保存完了 行数:", len(df_existing) + (len(df_new) if dfs else 0))
+print("API呼び出し回数:", api_calls)
