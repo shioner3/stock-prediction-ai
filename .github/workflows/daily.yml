@@ -3,7 +3,7 @@ name: Daily Stock AI
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 21 * * 0-4'   # 日本時間 平日朝6時
+    - cron: '0 11 * * 1-5'   # 日本時間 平日朝6時
 
 jobs:
   run-ai:
