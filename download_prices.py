@@ -7,7 +7,7 @@ CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
 # =========================
-# 🔥 正規化関数
+# 正規化
 # =========================
 def normalize_ticker(t):
     return str(t).strip().upper()
@@ -37,6 +37,12 @@ print("銘柄数:", len(tickers))
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
+# 今日（JST固定）
+# =========================
+today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
+today = today.normalize().tz_localize(None)
+
+# =========================
 # 既存データ
 # =========================
 if os.path.exists(PARQUET_FILE):
@@ -46,10 +52,13 @@ if os.path.exists(PARQUET_FILE):
     df_existing["Ticker"] = df_existing["Ticker"].apply(normalize_ticker)
     df_existing["Date"] = pd.to_datetime(df_existing["Date"], errors="coerce").dt.tz_localize(None)
 
-    # 🔥 Date壊れ対策（超重要）
+    # 🔥 壊れデータ削除
     df_existing = df_existing.dropna(subset=["Date"])
 
-    # 🔥 Name補完（安全）
+    # 🔥 未来日削除（最重要）
+    df_existing = df_existing[df_existing["Date"] <= today]
+
+    # 🔥 Name補完
     mapped_name = df_existing["Ticker"].map(name_dict)
 
     if "Name" in df_existing.columns:
@@ -92,9 +101,6 @@ print("==============")
 # =========================
 dfs = []
 
-today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
-today = today.normalize().tz_localize(None)
-
 api_calls = 0
 skip_count = 0
 
@@ -103,20 +109,26 @@ for ticker in tqdm(tickers):
     last_date = last_dates_dict.get(ticker)
 
     # =========================
-    # 🔥 差分判定（完全修正版）
+    # 差分判定（完全版）
     # =========================
     if last_date is not None:
+
         last_date = pd.to_datetime(last_date, errors="coerce")
 
-        # 🔥 NaTならスキップ（フル取得防止）
+        # NaTならスキップ（壊れ防止）
         if pd.isna(last_date):
             skip_count += 1
             continue
 
         last_date = last_date.tz_localize(None)
 
-        # 🔥 最新ならスキップ
-        if last_date >= today - pd.Timedelta(days=1):
+        # 🔥 未来日ならスキップ
+        if last_date > today:
+            skip_count += 1
+            continue
+
+        # 🔥 同日 or 前日まで更新済ならスキップ
+        if (today - last_date).days <= 1:
             skip_count += 1
             continue
 
@@ -140,6 +152,7 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
+        # MultiIndex対策
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -184,6 +197,8 @@ else:
 # =========================
 # 結果
 # =========================
-print("保存完了 行数:", len(df_existing) + (len(dfs) if dfs else 0))
+final_rows = len(df_existing) + (len(df_new) if dfs else 0)
+
+print("保存完了 行数:", final_rows)
 print("API呼び出し回数:", api_calls)
 print("スキップ数:", skip_count)
