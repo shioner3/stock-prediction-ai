@@ -214,7 +214,7 @@ daily_comment, regime, best_n, weak_picks = generate_daily_decision(today)
 # =========================
 # FREE CSV
 # =========================
-free_csv = today[["コード", "銘柄名", "PredRank"]].copy()
+free_csv = today.head(TOP_N)[["コード", "銘柄名", "PredRank"]].copy()
 free_csv = free_csv.rename(columns={"PredRank": "順位"})
 free_csv.to_csv(FREE_CSV_PATH, index=False)
 
