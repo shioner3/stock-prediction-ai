@@ -22,7 +22,10 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 FREE_CSV_PATH = "today_picks_free.csv"
 PREMIUM_CSV_PATH = os.path.join(LOG_DIR, "today_picks_premium.csv")
-PRED_LOG_PATH = os.path.join(LOG_DIR, "predictions.csv")
+
+# 🔥 月分割ログ
+month_str = datetime.now().strftime("%Y-%m")
+PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
 
 FEATURES = [
@@ -40,7 +43,7 @@ TARGET = "Target"
 
 
 # =========================
-# 🔥 列名吸収（最小追加）
+# 列名吸収
 # =========================
 def normalize_columns(df):
     df = df.copy()
@@ -60,21 +63,23 @@ def normalize_columns(df):
 
 
 # =========================
-# ランク正規化
+# ランク
 # =========================
 def normalize(df):
     df = df.copy()
+
     if "Pred" not in df.columns:
         raise KeyError("Pred column missing")
 
     df["PredRank"] = df["Pred"].rank(ascending=False, method="first")
     df = df.sort_values("PredRank")
     df["PredRank"] = range(1, len(df) + 1)
+
     return df
 
 
 # =========================
-# レジーム判定
+# レジーム
 # =========================
 def get_regime(score):
     if score > 0.55:
@@ -88,8 +93,6 @@ def get_regime(score):
 
 
 # =========================
-# 戦略
-# =========================
 def generate_global_strategy():
     return """
 ========================
@@ -102,8 +105,6 @@ def generate_global_strategy():
 """
 
 
-# =========================
-# 日次判断
 # =========================
 def generate_daily_decision(full_df):
 
@@ -149,14 +150,11 @@ def generate_daily_decision(full_df):
 
 
 # =========================
-# 記事生成
-# =========================
 def generate_article(premium_df, daily_comment):
 
     texts = [daily_comment, generate_global_strategy()]
 
-    selected = premium_df.copy()
-    selected = selected.head(TOP_N)
+    selected = premium_df.head(TOP_N).copy()
     selected = normalize(selected)
 
     for _, row in selected.iterrows():
@@ -175,7 +173,8 @@ Regime: {row.get("regime","-")}
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
-df = normalize_columns(df)   # 🔥追加
+df = normalize_columns(df)
+
 df["Date"] = pd.to_datetime(df["Date"])
 latest_date = df["Date"].max()
 
@@ -212,7 +211,7 @@ daily_comment, regime, best_n, weak_picks = generate_daily_decision(today)
 
 
 # =========================
-# FREE CSV
+# FREE CSV（上位5）
 # =========================
 free_csv = today.head(TOP_N)[["コード", "銘柄名", "PredRank"]].copy()
 free_csv = free_csv.rename(columns={"PredRank": "順位"})
@@ -220,7 +219,7 @@ free_csv.to_csv(FREE_CSV_PATH, index=False)
 
 
 # =========================
-# PREMIUM CSV
+# PREMIUM CSV（全銘柄）
 # =========================
 premium_df = today.copy()
 
@@ -241,7 +240,7 @@ with open("note_article.txt", "w", encoding="utf-8") as f:
 
 
 # =========================
-# LOG
+# LOG（月分割）
 # =========================
 log_df = premium_df[
     ["コード", "銘柄名", "Pred", "PredRank", "regime", "predict_date", "target_date"]
@@ -253,4 +252,5 @@ if os.path.exists(PRED_LOG_PATH):
 
 log_df.to_csv(PRED_LOG_PATH, index=False)
 
-print("✅ 完全処理完了（FREE / PREMIUM / ARTICLE 分離完了）")
+
+print(f"✅ 完了（ログ: {month_str} に保存）")
