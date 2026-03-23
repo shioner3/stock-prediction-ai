@@ -65,9 +65,11 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add today_picks_free.csv note_article.txt logs/ || true
+          git add today_picks_free.csv note_article.txgit commit -m "Update outputs [skip ci]" || echo "no change"
 
-          git commit -m "Update outputs [skip ci]" || echo "no change"
+          # 🔥 これが重要
+          git pull --rebase origin main
+
           git push
 
       - name: Push FREE CSV to Hugging Face
