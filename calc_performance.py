@@ -1,19 +1,22 @@
 import pandas as pd
 import os
+import glob
 from datetime import datetime
 
 # =========================
 # 設定
 # =========================
-PRED_LOG = "logs/predictions.csv"
+PRED_LOG_PATTERN = "logs/predictions_*.csv"
 PERF_LOG = "logs/performance.csv"
 PRICE_FILE = "stock_data/prices.parquet"
 
 # =========================
 # 初期チェック
 # =========================
-if not os.path.exists(PRED_LOG):
-    print("❌ predictions.csv が存在しません")
+pred_files = glob.glob(PRED_LOG_PATTERN)
+
+if len(pred_files) == 0:
+    print("❌ predictionsファイルが存在しません")
     exit()
 
 if not os.path.exists(PRICE_FILE):
@@ -21,11 +24,33 @@ if not os.path.exists(PRICE_FILE):
     exit()
 
 # =========================
-# 読み込み
+# 🔥 予測ログ全読み込み（ここが重要）
 # =========================
-df_pred = pd.read_csv(PRED_LOG)
+df_list = []
+
+for f in pred_files:
+    try:
+        df_tmp = pd.read_csv(f)
+        df_list.append(df_tmp)
+    except:
+        print(f"読み込み失敗: {f}")
+
+df_pred = pd.concat(df_list, ignore_index=True)
+
+# =========================
+# 価格データ
+# =========================
 df_price = pd.read_parquet(PRICE_FILE)
 
+# =========================
+# 🔥 列名吸収（超重要）
+# =========================
+if "コード" in df_pred.columns:
+    df_pred = df_pred.rename(columns={"コード": "Ticker"})
+
+# =========================
+# 日付処理
+# =========================
 df_price["Date"] = pd.to_datetime(df_price["Date"])
 df_pred["predict_date"] = pd.to_datetime(df_pred["predict_date"])
 df_pred["target_date"] = pd.to_datetime(df_pred["target_date"])
@@ -33,7 +58,7 @@ df_pred["target_date"] = pd.to_datetime(df_pred["target_date"])
 today = pd.Timestamp.today().normalize()
 
 # =========================
-# 既存パフォーマンス読み込み
+# 既存パフォーマンス
 # =========================
 if os.path.exists(PERF_LOG):
     df_perf_existing = pd.read_csv(PERF_LOG)
@@ -48,7 +73,7 @@ if not df_perf_existing.empty:
     )
 
 # =========================
-# 🔥 実績計算
+# 実績計算
 # =========================
 results = []
 
@@ -58,7 +83,7 @@ for _, row in df_pred.iterrows():
     predict_date = row["predict_date"]
     target_date = row["target_date"]
 
-    key = f"{ticker}_{predict_date}"
+    key = f"{ticker}_{predict_date.strftime('%Y-%m-%d')}"
 
     if key in existing_keys:
         continue
@@ -76,8 +101,10 @@ for _, row in df_pred.iterrows():
 
     ret = (end_price.values[0] / start_price.values[0]) - 1
 
-    # 🔥 市場スコアをここで付与（重要）
-    market_score = row["Pred"]
+    # =========================
+    # レジーム
+    # =========================
+    market_score = row.get("Pred", 0)
 
     if market_score > 0.55:
         regime = "strong"
@@ -115,7 +142,7 @@ else:
     print("追加データなし")
 
 # =========================
-# 🔥 指標計算（全体）
+# 指標
 # =========================
 if os.path.exists(PERF_LOG):
     df = pd.read_csv(PERF_LOG)
@@ -132,7 +159,7 @@ if os.path.exists(PERF_LOG):
     print("Sharpe:", round(sharpe, 3))
 
     # =========================
-    # 🔥 レジーム別（ここが本質）
+    # レジーム別
     # =========================
     print("\n📊 市場別実績")
 
