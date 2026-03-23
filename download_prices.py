@@ -51,7 +51,12 @@ if os.path.exists(PARQUET_FILE):
     df_existing["Date"] = pd.to_datetime(df_existing["Date"]).dt.tz_localize(None)
 
     # Name補完（過去データにも適用）
-    df_existing["Name"] = df_existing["Ticker"].map(name_dict).fillna(df_existing.get("Name"))
+    mapped_name = df_existing["Ticker"].map(name_dict)
+
+if "Name" in df_existing.columns:
+    df_existing["Name"] = mapped_name.combine_first(df_existing["Name"])
+else:
+    df_existing["Name"] = mapped_name
 
 else:
     df_existing = pd.DataFrame(
