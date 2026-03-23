@@ -46,17 +46,17 @@ if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
 
-    # 🔥 正規化（ここが最重要）
+    # 🔥 正規化（ズレ防止）
     df_existing["Ticker"] = df_existing["Ticker"].apply(normalize_ticker)
     df_existing["Date"] = pd.to_datetime(df_existing["Date"]).dt.tz_localize(None)
 
-    # Name補完（過去データにも適用）
+    # 🔥 Name補完（完全安全版）
     mapped_name = df_existing["Ticker"].map(name_dict)
 
-if "Name" in df_existing.columns:
-    df_existing["Name"] = mapped_name.combine_first(df_existing["Name"])
-else:
-    df_existing["Name"] = mapped_name
+    if "Name" in df_existing.columns:
+        df_existing["Name"] = mapped_name.combine_first(df_existing["Name"])
+    else:
+        df_existing["Name"] = mapped_name
 
 else:
     df_existing = pd.DataFrame(
@@ -79,7 +79,7 @@ else:
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
 # =========================
-# デバッグ（超重要）
+# デバッグ（重要）
 # =========================
 missing = sum([1 for t in tickers if t not in last_dates_dict])
 
@@ -105,7 +105,7 @@ for ticker in tqdm(tickers):
     last_date = last_dates_dict.get(ticker)
 
     # =========================
-    # 🔥 差分判定（安全版）
+    # 🔥 差分判定（完全安定版）
     # =========================
     if last_date is not None:
         last_date = pd.to_datetime(last_date, errors="coerce")
@@ -113,7 +113,7 @@ for ticker in tqdm(tickers):
         if pd.notna(last_date):
             last_date = last_date.tz_localize(None)
 
-            # 🔥 1日以内ならスキップ（安全）
+            # 🔥 1日以内ならスキップ
             if last_date >= today - pd.Timedelta(days=1):
                 continue
 
@@ -144,7 +144,7 @@ for ticker in tqdm(tickers):
 
         data = data.reset_index()
 
-        # 🔥 Ticker / Name付与
+        # 🔥 カラム付与
         data["Ticker"] = ticker
         data["Name"] = name_dict.get(ticker, None)
 
@@ -172,7 +172,7 @@ if dfs:
 
     df_all = pd.concat([df_existing, df_new], ignore_index=True)
 
-    # 🔥 重複削除（安全）
+    # 🔥 重複削除（完全安全）
     df_all = df_all.drop_duplicates(subset=["Date", "Ticker"], keep="last")
 
     df_all.to_parquet(PARQUET_FILE, index=False)
@@ -185,7 +185,7 @@ else:
 # =========================
 # 確認
 # =========================
-final_rows = len(df_existing) + (len(df_new) if dfs else 0)
+final_rows = len(df_existing) + (len(dfs) if dfs else 0)
 
 print("保存完了 行数:", final_rows)
 print("API呼び出し回数:", api_calls)
