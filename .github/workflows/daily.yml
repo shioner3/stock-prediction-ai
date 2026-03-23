@@ -84,18 +84,19 @@ jobs:
         run: |
           ls -R logs || echo "logsフォルダなし"
 
-      # =========================
-      # 🔟 GitHubへ保存（修正版）
-      # =========================
-      - name: Commit and push all outputs
+      
+　　　　# =========================
+　　　　# 🔟 GitHubへ保存（完全版）
+　　　　# =========================
+　　　　- name: Commit and push all outputs
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # FREE / ARTICLE / LOGS / PREMIUMすべて保存
-          git add today_picks_free.csv note_article.txt logs/ || true
+          # 🔥 FREE / PREMIUM / ARTICLE / LOGSすべて追加
+          git add today_picks_free.csv today_picks_premium.csv note_article.txt logs/ || true
 
-          git commit -m "Update free picks, article & logs [skip ci]" || echo "no change"
+          git commit -m "Update free & premium picks, article & logs [skip ci]" || echo "no change"
           git push
 
       # =========================
