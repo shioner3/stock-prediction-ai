@@ -3,7 +3,7 @@ name: Daily Stock AI
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 22 * * 1-5'
+    - cron: '0 22 * * 0-4'
 
 jobs:
   run-ai:
