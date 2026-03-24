@@ -252,6 +252,11 @@ df = normalize_columns(df)
 df["Date"] = pd.to_datetime(df["Date"])
 latest_date = df["Date"].max()
 
+print("\n=== PREDICTION DEBUG ===")
+print("latest_date used:", latest_date)
+print("today rows:", len(df[df["Date"] == latest_date]))
+print("========================")
+
 
 # =========================
 # モデル
@@ -328,3 +333,4 @@ log_df.to_csv(PRED_LOG_PATH, index=False)
 
 
 print(f"✅ 完了（実績込み記事生成）")
+
