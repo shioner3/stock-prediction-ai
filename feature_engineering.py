@@ -120,6 +120,13 @@ df = df.dropna(subset=[
 # =========================
 df = df.reset_index(drop=True)
 
+print("\n=== FEATURE DATA DEBUG ===")
+print("rows:", len(df))
+print("latest:", df["Date"].max())
+print("unique dates:", df["Date"].nunique())
+print("last 5 dates:", sorted(df["Date"].unique())[-5:])
+print("========================")
+
 # =========================
 # 保存
 # =========================
@@ -131,10 +138,3 @@ print("列数:", len(df.columns))
 
 # 重要チェック
 print("columns:", df.columns)
-
-print("\n=== FEATURE DATA DEBUG ===")
-print("rows:", len(df))
-print("latest:", df["Date"].max())
-print("unique dates:", df["Date"].nunique())
-print("last 5 dates:", sorted(df["Date"].unique())[-5:])
-print("========================")
