@@ -109,6 +109,15 @@ print("missing ticker count:", missing)
 print("Unique tickers:", df_existing["Ticker"].nunique())
 print("NaT:", df_existing["Date"].isna().sum())
 
+print("\n=== DATE CHECK ===")
+print("today:", today)
+
+sample = list(last_dates_dict.items())[:5]
+for t, d in sample:
+    d = pd.to_datetime(d)
+    print(t, d, "diff:", (today.date() - d.date()).days)
+print("==================")
+
 # サンプル確認（ズレ検知）
 print("sample existing:", df_existing["Ticker"].unique()[:5])
 print("sample new:", tickers[:5])
