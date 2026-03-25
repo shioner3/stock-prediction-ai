@@ -14,7 +14,10 @@ TOP_N = 5
 WEAK_TOP_PERCENT = 0.01
 
 BASE_DIR = os.path.dirname(__file__)
-DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
+
+TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
+PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
+
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -23,11 +26,9 @@ os.makedirs(LOG_DIR, exist_ok=True)
 FREE_CSV_PATH = "today_picks_free.csv"
 PREMIUM_CSV_PATH = os.path.join(LOG_DIR, "today_picks_premium.csv")
 
-# 月分割ログ
 month_str = datetime.now().strftime("%Y-%m")
 PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
-# 🔥 実績ログ（ここ追加）
 PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
 
 
@@ -49,8 +50,6 @@ TARGET = "Target"
 # 列名吸収
 # =========================
 def normalize_columns(df):
-    df = df.copy()
-
     rename_map = {}
 
     if "コード" not in df.columns and "Ticker" in df.columns:
@@ -59,10 +58,7 @@ def normalize_columns(df):
     if "銘柄名" not in df.columns and "Name" in df.columns:
         rename_map["Name"] = "銘柄名"
 
-    if rename_map:
-        df = df.rename(columns=rename_map)
-
-    return df
+    return df.rename(columns=rename_map) if rename_map else df
 
 
 # =========================
@@ -70,14 +66,9 @@ def normalize_columns(df):
 # =========================
 def normalize(df):
     df = df.copy()
-
-    if "Pred" not in df.columns:
-        raise KeyError("Pred column missing")
-
     df["PredRank"] = df["Pred"].rank(ascending=False, method="first")
     df = df.sort_values("PredRank")
     df["PredRank"] = range(1, len(df) + 1)
-
     return df
 
 
@@ -96,49 +87,29 @@ def get_regime(score):
 
 
 # =========================
-def generate_global_strategy():
-    return """
-========================
-■ AI戦略の前提
-========================
-■ エントリー：即時
-■ 保有：5営業日
-■ 利確：5営業日後
-■ 損切り：-3%
-"""
-
-
-# =========================
-# 🔥 実績読み込み（追加）
+# 実績読み込み
 # =========================
 def load_performance():
-
     if not os.path.exists(PERF_LOG_PATH):
         return None
 
     df = pd.read_csv(PERF_LOG_PATH)
-
     if len(df) < 10:
         return None
 
-    # 直近100件
     df = df.tail(100)
 
-    result = {}
-
-    # 全体
-    result["all"] = {
-        "win_rate": df["win"].mean(),
-        "avg_return": df["return"].mean(),
-        "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
+    result = {
+        "all": {
+            "win_rate": df["win"].mean(),
+            "avg_return": df["return"].mean(),
+            "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
+        },
+        "regime": {}
     }
-
-    # レジーム別
-    result["regime"] = {}
 
     for r in ["strong", "slightly_strong", "neutral", "weak"]:
         df_r = df[df["regime"] == r]
-
         if len(df_r) < 5:
             continue
 
@@ -152,109 +123,23 @@ def load_performance():
 
 
 # =========================
-# 日次判断
+# データ読み込み（分離）
 # =========================
-def generate_daily_decision(full_df):
+train_df = pd.read_parquet(TRAIN_DATA_PATH)
+predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
-    market_score = full_df["Pred"].mean()
-    regime = get_regime(market_score)
+train_df = normalize_columns(train_df)
+predict_df = normalize_columns(predict_df)
 
-    best_n = 3
-    weak_picks = pd.DataFrame()
+train_df["Date"] = pd.to_datetime(train_df["Date"])
+predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 
-    if regime == "weak":
-
-        threshold = full_df["Pred"].quantile(1 - WEAK_TOP_PERCENT)
-
-        weak_picks = full_df[
-            (full_df["Pred"] >= threshold) &
-            (full_df["Volume_change_rank"] <= 10)
-        ].copy()
-
-        weak_picks = normalize(weak_picks)
-
-    if regime == "strong":
-        trend = "強気"
-        action = "積極エントリー"
-    elif regime == "slightly_strong":
-        trend = "やや強気"
-        action = "選別エントリー"
-    elif regime == "neutral":
-        trend = "中立"
-        action = "様子見"
-    else:
-        trend = "弱気"
-        action = "見送り（例外あり）"
-
-    text = f"""
-========================
-■ 本日のAI判断
-========================
-市場評価: {trend}
-行動: {action}
-"""
-
-    return text, regime, best_n, weak_picks
-
-
-# =========================
-# 記事生成（🔥実績追加）
-# =========================
-def generate_article(premium_df, daily_comment):
-
-    texts = [daily_comment, generate_global_strategy()]
-
-    # 🔥 実績追加
-    perf = load_performance()
-
-    if perf is not None:
-
-        texts.append("\n========================\n■ 実績（直近）\n========================")
-
-        texts.append(f"""
-勝率: {perf["all"]["win_rate"]:.2%}
-平均リターン: {perf["all"]["avg_return"]:.2%}
-Sharpe: {perf["all"]["sharpe"]:.2f}
-""")
-
-        texts.append("\n■ レジーム別")
-
-        for r, v in perf["regime"].items():
-            texts.append(f"""
-[{r}]
-勝率: {v["win_rate"]:.2%}
-平均リターン: {v["avg_return"]:.2%}
-Sharpe: {v["sharpe"]:.2f}
-""")
-
-    # 銘柄
-    selected = premium_df.head(TOP_N).copy()
-    selected = normalize(selected)
-
-    for _, row in selected.iterrows():
-        texts.append(f"""
-========================
-{row["PredRank"]}位: {row.get("銘柄名","-")} ({row.get("コード","-")})
-========================
-Pred: {row["Pred"]:.4f}
-Regime: {row.get("regime","-")}
-""")
-
-    return "\n".join(texts)
-
-
-# =========================
-# データ
-# =========================
-df = pd.read_parquet(DATA_PATH)
-df = normalize_columns(df)
-
-df["Date"] = pd.to_datetime(df["Date"])
-latest_date = df["Date"].max()
+latest_date = predict_df["Date"].max()
 
 print("\n=== PREDICTION DEBUG ===")
-print("latest_date used:", latest_date)
-print("today rows:", len(df[df["Date"] == latest_date]))
+print("train latest:", train_df["Date"].max())
+print("predict latest:", latest_date)
+print("today rows:", len(predict_df[predict_df["Date"] == latest_date]))
 print("========================")
 
 
@@ -264,7 +149,7 @@ print("========================")
 retrain = (latest_date.weekday() == 0) or (not os.path.exists(MODEL_PATH))
 
 if retrain:
-    train = df[df["Date"] < latest_date]
+    train = train_df.copy()
     model = LGBMRegressor()
     model.fit(train[FEATURES], train[TARGET])
 
@@ -276,18 +161,19 @@ else:
 
 
 # =========================
-# 今日
+# 予測（最新データ）
 # =========================
-today = df[df["Date"] == latest_date].copy()
+today = predict_df[predict_df["Date"] == latest_date].copy()
+
 today["Pred"] = model.predict(today[FEATURES])
 today = normalize(today)
 
 
 # =========================
-# 日次判断
+# レジーム
 # =========================
-daily_comment, regime, best_n, weak_picks = generate_daily_decision(today)
-
+market_score = today["Pred"].mean()
+regime = get_regime(market_score)
 
 # =========================
 # FREE CSV
@@ -301,7 +187,6 @@ free_csv.to_csv(FREE_CSV_PATH, index=False)
 # PREMIUM CSV
 # =========================
 premium_df = today.copy()
-
 premium_df["regime"] = regime
 premium_df["predict_date"] = datetime.now().strftime("%Y-%m-%d")
 premium_df["target_date"] = (datetime.now() + BDay(5)).strftime("%Y-%m-%d")
@@ -310,20 +195,11 @@ premium_df.to_csv(PREMIUM_CSV_PATH, index=False)
 
 
 # =========================
-# ARTICLE
-# =========================
-article = generate_article(premium_df, daily_comment)
-
-with open("note_article.txt", "w", encoding="utf-8") as f:
-    f.write(article)
-
-
-# =========================
-# LOG（月分割）
+# LOG
 # =========================
 log_df = premium_df[
     ["コード", "銘柄名", "Pred", "PredRank", "regime", "predict_date", "target_date"]
-].copy()
+]
 
 if os.path.exists(PRED_LOG_PATH):
     old = pd.read_csv(PRED_LOG_PATH)
@@ -332,5 +208,4 @@ if os.path.exists(PRED_LOG_PATH):
 log_df.to_csv(PRED_LOG_PATH, index=False)
 
 
-print(f"✅ 完了（実績込み記事生成）")
-
+print("✅ 完了（学習/予測分離版）")
