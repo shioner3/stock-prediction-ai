@@ -179,7 +179,7 @@ def generate_free_article(today, regime):
 ・全銘柄ランキング
 
 👉 「そのまま使える形」で公開
-"""
+text = """
 
 ========================
 ■ 注意
