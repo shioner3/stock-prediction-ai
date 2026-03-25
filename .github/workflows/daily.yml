@@ -93,18 +93,16 @@ jobs:
       # =========================
       # 🔟 GitHubへ保存（完全修正版）
       # =========================
-      - name: Commit and push all outputs
+　　　　- name: Commit and push all outputs
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # 🔥 全部追加
-          git add -A
+          # 🔥 必要なファイルだけ
+          git add today_picks_free.csv note_article.txt logs/ || true
 
-          # commit（変更なければスキップ）
           git commit -m "Update outputs [skip ci]" || echo "no change"
 
-          # 🔥 失敗したらちゃんと落ちる（重要）
           git push origin HEAD:main
 
       # =========================
