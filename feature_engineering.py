@@ -6,7 +6,9 @@ import duckdb
 # 設定
 # =========================
 PARQUET_FILE = "stock_data/prices.parquet"
-SAVE_PATH = "ml_dataset.parquet"
+
+TRAIN_SAVE_PATH = "ml_dataset.parquet"
+PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
 HOLD_DAYS = 5
 
@@ -30,6 +32,11 @@ ORDER BY Ticker, Date
 """).df()
 
 print("元データサイズ:", df.shape)
+
+# =========================
+# 型整備（重要）
+# =========================
+df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
 # 銘柄内特徴量
@@ -65,7 +72,6 @@ avg_gain = gain.groupby(df["Ticker"]).transform(lambda x: x.rolling(14).mean())
 avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(14).mean())
 
 rs = avg_gain / avg_loss
-
 df["RSI"] = 100 - (100 / (1 + rs))
 
 # =========================
@@ -83,27 +89,26 @@ rank_features = [
 ]
 
 for col in rank_features:
-    df[col + "_rank"] = (
-        df.groupby("Date")[col].rank(pct=True)
-    )
+    df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
 
 # =========================
-# Target
+# Target（学習用）
 # =========================
 df["FutureReturn_5"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-df["Target"] = (
-    df.groupby("Date")["FutureReturn_5"].rank(pct=True)
-)
+df["Target"] = df.groupby("Date")["FutureReturn_5"].rank(pct=True)
 
 # =========================
-# データ整理
+# 無限値処理
 # =========================
 df = df.replace([np.inf, -np.inf], np.nan)
 
-df = df.dropna(subset=[
+# =========================
+# 🔥 学習用データ
+# =========================
+train_df = df.dropna(subset=[
     "Return_1_rank",
     "MA5_ratio_rank",
     "MA25_ratio_rank",
@@ -113,28 +118,48 @@ df = df.dropna(subset=[
     "HL_range_rank",
     "RSI_rank",
     "FutureReturn_5"
-])
+]).copy()
+
+train_df = train_df.reset_index(drop=True)
 
 # =========================
-# 🔥 重要：メタデータを保持
+# 🔥 予測用データ（最重要）
 # =========================
-df = df.reset_index(drop=True)
+predict_df = df.dropna(subset=[
+    "Return_1_rank",
+    "MA5_ratio_rank",
+    "MA25_ratio_rank",
+    "MA75_ratio_rank",
+    "Volatility_rank",
+    "Volume_change_rank",
+    "HL_range_rank",
+    "RSI_rank"
+]).copy()
 
-print("\n=== FEATURE DATA DEBUG ===")
-print("rows:", len(df))
-print("latest:", df["Date"].max())
-print("unique dates:", df["Date"].nunique())
-print("last 5 dates:", sorted(df["Date"].unique())[-5:])
+predict_df = predict_df.reset_index(drop=True)
+
+# =========================
+# デバッグ（超重要）
+# =========================
+print("\n=== TRAIN DATA DEBUG ===")
+print("rows:", len(train_df))
+print("latest:", train_df["Date"].max())
+print("unique dates:", train_df["Date"].nunique())
+print("========================")
+
+print("\n=== PREDICT DATA DEBUG ===")
+print("rows:", len(predict_df))
+print("latest:", predict_df["Date"].max())
+print("unique dates:", predict_df["Date"].nunique())
+print("last 5 dates:", sorted(predict_df["Date"].unique())[-5:])
 print("========================")
 
 # =========================
 # 保存
 # =========================
-df.to_parquet(SAVE_PATH)
+train_df.to_parquet(TRAIN_SAVE_PATH)
+predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("MLデータ保存完了")
-print("行数:", len(df))
-print("列数:", len(df.columns))
-
-# 重要チェック
-print("columns:", df.columns)
+print("\n保存完了")
+print("train rows:", len(train_df))
+print("predict rows:", len(predict_df))
