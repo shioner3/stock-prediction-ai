@@ -145,7 +145,7 @@ def generate_free_article(today, regime):
     for _, row in today.head(TOP_N).iterrows():
         text += f"{int(row['PredRank'])}位：{row['銘柄名']}（{row['コード']}）\n"
 
-    # 🔥 ここが超重要（インパクト）
+    # 実績
     text += f"""
 ========================
 ■ AIの実力（検証結果）
@@ -158,6 +158,7 @@ def generate_free_article(today, regime):
 👉 放置でも資産が増える設計
 """
 
+    # 強さの理由
     text += """
 ========================
 ■ なぜ強いのか？
@@ -179,17 +180,20 @@ def generate_free_article(today, regime):
 ・全銘柄ランキング
 
 👉 「そのまま使える形」で公開
+"""
 
-text = """
+    # 注意
+    text += """
 ========================
 ■ 注意
 ========================
-"""
+
 ・短期トレード向け戦略です
 ・市場状況によって期待値は変動します
 
 👉 続きでは
 「実際にどう使えば利益を狙えるか」を解説します
+"""
 
     return text
 
