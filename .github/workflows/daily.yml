@@ -108,7 +108,7 @@ jobs:
       # =========================
       # 🔥 Hugging Faceへ送信
       # =========================
-      - name: Push FREE CSV to Hugging Face
+      - name: Commit and push all outputs
         run: |
           git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner/Stock-Prediction-Ai hf_space
 
