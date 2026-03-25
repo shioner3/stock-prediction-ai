@@ -2,6 +2,7 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 import os
+from pandas.tseries.offsets import BDay
 
 CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
@@ -40,10 +41,9 @@ print("銘柄数:", len(tickers))
 os.makedirs("stock_data", exist_ok=True)
 
 # =========================
-# 今日（JST固定）
+# 今日（完全tzなし）
 # =========================
-today = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=9)
-today = today.normalize()
+today = pd.Timestamp.now().normalize()
 
 # =========================
 # 既存データ
@@ -52,21 +52,16 @@ if os.path.exists(PARQUET_FILE):
 
     df_existing = pd.read_parquet(PARQUET_FILE)
 
-    # 🔥 Ticker完全統一
     df_existing["Ticker"] = df_existing["Ticker"].apply(normalize_ticker)
 
-    # 🔥 Date完全統一
     df_existing["Date"] = pd.to_datetime(
         df_existing["Date"], errors="coerce"
     ).dt.tz_localize(None)
 
-    # 🔥 壊れデータ削除
     df_existing = df_existing.dropna(subset=["Date"])
 
-    # 🔥 未来日削除
     df_existing = df_existing[df_existing["Date"] <= today]
 
-    # 🔥 Name補完
     mapped_name = df_existing["Ticker"].map(name_dict)
     if "Name" in df_existing.columns:
         df_existing["Name"] = mapped_name.combine_first(df_existing["Name"])
@@ -90,7 +85,6 @@ if not df_existing.empty:
         .rename(columns={"Date": "last_date"})
     )
 
-    # 🔥 型統一（重要）
     last_dates_df["last_date"] = pd.to_datetime(last_dates_df["last_date"])
 
 else:
@@ -99,7 +93,7 @@ else:
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
 # =========================
-# デバッグ（強化版）
+# デバッグ
 # =========================
 missing = sum([1 for t in tickers if t not in last_dates_dict])
 
@@ -118,12 +112,6 @@ for t, d in sample:
     print(t, d, "diff:", (today.date() - d.date()).days)
 print("==================")
 
-# サンプル確認（ズレ検知）
-print("sample existing:", df_existing["Ticker"].unique()[:5])
-print("sample new:", tickers[:5])
-
-print("==============")
-
 # =========================
 # 差分取得
 # =========================
@@ -136,14 +124,10 @@ for ticker in tqdm(tickers):
 
     last_date = last_dates_dict.get(ticker)
 
-    # =========================
-    # 差分判定
-    # =========================
     if last_date is not None:
 
         last_date = pd.to_datetime(last_date, errors="coerce")
 
-        # NaT防止
         if pd.isna(last_date):
             start_dt = pd.Timestamp("2018-01-01")
 
@@ -155,15 +139,14 @@ for ticker in tqdm(tickers):
                 skip_count += 1
                 continue
 
-            # 最新ならスキップ
-            if (today - last_date).days <= 1:
+            # 🔥 営業日ベース判定（最重要）
+            if last_date >= today - BDay(2):
                 skip_count += 1
                 continue
 
             start_dt = last_date + pd.Timedelta(days=1)
 
     else:
-        # 初回
         start_dt = pd.Timestamp("2018-01-01")
 
     start_date = start_dt.strftime("%Y-%m-%d")
@@ -180,13 +163,11 @@ for ticker in tqdm(tickers):
         if data.empty:
             continue
 
-        # MultiIndex対策
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
         data = data.reset_index()
 
-        # 🔥 Date統一
         data["Date"] = pd.to_datetime(data["Date"]).dt.tz_localize(None)
 
         data["Ticker"] = ticker
@@ -196,7 +177,6 @@ for ticker in tqdm(tickers):
             ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
         ]
 
-        # 念のため差分
         if last_date is not None and not pd.isna(last_date):
             data = data[data["Date"] > last_date]
 
@@ -216,10 +196,8 @@ if dfs:
 
     df_all = pd.concat([df_existing, df_new], ignore_index=True)
 
-    # 🔥 重複削除
     df_all = df_all.drop_duplicates(subset=["Date", "Ticker"], keep="last")
 
-    # 🔥 最終型統一
     df_all["Date"] = pd.to_datetime(df_all["Date"]).dt.tz_localize(None)
     df_all["Ticker"] = df_all["Ticker"].apply(normalize_ticker)
 
