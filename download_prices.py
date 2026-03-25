@@ -42,7 +42,7 @@ os.makedirs("stock_data", exist_ok=True)
 # =========================
 # 今日（JST固定）
 # =========================
-today = pd.Timestamp.utcnow() + pd.Timedelta(hours=9)
+today = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=9)
 today = today.normalize()
 
 # =========================
