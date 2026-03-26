@@ -250,7 +250,7 @@ MaxDD: {int(r['maxdd']*100)}%
     # 🔥 ランキング
     text += "\n========================\n■ 上位20ランキング\n========================\n"
 
-    for _, row in today.head(20).iterrows():
+    for _, row in today.iterrows():
         text += f"{int(row['PredRank'])}位 {row['銘柄名']} ({row['コード']}) Pred:{row['Pred']:.3f}\n"
 
     return text
