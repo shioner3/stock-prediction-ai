@@ -267,6 +267,12 @@ predict_df = normalize_columns(predict_df)
 train_df["Date"] = pd.to_datetime(train_df["Date"])
 predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 
+# =========================
+# 🔥 日付の健全性チェック
+# =========================
+print("\n=== DATE分布チェック ===")
+print(predict_df["Date"].value_counts().head())
+
 latest_date = predict_df["Date"].max()
 
 print("\n=== DEBUG ===")
