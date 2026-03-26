@@ -90,6 +90,10 @@ if not df_existing.empty:
 else:
     last_dates_df = pd.DataFrame(columns=["Ticker", "last_date"])
 
+# 🔥 ここに追加
+print("\n=== LAST DATE 分布 ===")
+print(df_existing.groupby("Date")["Ticker"].count().sort_index().tail(10))
+
 last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
 
 # =========================
@@ -217,10 +221,3 @@ print("保存完了 行数:", final_rows)
 print("API呼び出し回数:", api_calls)
 print("スキップ数:", skip_count)
 
-print("\n=== PRICE DATA DEBUG ===")
-df_check = pd.read_parquet(PARQUET_FILE)
-print("rows:", len(df_check))
-print("latest:", df_check["Date"].max())
-print("unique dates:", df_check["Date"].nunique())
-print("unique tickers:", df_check["Ticker"].nunique())
-print("========================")
