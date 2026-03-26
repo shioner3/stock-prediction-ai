@@ -273,6 +273,9 @@ predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 print("\n=== DATE分布チェック ===")
 print(predict_df["Date"].value_counts().head())
 
+print("\n=== 最新付近チェック ===")
+print(predict_df["Date"].value_counts().sort_index().tail(10))
+
 latest_date = predict_df["Date"].max()
 
 print("\n=== DEBUG ===")
