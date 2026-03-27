@@ -7,8 +7,12 @@ import time
 CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
-RECENT_DAYS = 10        # ←超重要（直近再取得）
-MIN_COUNT = 3000        # ←完全性判定
+RECENT_DAYS = 10
+MIN_COUNT = 3000
+
+BATCH_SIZE = 50        # ←小さくするほど安定
+SLEEP_TIME = 1         # ←API保護
+RETRY = 3              # ←再試行回数
 
 # =========================
 # 正規化
@@ -43,7 +47,7 @@ os.makedirs("stock_data", exist_ok=True)
 today = pd.Timestamp.now().normalize()
 
 # =========================
-# 既存データ読み込み
+# 既存データ
 # =========================
 if os.path.exists(PARQUET_FILE):
     df_existing = pd.read_parquet(PARQUET_FILE)
@@ -60,54 +64,80 @@ else:
     )
 
 # =========================
-# 🔥 直近データを一括取得（最重要）
+# 🔥 バッチ取得（最重要）
 # =========================
-print("\n=== 直近データ再取得 ===")
+def fetch_batch(batch):
 
-data = yf.download(
-    tickers,
-    period=f"{RECENT_DAYS}d",
-    group_by="ticker",
-    auto_adjust=True,
-    threads=True,
-    progress=True
-)
+    for attempt in range(RETRY):
+        try:
+            data = yf.download(
+                batch,
+                period=f"{RECENT_DAYS}d",
+                group_by="ticker",
+                auto_adjust=True,
+                threads=False,   # ←絶対オフ
+                progress=False
+            )
+            return data
+        except Exception as e:
+            print(f"Retry {attempt+1}:", e)
+            time.sleep(2)
+
+    return None
+
+# =========================
+# 🔥 直近データ取得
+# =========================
+print("\n=== 直近データ取得（安定版） ===")
 
 dfs_recent = []
 
-for ticker in tqdm(tickers):
+for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
 
-    try:
-        df_t = data[ticker].copy()
+    batch = tickers[i:i+BATCH_SIZE]
+    data = fetch_batch(batch)
 
-        if df_t.empty:
+    if data is None:
+        continue
+
+    for ticker in batch:
+        try:
+            df_t = data[ticker].copy()
+
+            if df_t.empty:
+                continue
+
+            df_t = df_t.reset_index()
+            df_t["Date"] = pd.to_datetime(df_t["Date"]).dt.tz_localize(None)
+
+            df_t["Ticker"] = ticker
+            df_t["Name"] = name_dict.get(ticker)
+
+            df_t = df_t[
+                ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
+            ]
+
+            dfs_recent.append(df_t)
+
+        except Exception:
             continue
 
-        df_t = df_t.reset_index()
-        df_t["Date"] = pd.to_datetime(df_t["Date"]).dt.tz_localize(None)
+    time.sleep(SLEEP_TIME)
 
-        df_t["Ticker"] = ticker
-        df_t["Name"] = name_dict.get(ticker)
-
-        df_t = df_t[
-            ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
-        ]
-
-        dfs_recent.append(df_t)
-
-    except Exception as e:
-        print(f"Skip {ticker}: {e}")
+# =========================
+# 🔥 結合
+# =========================
+if len(dfs_recent) == 0:
+    print("⚠ データ取得失敗")
+    exit()
 
 df_recent = pd.concat(dfs_recent, ignore_index=True)
 
-# =========================
-# 🔥 上書きマージ（超重要）
-# =========================
 df_all = pd.concat([df_existing, df_recent], ignore_index=True)
 
 df_all = df_all.drop_duplicates(
     subset=["Date", "Ticker"],
-    keep="last"   # ←新しいデータ優先
+    keep="last"
 )
 
 # =========================
@@ -121,7 +151,7 @@ print(counts.sort_index().tail(10))
 valid_dates = counts[counts >= MIN_COUNT].index
 
 if len(valid_dates) == 0:
-    print("⚠ 有効な日がありません")
+    print("⚠ 有効な日なし")
     latest_valid = None
 else:
     latest_valid = max(valid_dates)
@@ -129,7 +159,7 @@ else:
 print("\n=== 判定 ===")
 print("最新日:", df_all["Date"].max())
 print("有効最新日:", latest_valid)
-print("その銘柄数:", counts.get(latest_valid, 0))
+print("銘柄数:", counts.get(latest_valid, 0))
 
 # =========================
 # 保存
