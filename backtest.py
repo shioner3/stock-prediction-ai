@@ -25,9 +25,13 @@ HOLD_DAYS = 5
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
-df["Date"] = pd.to_datetime(df["Date"])
+
+# 🔥 修正ポイント
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+df = df.dropna(subset=["Date"])
 
 df = df.sort_values("Date")
+
 
 # 年取得
 df["Year"] = df["Date"].dt.year
