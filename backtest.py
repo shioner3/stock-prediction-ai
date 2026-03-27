@@ -17,7 +17,8 @@ FEATURES = [
 
 TARGET = "Target"
 
-TOP_K = 10
+TOP_K = 5                 # 🔥 最大5銘柄
+PRED_THRESHOLD = 0.0      # 🔥 期待値フィルター
 HOLD_DAYS = 5
 
 
@@ -26,28 +27,23 @@ HOLD_DAYS = 5
 # =========================
 df = pd.read_parquet(DATA_PATH)
 
-# 🔥 修正ポイント
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 df = df.dropna(subset=["Date"])
-
 df = df.sort_values("Date")
 
-
-# 年取得
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
-
 
 results_summary = []
 
 
 # =========================
-# 年ごとローリング
+# ローリング
 # =========================
 for i in range(3, len(years) - 1):
 
-    train_years = years[i-3:i]   # 3年学習
-    test_year = years[i]         # 1年テスト
+    train_years = years[i-3:i]
+    test_year = years[i]
 
     print(f"\n===== {train_years} → {test_year} =====")
 
@@ -73,11 +69,22 @@ for i in range(3, len(years) - 1):
         if len(today) == 0:
             continue
 
+        # =========================
+        # 予測
+        # =========================
         today["Pred"] = model.predict(today[FEATURES])
 
+        # 🔥 フィルター（超重要）
+        today = today[today["Pred"] > PRED_THRESHOLD]
+
+        if len(today) == 0:
+            continue  # ノートレード
+
+        # 🔥 最大5銘柄
         picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
-        ret = picks["FutureReturn_5"].mean()
+        # 🔥 外れ値カット（現実寄せ）
+        ret = picks["FutureReturn_5"].clip(-0.3, 0.5).mean()
 
         daily_returns.append(ret)
 
@@ -88,7 +95,7 @@ for i in range(3, len(years) - 1):
 
     cum = (1 + res).cumprod()
 
-    cagr = cum.iloc[-1] ** (252/len(res)) - 1
+    cagr = cum.iloc[-1] ** (252 / len(res)) - 1
     sharpe = res.mean() / res.std() * np.sqrt(252)
     maxdd = (cum / cum.cummax() - 1).min()
 
@@ -101,7 +108,8 @@ for i in range(3, len(years) - 1):
         "test_period": f"{test_year}-{test_year+1}",
         "CAGR": cagr,
         "Sharpe": sharpe,
-        "MaxDD": maxdd
+        "MaxDD": maxdd,
+        "trades": len(res)
     })
 
 
@@ -117,6 +125,6 @@ print("\n===== Average =====")
 print("Avg CAGR   :", summary_df["CAGR"].mean())
 print("Avg Sharpe :", summary_df["Sharpe"].mean())
 print("Avg MaxDD  :", summary_df["MaxDD"].mean())
+print("Avg Trades :", summary_df["trades"].mean())
 
-# 保存
 summary_df.to_csv("backtest_summary.csv", index=False)
