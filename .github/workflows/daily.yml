@@ -3,7 +3,11 @@ name: Daily Stock AI
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 11 * * 1-5'   # 日本時間 平日20時
+    - cron: '0 11 * * 1-5'
+
+concurrency:
+  group: stock-ai
+  cancel-in-progress: true
 
 jobs:
   run-ai:
@@ -11,14 +15,12 @@ jobs:
 
     steps:
 
-      # =========================
-      # 1️⃣ リポジトリ取得
-      # =========================
+      # ① checkout（超重要）
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-      # =========================
-      # 2️⃣ キャッシュ
-      # =========================
+      # ② キャッシュ
       - name: Cache price data
         uses: actions/cache@v3
         with:
@@ -27,98 +29,36 @@ jobs:
           restore-keys: |
             prices-cache-
 
-      # =========================
-      # 3️⃣ ディレクトリ作成
-      # =========================
+      # ③ ディレクトリ
       - name: Create data directory
         run: mkdir -p stock_data logs
 
-      # =========================
-      # 4️⃣ Python環境
-      # =========================
+      # ④ Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      # =========================
-      # 5️⃣ 依存関係
-      # =========================
+      # ⑤ 依存関係
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements_ai.txt
 
-      # =========================
-      # 6️⃣ AIパイプライン
-      # =========================
+      # ⑥ 実行
       - name: Run daily AI pipeline
         run: python run_daily.py
 
-      # =========================
-      # 7️⃣ 出力確認（FREE）
-      # =========================
-      - name: Check FREE CSV
-        run: |
-          if [ -f "today_picks_free.csv" ]; then
-            echo "✅ FREE CSV OK"
-          else
-            echo "❌ FREE CSV missing"
-            exit 1
-          fi
-
-      # =========================
-      # 8️⃣ 記事確認
-      # =========================
-      - name: Check article
-        run: |
-          if [ -f "note_article.txt" ]; then
-            echo "📝 article OK"
-          else
-            echo "❌ article missing"
-            exit 1
-          fi
-
-      # =========================
-      # 9️⃣ logs確認（デバッグ強化）
-      # =========================
-      - name: Debug logs
-        run: |
-          echo "===== LOG FILES ====="
-          ls -l logs || echo "logsなし"
-
-          echo "===== PREMIUM CSV HEAD ====="
-          head -n 5 logs/today_picks_premium.csv || echo "premiumなし"
-
-      # =========================
-      # 🔟 GitHubへ保存（完全修正版）
-      # =========================
-      - name: Commit and push all outputs
+      # ⑦ push（完全修正版）
+      - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # 🔥 必要なファイルだけ
           git add today_picks_free.csv note_article.txt logs/ || true
-
           git commit -m "Update outputs [skip ci]" || echo "no change"
 
+          # 🔥 これが最重要
+          git pull --rebase origin main
+
           git push origin HEAD:main
-
-      # =========================
-      # 🔥 Hugging Faceへ送信
-      # =========================
-      - name: Commit and push all outputs
-        run: |
-          git clone https://user:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shioner/Stock-Prediction-Ai hf_space
-
-          cp today_picks_free.csv hf_space/
-
-          cd hf_space
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          git add today_picks_free.csv
-          git commit -m "auto update free csv" || echo "no change"
-          git push
