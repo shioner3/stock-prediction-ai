@@ -11,6 +11,7 @@ from pandas.tseries.offsets import BDay
 # 設定
 # =========================
 TOP_N = 5
+PRED_THRESHOLD = 0.0  # 🔥 これ重要（期待値フィルター）
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -22,13 +23,7 @@ MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-FREE_CSV_PATH = "today_picks_free.csv"
-PREMIUM_CSV_PATH = os.path.join(LOG_DIR, "today_picks_premium.csv")
-
 ARTICLE_PATH = "note_article.txt"
-
-month_str = datetime.now().strftime("%Y-%m")
-PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
 PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
 
@@ -48,7 +43,7 @@ TARGET = "Target"
 
 
 # =========================
-# 🔥 バックテスト（重要：無料のフック）
+# バックテスト
 # =========================
 BACKTEST_RESULTS = [
     {"period": "2019-2022", "cagr": 0.21, "sharpe": 1.05, "maxdd": -0.12},
@@ -82,14 +77,21 @@ def normalize(df):
 
 
 def get_regime(score):
-    if score > 0.55:
-        return "strong"
-    elif score > 0.52:
-        return "slightly_strong"
-    elif score > 0.5:
-        return "neutral"
+    if score > 0.01:
+        return "強気"
+    elif score > 0:
+        return "中立"
     else:
-        return "weak"
+        return "弱気"
+
+
+def get_action(regime):
+    if regime == "強気":
+        return "押し目はチャンス。分散して複数銘柄へ"
+    elif regime == "中立":
+        return "無理に入らず、上位のみ厳選"
+    else:
+        return "期待値が低いため基本は見送り"
 
 
 def load_performance():
@@ -104,15 +106,16 @@ def load_performance():
 
     return {
         "win_rate": df["win"].mean(),
-        "avg_return": df["return"].mean(),
-        "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
+        "avg_return": df["return"].mean()
     }
 
 
 # =========================
-# 無料記事（売るための本体）
+# 無料記事
 # =========================
 def generate_free_article(today, regime):
+
+    action = get_action(regime)
 
     text = f"""
 ========================
@@ -120,15 +123,21 @@ def generate_free_article(today, regime):
 ========================
 市場：{regime}
 
+→ {action}
+
 ========================
 ■ 注目銘柄（TOP5）
 ========================
 """
 
-    for _, row in today.head(TOP_N).iterrows():
-        text += f"{int(row['PredRank'])}位：{row['銘柄名']}（{row['コード']}）\n"
+    picks = today[today["Pred"] > PRED_THRESHOLD].head(TOP_N)
 
-    # 🔥 バックテスト（最重要フック）
+    if len(picks) == 0:
+        text += "本日は該当なし（無理なエントリーは避けます）\n"
+    else:
+        for _, row in picks.iterrows():
+            text += f"{int(row['PredRank'])}位：{row['銘柄名']}（{row['コード']}）\n"
+
     text += f"""
 ========================
 ■ AIの実力（検証結果）
@@ -163,8 +172,8 @@ def generate_free_article(today, regime):
 ========================
 
 ・複数指標の統合スコア
-・市場レジーム適応
-・短期最適化モデル
+・市場状況に応じた戦略切替
+・短期リターン特化モデル
 
 ========================
 ■ 注意
@@ -186,7 +195,7 @@ def generate_free_article(today, regime):
 
 
 # =========================
-# 有料記事（再現性）
+# 有料記事
 # =========================
 def generate_premium_article(today, regime):
 
@@ -200,14 +209,13 @@ def generate_premium_article(today, regime):
 ・損切り：-3%
 """
 
-    if regime == "strong":
-        text += "\n強気 → 上位銘柄を複数エントリー\n"
-    elif regime == "neutral":
-        text += "\n中立 → 上位のみ\n"
+    if regime == "強気":
+        text += "\n強気 → 上位銘柄を分散エントリー\n"
+    elif regime == "中立":
+        text += "\n中立 → 厳選して少数\n"
     else:
         text += "\n弱気 → 基本ノートレード\n"
 
-    # 🔥 バックテスト詳細（信頼）
     text += "\n========================\n■ バックテスト詳細\n========================\n"
 
     for r in BACKTEST_RESULTS:
@@ -281,4 +289,4 @@ premium_article = generate_premium_article(today, regime)
 with open(ARTICLE_PATH, "w", encoding="utf-8") as f:
     f.write(free_article + "\n\n================ 有料 =================\n\n" + premium_article)
 
-print("✅ 完了（売れる構成）")
+print("✅ 完了（ガチ売れる版）")
