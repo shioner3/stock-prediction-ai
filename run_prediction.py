@@ -155,7 +155,7 @@ def generate_free_article(today, regime):
 ・最大損失：約{int(abs(AVG_MAXDD)*100)}%
 ・複数期間で安定してプラス
 
-👉 放置でも資産が増える設計
+
 """
 
     # 強さの理由
