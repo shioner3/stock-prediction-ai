@@ -7,6 +7,9 @@ import time
 CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
+RECENT_DAYS = 10        # ←超重要（直近再取得）
+MIN_COUNT = 3000        # ←完全性判定
+
 # =========================
 # 正規化
 # =========================
@@ -40,10 +43,9 @@ os.makedirs("stock_data", exist_ok=True)
 today = pd.Timestamp.now().normalize()
 
 # =========================
-# 既存データ
+# 既存データ読み込み
 # =========================
 if os.path.exists(PARQUET_FILE):
-
     df_existing = pd.read_parquet(PARQUET_FILE)
 
     df_existing["Ticker"] = df_existing["Ticker"].apply(normalize_ticker)
@@ -58,150 +60,84 @@ else:
     )
 
 # =========================
-# 最新日
+# 🔥 直近データを一括取得（最重要）
 # =========================
-if not df_existing.empty:
+print("\n=== 直近データ再取得 ===")
 
-    last_dates_df = (
-        df_existing.groupby("Ticker")["Date"]
-        .max()
-        .reset_index()
-        .rename(columns={"Date": "last_date"})
-    )
+data = yf.download(
+    tickers,
+    period=f"{RECENT_DAYS}d",
+    group_by="ticker",
+    auto_adjust=True,
+    threads=True,
+    progress=True
+)
 
-    last_dates_dict = dict(zip(last_dates_df["Ticker"], last_dates_df["last_date"]))
-    global_latest = df_existing["Date"].max()
-
-else:
-    last_dates_dict = {}
-    global_latest = None
-
-# =========================
-# ① 差分取得
-# =========================
-dfs = []
-api_calls = 0
+dfs_recent = []
 
 for ticker in tqdm(tickers):
 
-    last_date = last_dates_dict.get(ticker)
-
-    if last_date is not None:
-        last_date = pd.to_datetime(last_date)
-
-        if global_latest is not None:
-            if last_date >= global_latest - pd.Timedelta(days=1):
-                continue
-
-        start_dt = last_date + pd.Timedelta(days=1)
-
-    else:
-        start_dt = pd.Timestamp("2018-01-01")
-
     try:
-        api_calls += 1
+        df_t = data[ticker].copy()
 
-        data = yf.download(ticker, start=start_dt.strftime("%Y-%m-%d"), progress=False)
-
-        if data.empty:
+        if df_t.empty:
             continue
 
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
+        df_t = df_t.reset_index()
+        df_t["Date"] = pd.to_datetime(df_t["Date"]).dt.tz_localize(None)
 
-        data = data.reset_index()
-        data["Date"] = pd.to_datetime(data["Date"]).dt.tz_localize(None)
+        df_t["Ticker"] = ticker
+        df_t["Name"] = name_dict.get(ticker)
 
-        data["Ticker"] = ticker
-        data["Name"] = name_dict.get(ticker)
-
-        data = data[
+        df_t = df_t[
             ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
         ]
 
-        dfs.append(data)
-
-        time.sleep(0.05)
+        dfs_recent.append(df_t)
 
     except Exception as e:
-        print(f"Error: {ticker}", e)
+        print(f"Skip {ticker}: {e}")
+
+df_recent = pd.concat(dfs_recent, ignore_index=True)
 
 # =========================
-# 一旦保存
+# 🔥 上書きマージ（超重要）
 # =========================
-if dfs:
-    df_new = pd.concat(dfs, ignore_index=True)
-    df_existing = pd.concat([df_existing, df_new], ignore_index=True)
+df_all = pd.concat([df_existing, df_recent], ignore_index=True)
 
-    df_existing = df_existing.drop_duplicates(subset=["Date", "Ticker"])
-
-# =========================
-# ② 欠損検出
-# =========================
-latest = df_existing["Date"].max()
-
-latest_tickers = df_existing[df_existing["Date"] == latest]["Ticker"]
-
-missing_tickers = list(set(tickers) - set(latest_tickers))
-
-print("\n=== 欠損チェック ===")
-print("最新日:", latest)
-print("欠損数:", len(missing_tickers))
+df_all = df_all.drop_duplicates(
+    subset=["Date", "Ticker"],
+    keep="last"   # ←新しいデータ優先
+)
 
 # =========================
-# ③ 欠損再取得
+# 🔥 完全性チェック
 # =========================
-dfs_retry = []
+counts = df_all["Date"].value_counts()
 
-for ticker in tqdm(missing_tickers):
+print("\n=== 最新付近チェック ===")
+print(counts.sort_index().tail(10))
 
-    try:
-        api_calls += 1
+valid_dates = counts[counts >= MIN_COUNT].index
 
-        data = yf.download(
-            ticker,
-            start=(latest - pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
-            progress=False
-        )
+if len(valid_dates) == 0:
+    print("⚠ 有効な日がありません")
+    latest_valid = None
+else:
+    latest_valid = max(valid_dates)
 
-        if data.empty:
-            continue
-
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-
-        data = data.reset_index()
-        data["Date"] = pd.to_datetime(data["Date"]).dt.tz_localize(None)
-
-        data["Ticker"] = ticker
-        data["Name"] = name_dict.get(ticker)
-
-        data = data[
-            ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
-        ]
-
-        dfs_retry.append(data)
-
-        time.sleep(0.05)
-
-    except Exception as e:
-        print(f"Retry Error: {ticker}", e)
+print("\n=== 判定 ===")
+print("最新日:", df_all["Date"].max())
+print("有効最新日:", latest_valid)
+print("その銘柄数:", counts.get(latest_valid, 0))
 
 # =========================
-# 最終保存
+# 保存
 # =========================
-if dfs_retry:
-    df_retry = pd.concat(dfs_retry, ignore_index=True)
-    df_existing = pd.concat([df_existing, df_retry], ignore_index=True)
-
-df_existing = df_existing.drop_duplicates(subset=["Date", "Ticker"])
-df_existing.to_parquet(PARQUET_FILE, index=False)
+df_all.to_parquet(PARQUET_FILE, index=False)
 
 # =========================
 # 結果
 # =========================
 print("\n=== 完了 ===")
-print("API回数:", api_calls)
-print("最終行数:", len(df_existing))
-print("最新日:", df_existing["Date"].max())
-print("最新日の銘柄数:", df_existing[df_existing["Date"] == df_existing["Date"].max()]["Ticker"].nunique())
+print("総行数:", len(df_all))
