@@ -36,7 +36,8 @@ print("元データサイズ:", df.shape)
 # =========================
 # 型整備（重要）
 # =========================
-df["Date"] = pd.to_datetime(df["Date"])
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+df = df.dropna(subset=["Date"])
 
 # =========================
 # 銘柄内特徴量
@@ -75,7 +76,7 @@ rs = avg_gain / avg_loss
 df["RSI"] = 100 - (100 / (1 + rs))
 
 # =========================
-# クロスセクション特徴量
+# クロスセクション特徴量（OK）
 # =========================
 rank_features = [
     "Return_1",
@@ -92,13 +93,17 @@ for col in rank_features:
     df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
 
 # =========================
-# Target（学習用）
+# 🔥 Target（重要修正）
 # =========================
 df["FutureReturn_5"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-df["Target"] = df.groupby("Date")["FutureReturn_5"].rank(pct=True)
+# ❌ 旧（リーク気味）
+# df["Target"] = df.groupby("Date")["FutureReturn_5"].rank(pct=True)
+
+# ✅ 新（絶対リターン）
+df["Target"] = df["FutureReturn_5"]
 
 # =========================
 # 無限値処理
@@ -123,7 +128,7 @@ train_df = df.dropna(subset=[
 train_df = train_df.reset_index(drop=True)
 
 # =========================
-# 🔥 予測用データ（最重要）
+# 🔥 予測用データ（未来情報除去）
 # =========================
 predict_df = df.dropna(subset=[
     "Return_1_rank",
@@ -135,6 +140,13 @@ predict_df = df.dropna(subset=[
     "HL_range_rank",
     "RSI_rank"
 ]).copy()
+
+# 🔥 重要：未来リターン列を削除（安全対策）
+if "FutureReturn_5" in predict_df.columns:
+    predict_df = predict_df.drop(columns=["FutureReturn_5"])
+
+if "Target" in predict_df.columns:
+    predict_df = predict_df.drop(columns=["Target"])
 
 predict_df = predict_df.reset_index(drop=True)
 
