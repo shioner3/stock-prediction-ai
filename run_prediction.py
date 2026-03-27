@@ -6,11 +6,12 @@ from lightgbm import LGBMRegressor
 from datetime import datetime
 from pandas.tseries.offsets import BDay
 
+
 # =========================
 # 設定
 # =========================
 TOP_N = 5
-TOP_PREMIUM = 20   # ←追加（有料20銘柄）
+WEAK_TOP_PERCENT = 0.01
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -30,8 +31,8 @@ ARTICLE_PATH = "note_article.txt"
 month_str = datetime.now().strftime("%Y-%m")
 PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
-# 完全性判定
-MIN_COUNT = 3000
+PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
+
 
 FEATURES = [
     "Return_1_rank",
@@ -46,6 +47,7 @@ FEATURES = [
 
 TARGET = "Target"
 
+
 # =========================
 # ユーティリティ
 # =========================
@@ -57,12 +59,14 @@ def normalize_columns(df):
         rename_map["Name"] = "銘柄名"
     return df.rename(columns=rename_map) if rename_map else df
 
+
 def normalize(df):
     df = df.copy()
     df["PredRank"] = df["Pred"].rank(ascending=False, method="first")
     df = df.sort_values("PredRank")
     df["PredRank"] = range(1, len(df) + 1)
     return df
+
 
 def get_regime(score):
     if score > 0.55:
@@ -73,6 +77,132 @@ def get_regime(score):
         return "neutral"
     else:
         return "weak"
+
+
+# =========================
+# 実績
+# =========================
+def load_performance():
+    if not os.path.exists(PERF_LOG_PATH):
+        return None
+
+    df = pd.read_csv(PERF_LOG_PATH)
+    if len(df) < 10:
+        return None
+
+    df = df.tail(100)
+
+    return {
+        "win_rate": df["win"].mean(),
+        "avg_return": df["return"].mean(),
+        "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
+    }
+
+
+# =========================
+# 無料記事
+# =========================
+def generate_free_article(today, regime):
+
+    if regime == "strong":
+        trend = "強気"
+        action = "押し目はチャンス"
+    elif regime == "neutral":
+        trend = "中立"
+        action = "方向感なし"
+    else:
+        trend = "弱気"
+        action = "基本は様子見"
+
+    text = f"""
+========================
+■ 本日の市場判断
+========================
+
+市場評価：{trend}
+
+→ {action}
+
+
+========================
+■ 注目銘柄（TOP5）
+========================
+"""
+
+    for i, row in today.head(TOP_N).iterrows():
+        text += f"{int(row['PredRank'])}位：{row['銘柄名']}（{row['コード']}）\n"
+
+    perf = load_performance()
+
+    text += "\n========================\n■ AIパフォーマンス\n========================\n"
+
+    if perf:
+        text += f"""
+・勝率：約{perf["win_rate"]:.0%}
+・平均リターン：約{perf["avg_return"]:.1%}
+"""
+    else:
+        text += "※実績データ蓄積中\n"
+
+    text += """
+========================
+■ なぜ強いのか？
+========================
+
+・市場状況に応じたスコアリング
+・複数指標の統合判断
+・短期リターン特化設計
+
+👉 ただし、このまま使っても同じ結果にはなりません
+
+========================
+👇 有料で公開
+========================
+
+・具体的な売買ルール
+・エントリー条件
+・損切りライン
+・全銘柄ランキング
+
+👉 「再現できる形」で公開しています
+"""
+
+    return text
+
+
+# =========================
+# 有料記事
+# =========================
+def generate_premium_article(today, regime):
+
+    text = """
+========================
+■ AI戦略（完全版）
+========================
+
+・エントリー：当日 or 翌日
+・保有：5営業日
+・損切り：-3%
+
+========================
+■ レジーム別戦略
+========================
+"""
+
+    if regime == "strong":
+        text += "強気 → 上位銘柄を複数エントリー\n"
+    elif regime == "neutral":
+        text += "中立 → 上位のみ選別\n"
+    else:
+        text += "弱気 → 原則見送り（例外条件あり）\n"
+
+    text += "\n========================\n■ 全ランキング\n========================\n"
+
+    for i, row in today.head(20).iterrows():
+        text += f"{int(row['PredRank'])}位 {row['銘柄名']} ({row['コード']}) Pred:{row['Pred']:.3f}\n"
+
+    return text
+
 
 # =========================
 # データ読み込み
@@ -86,24 +216,13 @@ predict_df = normalize_columns(predict_df)
 train_df["Date"] = pd.to_datetime(train_df["Date"])
 predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 
-# =========================
-# 🔥 有効な最新日を取得（超重要）
-# =========================
-counts = predict_df["Date"].value_counts()
+latest_date = predict_df["Date"].max()
 
-print("\n=== 最新付近チェック ===")
-print(counts.sort_index().tail(10))
+print("\n=== DEBUG ===")
+print("predict latest:", latest_date)
+print("rows:", len(predict_df[predict_df["Date"] == latest_date]))
+print("========================")
 
-valid_dates = counts[counts >= MIN_COUNT].index
-
-if len(valid_dates) == 0:
-    raise ValueError("有効な日がありません")
-
-latest_date = max(valid_dates)
-
-print("\n=== 使用日 ===")
-print("latest_valid:", latest_date)
-print("銘柄数:", counts[latest_date])
 
 # =========================
 # モデル
@@ -115,48 +234,43 @@ if not os.path.exists(MODEL_PATH):
 else:
     model = pickle.load(open(MODEL_PATH, "rb"))
 
+
 # =========================
 # 予測
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
-# 念のためNaN除去
-today = today.dropna(subset=FEATURES)
-
 today["Pred"] = model.predict(today[FEATURES])
 today = normalize(today)
 
-print("\n=== 予測件数 ===")
-print(len(today))
+market_score = today["Pred"].mean()
+regime = get_regime(market_score)
+
 
 # =========================
 # CSV出力
 # =========================
-
-# 無料（TOP5）
 today.head(TOP_N)[["コード", "銘柄名", "PredRank"]]\
     .rename(columns={"PredRank": "順位"})\
     .to_csv(FREE_CSV_PATH, index=False)
 
-# 有料（TOP20）
-premium_df = today.head(TOP_PREMIUM).copy()
-
-premium_df["regime"] = get_regime(today["Pred"].mean())
+premium_df = today.copy()
+premium_df["regime"] = regime
 premium_df["predict_date"] = datetime.now().strftime("%Y-%m-%d")
 premium_df["target_date"] = (datetime.now() + BDay(5)).strftime("%Y-%m-%d")
 
 premium_df.to_csv(PREMIUM_CSV_PATH, index=False)
 
-# =========================
-# 記事生成（簡略）
-# =========================
-text = "■ 上位20銘柄\n\n"
 
-for _, row in premium_df.iterrows():
-    text += f"{int(row['PredRank'])}位 {row['銘柄名']} ({row['コード']})\n"
+# =========================
+# 記事生成
+# =========================
+free_article = generate_free_article(today, regime)
+premium_article = generate_premium_article(today, regime)
 
 with open(ARTICLE_PATH, "w", encoding="utf-8") as f:
-    f.write(text)
+    f.write(free_article + "\n\n================ 有料 =================\n\n" + premium_article)
+
 
 # =========================
 # LOG
@@ -171,4 +285,4 @@ if os.path.exists(PRED_LOG_PATH):
 
 log_df.to_csv(PRED_LOG_PATH, index=False)
 
-print("\n✅ 完了（20銘柄出力・安定版）")
+print("✅ 完了（収益導線込み）")
