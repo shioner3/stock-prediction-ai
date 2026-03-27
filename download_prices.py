@@ -102,7 +102,7 @@ def fetch_batch(batch, period=None, start=None):
 print("\n=== 過去差分取得 ===")
 
 if df_existing.empty:
-    start_dt = "2018-01-01"
+    start_dt = pd.Timestamp("2018-01-01")
 else:
     start_dt = df_existing["Date"].max() - pd.Timedelta(days=30)
 
@@ -111,7 +111,8 @@ dfs_past = []
 for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
 
     batch = tickers[i:i+BATCH_SIZE]
-    data = fetch_batch(batch, start=start_dt.strftime("%Y-%m-%d"))
+    start_str = pd.to_datetime(start_dt).strftime("%Y-%m-%d")
+    data = fetch_batch(batch, start=start_str)
 
     if data is None:
         continue
