@@ -23,13 +23,14 @@ TARGET = "Target"
 TOP_K = 5
 THRESHOLD = 0.03
 STOP_LOSS = -0.03
+INITIAL_CAPITAL = 1.0
 
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 
-df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+df["Date"] = pd.to_datetime(df["Date"])
 df = df.dropna(subset=["Date"])
 df = df.sort_values("Date")
 
@@ -37,10 +38,9 @@ df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
 
 # =========================
-# 市場レジーム（リーク修正版）
-# → Target禁止、過去リターンのみ
+# レジーム（リークなし）
 # =========================
-df["MarketRet"] = df.groupby("Date")["Close"].pct_change()
+df["MarketRet"] = df.groupby("Ticker")["Close"].pct_change()
 df["MarketRet"] = df["MarketRet"].fillna(0)
 
 df["MarketMA20"] = df.groupby("Ticker")["MarketRet"].transform(
@@ -49,26 +49,24 @@ df["MarketMA20"] = df.groupby("Ticker")["MarketRet"].transform(
 
 df["Regime"] = df["MarketMA20"] > 0
 
+# =========================
+# 日次資産曲線
+# =========================
+equity_curve = []
+capital = INITIAL_CAPITAL
 
 # =========================
-# 取引ログ
-# =========================
-all_returns = []
-
-# =========================
-# ローリング検証
+# ローリング
 # =========================
 for i in range(3, len(years) - 1):
 
     train_years = years[i-3:i]
     test_year = years[i]
 
-    print(f"\n===== {train_years} → {test_year} =====")
-
     train = df[df["Year"].isin(train_years)]
-    test_df = df[df["Year"] == test_year]
+    test = df[df["Year"] == test_year]
 
-    dates = sorted(test_df["Date"].unique())
+    dates = sorted(test["Date"].unique())
 
     model = None
     last_month = None
@@ -81,32 +79,27 @@ for i in range(3, len(years) - 1):
             continue
 
         # =========================
-        # 月次再学習
+        # 月次学習
         # =========================
-        current_month = (d.year, d.month)
-
-        if model is None or current_month != last_month:
+        if model is None or (d.year, d.month) != last_month:
             model = LGBMRegressor(
                 n_estimators=200,
                 learning_rate=0.05,
                 random_state=42
             )
             model.fit(train_until_now[FEATURES], train_until_now[TARGET])
-            last_month = current_month
+            last_month = (d.year, d.month)
 
-        # =========================
-        # 当日データ
-        # =========================
-        today = test_df[test_df["Date"] == d].copy()
+        today = test[test["Date"] == d].copy()
 
         if len(today) == 0:
             continue
 
         # =========================
-        # レジーム（未来禁止）
+        # レジーム
         # =========================
-        regime_ok = today["Regime"].iloc[0]
-        if not regime_ok:
+        if not today["Regime"].iloc[0]:
+            equity_curve.append(capital)
             continue
 
         # =========================
@@ -114,58 +107,52 @@ for i in range(3, len(years) - 1):
         # =========================
         today["Pred"] = model.predict(today[FEATURES])
 
-        # =========================
-        # フィルタ
-        # =========================
         today = today[today["Pred"] > THRESHOLD]
 
         if len(today) == 0:
+            equity_curve.append(capital)
             continue
 
-        # =========================
-        # TOP K
-        # =========================
         picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
-        # =========================
-        # 銘柄単位リターン
-        # =========================
         rets = picks["FutureReturn_5"].values
 
-        # STOP LOSS（銘柄単位）
+        # STOP LOSS
         rets = np.clip(rets, STOP_LOSS, None)
 
-        all_returns.extend(rets)
+        # =========================
+        # ポートフォリオリターン（超重要）
+        # =========================
+        daily_ret = np.mean(rets)
 
+        capital *= (1 + daily_ret)
 
-# =========================
-# 集計
-# =========================
-res = pd.Series(all_returns)
-
-if len(res) == 0:
-    print("No trades")
-    exit()
-
-# 資金曲線
-equity = (1 + res).cumprod()
-
-cagr = equity.iloc[-1] ** (252 / len(res)) - 1
-sharpe = res.mean() / (res.std() + 1e-9) * np.sqrt(252)
-maxdd = (equity / equity.cummax() - 1).min()
+        equity_curve.append(capital)
 
 # =========================
-# 結果
+# 結果計算
+# =========================
+equity_curve = pd.Series(equity_curve)
+
+returns = equity_curve.pct_change().dropna()
+
+days = len(equity_curve)
+
+cagr = equity_curve.iloc[-1] ** (252 / days) - 1
+sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+maxdd = (equity_curve / equity_curve.cummax() - 1).min()
+
+# =========================
+# 出力
 # =========================
 print("\n========================")
-print("CLEAN BACKTEST RESULT")
+print("CORRECT BACKTEST RESULT")
 print("========================")
 print("CAGR:", cagr)
 print("Sharpe:", sharpe)
 print("MaxDD:", maxdd)
-print("Trades:", len(res))
+print("Days:", days)
 
-# 保存
 pd.DataFrame({
-    "return": res
-}).to_csv("backtest_clean.csv", index=False)
+    "equity": equity_curve
+}).to_csv("backtest_equity.csv", index=False)
