@@ -38,14 +38,17 @@ df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
 
 # =========================
-# レジーム（リークなし）
+# レジーム（リーク修正版）
 # =========================
-df["MarketRet"] = df.groupby("Ticker")["Close"].pct_change()
-df["MarketRet"] = df["MarketRet"].fillna(0)
+# ❌ 旧：銘柄別 return（市場ではない）
+# df["MarketRet"] = df.groupby("Ticker")["Close"].pct_change()
 
-df["MarketMA20"] = df.groupby("Ticker")["MarketRet"].transform(
-    lambda x: x.rolling(20).mean()
-)
+# ✅ 新：クロスセクション市場代替（その日の平均）
+df["MarketRet"] = df.groupby("Date")["Close"].transform(
+    lambda x: x.pct_change().mean()
+).fillna(0)
+
+df["MarketMA20"] = df["MarketRet"].rolling(20).mean()
 
 df["Regime"] = df["MarketMA20"] > 0
 
@@ -79,7 +82,7 @@ for i in range(3, len(years) - 1):
             continue
 
         # =========================
-        # 月次学習
+        # 月次学習（OK）
         # =========================
         if model is None or (d.year, d.month) != last_month:
             model = LGBMRegressor(
@@ -87,7 +90,10 @@ for i in range(3, len(years) - 1):
                 learning_rate=0.05,
                 random_state=42
             )
-            model.fit(train_until_now[FEATURES], train_until_now[TARGET])
+            model.fit(
+                train_until_now[FEATURES],
+                train_until_now[TARGET]
+            )
             last_month = (d.year, d.month)
 
         today = test[test["Date"] == d].copy()
@@ -96,9 +102,9 @@ for i in range(3, len(years) - 1):
             continue
 
         # =========================
-        # レジーム
+        # レジームフィルター（OK）
         # =========================
-        if not today["Regime"].iloc[0]:
+        if not bool(today["Regime"].iloc[0]):
             equity_curve.append(capital)
             continue
 
@@ -107,7 +113,8 @@ for i in range(3, len(years) - 1):
         # =========================
         today["Pred"] = model.predict(today[FEATURES])
 
-        today = today[today["Pred"] > THRESHOLD]
+        # ❌ 修正ポイント：閾値はランキングデータなので厳しすぎる
+        today = today[today["Pred"] > today["Pred"].quantile(0.7)]
 
         if len(today) == 0:
             equity_curve.append(capital)
@@ -115,13 +122,19 @@ for i in range(3, len(years) - 1):
 
         picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
+        # =========================
+        # 未来リターン（Targetではなく正しく使用）
+        # =========================
         rets = picks["FutureReturn_5"].values
+
+        # NaN対策
+        rets = np.nan_to_num(rets, nan=0.0)
 
         # STOP LOSS
         rets = np.clip(rets, STOP_LOSS, None)
 
         # =========================
-        # ポートフォリオリターン（超重要）
+        # ポートフォリオリターン
         # =========================
         daily_ret = np.mean(rets)
 
@@ -146,7 +159,7 @@ maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 # 出力
 # =========================
 print("\n========================")
-print("CORRECT BACKTEST RESULT")
+print("CORRECT BACKTEST RESULT (FIXED)")
 print("========================")
 print("CAGR:", cagr)
 print("Sharpe:", sharpe)
