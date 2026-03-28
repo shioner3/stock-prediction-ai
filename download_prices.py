@@ -14,6 +14,10 @@ BATCH_SIZE = 50
 SLEEP_TIME = 1
 RETRY = 3
 
+# 🔥 yfinance欠損対策バッファ（重要）
+SAFE_BUFFER_DAYS = 7
+
+
 # =========================
 # 正規化
 # =========================
@@ -23,15 +27,14 @@ def normalize_ticker(t):
         t += ".T"
     return t
 
+
 # =========================
 # 銘柄マスタ
 # =========================
 df_list = pd.read_csv(CSV_FILE, dtype=str)
 
 df_list = df_list[
-    df_list["市場・商品区分"].str.contains(
-        "プライム|スタンダード|グロース", na=False
-    )
+    df_list["市場・商品区分"].str.contains("プライム|スタンダード|グロース", na=False)
 ]
 
 df_list["Ticker"] = df_list["コード"].apply(normalize_ticker)
@@ -46,8 +49,9 @@ os.makedirs("stock_data", exist_ok=True)
 
 today = pd.Timestamp.now().normalize()
 
+
 # =========================
-# 既存データ
+# 既存データ読み込み
 # =========================
 if os.path.exists(PARQUET_FILE):
     df_existing = pd.read_parquet(PARQUET_FILE)
@@ -63,8 +67,18 @@ else:
         columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
     )
 
+
 # =========================
-# 🔥 バッチ取得関数
+# 銘柄ごとの最終日取得
+# =========================
+last_dates = {}
+
+if not df_existing.empty:
+    last_dates = df_existing.groupby("Ticker")["Date"].max().to_dict()
+
+
+# =========================
+# バッチ取得関数
 # =========================
 def fetch_batch(batch, period=None, start=None):
 
@@ -91,27 +105,41 @@ def fetch_batch(batch, period=None, start=None):
             return data
 
         except Exception as e:
-            print(f"Retry {attempt+1}:", e)
+            print(f"Retry {attempt+1}: {e}")
             time.sleep(2)
 
     return None
 
-# =========================
-# 🔥 ① 過去差分取得（安全ゾーン）
-# =========================
-print("\n=== 過去差分取得 ===")
 
-if df_existing.empty:
-    start_dt = pd.Timestamp("2018-01-01")
-else:
-    start_dt = df_existing["Date"].max() - pd.Timedelta(days=30)
+# =========================
+# 🔥 差分対象作成（ここが核心）
+# =========================
+targets = {}
 
-dfs_past = []
+for t in tickers:
+    if t in last_dates:
+        start = last_dates[t] - pd.Timedelta(days=SAFE_BUFFER_DAYS)
+    else:
+        start = pd.Timestamp("2018-01-01")
+
+    targets[t] = start
+
+
+# =========================
+# 🔥 差分取得（バッチ）
+# =========================
+print("\n=== 差分取得（バッファ付き） ===")
+
+dfs_new = []
 
 for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
 
     batch = tickers[i:i+BATCH_SIZE]
-    start_str = pd.to_datetime(start_dt).strftime("%Y-%m-%d")
+
+    # バッチ内で最も古いstartを採用（yfinance制約対応）
+    start = min([targets[t] for t in batch])
+    start_str = pd.to_datetime(start).strftime("%Y-%m-%d")
+
     data = fetch_batch(batch, start=start_str)
 
     if data is None:
@@ -119,6 +147,9 @@ for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
 
     for ticker in batch:
         try:
+            if ticker not in data:
+                continue
+
             df_t = data[ticker].copy()
             if df_t.empty:
                 continue
@@ -133,74 +164,35 @@ for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
                 ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
             ]
 
-            dfs_past.append(df_t)
+            dfs_new.append(df_t)
 
         except:
             continue
 
     time.sleep(SLEEP_TIME)
 
-# =========================
-# 🔥 ② 直近データ取得（最重要）
-# =========================
-print("\n=== 直近データ取得 ===")
-
-dfs_recent = []
-
-for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
-
-    batch = tickers[i:i+BATCH_SIZE]
-    data = fetch_batch(batch, period=f"{RECENT_DAYS}d")
-
-    if data is None:
-        continue
-
-    for ticker in batch:
-        try:
-            df_t = data[ticker].copy()
-            if df_t.empty:
-                continue
-
-            df_t = df_t.reset_index()
-            df_t["Date"] = pd.to_datetime(df_t["Date"]).dt.tz_localize(None)
-
-            df_t["Ticker"] = ticker
-            df_t["Name"] = name_dict.get(ticker)
-
-            df_t = df_t[
-                ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
-            ]
-
-            dfs_recent.append(df_t)
-
-        except:
-            continue
-
-    time.sleep(SLEEP_TIME)
 
 # =========================
 # 🔥 結合
 # =========================
-dfs_all = []
+if dfs_new:
+    df_new = pd.concat(dfs_new, ignore_index=True)
+else:
+    print("⚠ 新規データなし")
+    df_new = pd.DataFrame()
 
-if dfs_past:
-    dfs_all.append(pd.concat(dfs_past, ignore_index=True))
-
-if dfs_recent:
-    dfs_all.append(pd.concat(dfs_recent, ignore_index=True))
-
-if len(dfs_all) == 0:
-    print("⚠ データ取得失敗")
-    exit()
-
-df_new = pd.concat(dfs_all, ignore_index=True)
 
 df_all = pd.concat([df_existing, df_new], ignore_index=True)
 
+
+# =========================
+# 🔥 差分統合（正規化）
+# =========================
 df_all = df_all.drop_duplicates(
     subset=["Date", "Ticker"],
     keep="last"
 )
+
 
 # =========================
 # 🔥 完全性チェック
@@ -213,7 +205,6 @@ print(counts.sort_index().tail(10))
 valid_dates = counts[counts >= MIN_COUNT].index
 
 if len(valid_dates) == 0:
-    print("⚠ 有効な日なし")
     latest_valid = None
 else:
     latest_valid = max(valid_dates)
@@ -223,13 +214,15 @@ print("最新日:", df_all["Date"].max())
 print("有効最新日:", latest_valid)
 print("銘柄数:", counts.get(latest_valid, 0))
 
+
 # =========================
 # 保存
 # =========================
 df_all.to_parquet(PARQUET_FILE, index=False)
 
+
 # =========================
-# 結果
+# 完了
 # =========================
 print("\n=== 完了 ===")
 print("総行数:", len(df_all))
