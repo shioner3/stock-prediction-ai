@@ -20,9 +20,11 @@ TARGET = "Target"
 TOP_K = 5
 HOLD_DAYS = 5
 
-# 🔥 最適化するthreshold候補
-THRESHOLDS = [-0.01, 0.0, 0.005, 0.01, 0.02, 0.03]
-
+# =========================
+# 固定パラメータ
+# =========================
+THRESHOLD = 0.03
+STOP_LOSS = -0.03
 
 # =========================
 # データ
@@ -36,125 +38,121 @@ df = df.sort_values("Date")
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
 
+# =========================
+# 市場レジーム（超重要）
+# ※ここでは全体平均リターンで簡易定義
+# =========================
+df["MarketRet"] = df.groupby("Date")["Target"].transform("mean")
+df["MarketMA20"] = df["MarketRet"].rolling(20).mean()
+df["Regime"] = df["MarketMA20"] > 0
 
-threshold_results = []
 
+all_returns = []
 
 # =========================
-# thresholdごとに検証
+# ローリング検証
 # =========================
-for TH in THRESHOLDS:
+for i in range(3, len(years) - 1):
 
-    print("\n========================")
-    print(f"THRESHOLD: {TH}")
-    print("========================")
+    train_years = years[i-3:i]
+    test_year = years[i]
 
-    all_returns = []
+    print(f"\n===== {train_years} → {test_year} =====")
 
-    # =========================
-    # 年ごとローリング
-    # =========================
-    for i in range(3, len(years) - 1):
+    train = df[df["Year"].isin(train_years)]
+    test_df = df[df["Year"] == test_year]
 
-        train_years = years[i-3:i]
-        test_year = years[i]
+    dates = sorted(test_df["Date"].unique())
 
-        print(f"\n===== {train_years} → {test_year} =====")
+    model = None
+    last_train_month = None
 
-        train = df[df["Year"].isin(train_years)]
-        test_df = df[df["Year"] == test_year]
+    for d in dates:
 
-        dates = sorted(test_df["Date"].unique())
+        train_until_now = train[train["Date"] < d]
 
-        # 🔥 月1学習用
-        last_train_month = None
-        model = None
+        if len(train_until_now) < 1000:
+            continue
 
-        for d in dates:
+        # =========================
+        # 月1学習
+        # =========================
+        current_month = (d.year, d.month)
 
-            train_until_now = train[train["Date"] < d]
+        if model is None or current_month != last_train_month:
+            model = LGBMRegressor()
+            model.fit(train_until_now[FEATURES], train_until_now[TARGET])
+            last_train_month = current_month
 
-            if len(train_until_now) < 1000:
-                continue
+        # =========================
+        # 当日データ
+        # =========================
+        today = test_df[test_df["Date"] == d].copy()
 
-            # =========================
-            # 🔥 月1学習（ここが核心）
-            # =========================
-            current_month = (d.year, d.month)
+        if len(today) == 0:
+            continue
 
-            if model is None or current_month != last_train_month:
-                model = LGBMRegressor()
-                model.fit(train_until_now[FEATURES], train_until_now[TARGET])
-                last_train_month = current_month
+        # =========================
+        # 市場レジームフィルター
+        # =========================
+        regime_ok = df[df["Date"] == d]["Regime"].iloc[0]
 
-            # =========================
-            # 予測
-            # =========================
-            today = test_df[test_df["Date"] == d].copy()
+        if not regime_ok:
+            continue
 
-            if len(today) == 0:
-                continue
+        # =========================
+        # 予測
+        # =========================
+        today["Pred"] = model.predict(today[FEATURES])
 
-            today["Pred"] = model.predict(today[FEATURES])
+        # =========================
+        # threshold
+        # =========================
+        today = today[today["Pred"] > THRESHOLD]
 
-            # =========================
-            # 🔥 threshold適用
-            # =========================
-            today = today[today["Pred"] > TH]
+        if len(today) == 0:
+            continue
 
-            if len(today) == 0:
-                continue  # ノートレード
+        # =========================
+        # TOP K
+        # =========================
+        picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
-            # =========================
-            # 上位5銘柄
-            # =========================
-            picks = today.sort_values("Pred", ascending=False).head(TOP_K)
+        # =========================
+        # 損切り -3%
+        # =========================
+        ret = picks["FutureReturn_5"].mean()
 
-            # =========================
-            # リターン（現実寄せ）
-            # =========================
-            ret = picks["FutureReturn_5"].clip(-0.3, 0.5).mean()
+        if ret < STOP_LOSS:
+            ret = STOP_LOSS
 
-            all_returns.append(ret)
-
-    # =========================
-    # 集計
-    # =========================
-    if len(all_returns) == 0:
-        continue
-
-    res = pd.Series(all_returns)
-
-    cum = (1 + res).cumprod()
-
-    cagr = cum.iloc[-1] ** (252 / len(res)) - 1
-    sharpe = res.mean() / res.std() * np.sqrt(252)
-    maxdd = (cum / cum.cummax() - 1).min()
-
-    print("\n--- RESULT ---")
-    print("CAGR:", cagr)
-    print("Sharpe:", sharpe)
-    print("MaxDD:", maxdd)
-    print("Trades:", len(res))
-
-    threshold_results.append({
-        "threshold": TH,
-        "CAGR": cagr,
-        "Sharpe": sharpe,
-        "MaxDD": maxdd,
-        "trades": len(res)
-    })
-
+        all_returns.append(ret)
 
 # =========================
-# 最終結果
+# 集計
 # =========================
-result_df = pd.DataFrame(threshold_results)
+res = pd.Series(all_returns)
+
+if len(res) == 0:
+    print("No trades")
+    exit()
+
+cum = (1 + res).cumprod()
+
+cagr = cum.iloc[-1] ** (252 / len(res)) - 1
+sharpe = res.mean() / res.std() * np.sqrt(252)
+maxdd = (cum / cum.cummax() - 1).min()
 
 print("\n========================")
-print("最適化結果")
+print("RESULT (Regime + Stoploss)")
 print("========================")
 
-print(result_df.sort_values("Sharpe", ascending=False))
+print("CAGR:", cagr)
+print("Sharpe:", sharpe)
+print("MaxDD:", maxdd)
+print("Trades:", len(res))
 
-result_df.to_csv("threshold_optimization.csv", index=False)
+# 保存
+pd.DataFrame({
+    "return": res
+}).to_csv("backtest_regime_stoploss.csv", index=False)
