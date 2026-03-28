@@ -63,7 +63,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add backtest_summary.csv || true
+          git add rolling_backtest_realistic_v2.csv || true
 
           git commit -m "update backtest result [skip ci]" || echo "no change"
 
