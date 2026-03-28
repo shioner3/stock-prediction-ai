@@ -20,12 +20,13 @@ FEATURES = [
 
 TARGET = "Target"
 
-TOP_K = 5
+MAX_POSITIONS = 5        # 同時保有数
 HOLD_DAYS = 5
 STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
+TRAIN_INTERVAL = 20      # 月1学習
 
-TRAIN_INTERVAL = 20   # ← 月1学習（約20営業日）
+COST = 0.002            # 売買コスト（0.2%）
 
 # =========================
 # データ
@@ -57,7 +58,7 @@ for i, d in enumerate(dates):
         continue
 
     # =========================
-    # 学習（★月1回）
+    # 学習（月1）
     # =========================
     train_data = df[df["Date"] < d]
 
@@ -74,23 +75,27 @@ for i, d in enumerate(dates):
         continue
 
     # =========================
-    # ① エントリー（TOP K）
+    # ① エントリー（空き枠だけ）
     # =========================
-    today["Pred"] = model.predict(today[FEATURES])
-    picks = today.sort_values("Pred", ascending=False).head(TOP_K)
+    available_slots = MAX_POSITIONS - len(positions)
 
-    for _, row in picks.iterrows():
-        positions.append({
-            "ticker": row["Ticker"],
-            "entry_price": row["Close"],
-            "entry_index": i,
-            "exit_index": i + HOLD_DAYS
-        })
+    if available_slots > 0:
+        today["Pred"] = model.predict(today[FEATURES])
+        picks = today.sort_values("Pred", ascending=False).head(available_slots)
+
+        for _, row in picks.iterrows():
+            positions.append({
+                "ticker": row["Ticker"],
+                "entry_price": row["Close"],
+                "entry_index": i,
+                "exit_index": i + HOLD_DAYS,
+                "weight": 1 / MAX_POSITIONS   # 資金配分
+            })
 
     # =========================
     # ② ポジション評価
     # =========================
-    daily_realized = 0.0
+    realized_return = 0.0
     new_positions = []
 
     for pos in positions:
@@ -108,18 +113,23 @@ for i, d in enumerate(dates):
         # STOP LOSS
         ret = max(ret, STOP_LOSS)
 
-        # 5日経過で確定
+        # =========================
+        # 決済
+        # =========================
         if i >= pos["exit_index"]:
-            daily_realized += ret
+            # コスト（往復）
+            ret -= COST * 2
+
+            realized_return += ret * pos["weight"]
         else:
             new_positions.append(pos)
 
     positions = new_positions
 
     # =========================
-    # 資産更新
+    # 資産更新（確定損益のみ）
     # =========================
-    capital *= (1 + daily_realized)
+    capital *= (1 + realized_return)
     equity_curve.append(capital)
 
 # =========================
@@ -133,11 +143,11 @@ sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
 maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 
 print("\n========================")
-print("5D HOLD BACKTEST (MONTHLY TRAIN)")
+print("REALISTIC BACKTEST RESULT")
 print("========================")
 print("CAGR:", cagr)
 print("Sharpe:", sharpe)
 print("MaxDD:", maxdd)
 print("Days:", len(equity_curve))
 
-pd.DataFrame({"equity": equity_curve}).to_csv("backtest_equity.csv", index=False)
+pd.DataFrame({"equity": equity_curve}).to_csv("backtest_equity_realistic.csv", index=False)
