@@ -36,32 +36,21 @@ def get_regime(score):
     else:
         return "bear"
 
-# レジーム別パラメータ
 REGIME_CONFIG = {
-    "bull": {
-        "quantile": 0.7,
-        "max_positions": 5
-    },
-    "neutral": {
-        "quantile": 0.8,
-        "max_positions": 3
-    },
-    "bear": {
-        "quantile": 0.9,
-        "max_positions": 1  # or 0で完全停止も可
-    }
+    "bull": {"quantile": 0.7, "max_positions": 5},
+    "neutral": {"quantile": 0.8, "max_positions": 3},
+    "bear": {"quantile": 0.9, "max_positions": 1}
 }
 
 # =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
-
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date")
 
 # =========================
-# 市場レジーム（リークなし）
+# レジーム
 # =========================
 df["MarketRet"] = df.groupby("Date")["Close"].transform(
     lambda x: x.pct_change().mean()
@@ -69,11 +58,10 @@ df["MarketRet"] = df.groupby("Date")["Close"].transform(
 
 df["MarketMA20"] = df["MarketRet"].rolling(20).mean()
 df["RegimeScore"] = df["MarketMA20"]
-
 df["Regime"] = df["RegimeScore"].apply(get_regime)
 
 # =========================
-# 年情報
+# 年
 # =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
@@ -93,9 +81,7 @@ for i in range(4, len(years) - 1):
 
     print(f"\n===== {train_years} → {test_year} =====")
 
-    # =========================
-    # テスト
-    # =========================
+    # ===== 状態 =====
     equity = INITIAL_CAPITAL
     equity_curve = []
 
@@ -103,9 +89,13 @@ for i in range(4, len(years) - 1):
     current_positions = []
     entry_index = None
 
+    # 🔥 追加（統計）
+    position_counts = []
+    trade_count = 0
+
     dates = sorted(test_df["Date"].unique())
 
-    for j in range(len(dates) - 1):  # ← 翌日使うので-1
+    for j in range(len(dates) - 1):
 
         d = dates[j]
         next_d = dates[j + 1]
@@ -115,10 +105,11 @@ for i in range(4, len(years) - 1):
 
         if len(today) == 0 or len(tomorrow) == 0:
             equity_curve.append(equity)
+            position_counts.append(len(current_positions))
             continue
 
         # =========================
-        # レジーム取得
+        # レジーム
         # =========================
         regime = today["Regime"].iloc[0]
         config = REGIME_CONFIG[regime]
@@ -138,10 +129,11 @@ for i in range(4, len(years) - 1):
 
         if model is None:
             equity_curve.append(equity)
+            position_counts.append(len(current_positions))
             continue
 
         # =========================
-        # ① エントリー（5日ごと）
+        # ① エントリー
         # =========================
         if j % HOLD_DAYS == 0:
 
@@ -150,7 +142,6 @@ for i in range(4, len(years) - 1):
 
             today["Pred"] = model.predict(today[FEATURES])
 
-            # 🔥 分位フィルター
             th = today["Pred"].quantile(config["quantile"])
             today = today[today["Pred"] > th]
 
@@ -159,7 +150,6 @@ for i in range(4, len(years) - 1):
 
                 for _, row in picks.iterrows():
 
-                    # 🔥 翌日Openでエントリー
                     tomorrow_row = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
 
                     if len(tomorrow_row) == 0:
@@ -172,11 +162,14 @@ for i in range(4, len(years) - 1):
                         "entry_price": entry_price
                     })
 
+                    trade_count += 1  # 🔥追加
+
         # =========================
-        # ② ポジション評価
+        # ② 評価
         # =========================
         if len(current_positions) == 0:
             equity_curve.append(equity)
+            position_counts.append(0)
             continue
 
         rets = []
@@ -197,17 +190,19 @@ for i in range(4, len(years) - 1):
 
         if len(rets) == 0:
             equity_curve.append(equity)
+            position_counts.append(len(current_positions))
             continue
 
         portfolio_ret = np.mean(rets)
 
         # =========================
-        # ③ 決済（5日後）
+        # ③ 決済
         # =========================
         if (j - entry_index + 1) == HOLD_DAYS:
             equity *= (1 + portfolio_ret)
 
         equity_curve.append(equity)
+        position_counts.append(len(current_positions))  # 🔥追加
 
     # =========================
     # 評価
@@ -222,12 +217,16 @@ for i in range(4, len(years) - 1):
     sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 
+    avg_pos = np.mean(position_counts)
+
     results.append({
         "train_period": f"{train_years[0]}-{train_years[-1]}",
         "test_period": f"{test_year}-{test_year+1}",
         "CAGR": cagr,
         "Sharpe": sharpe,
-        "MaxDD": maxdd
+        "MaxDD": maxdd,
+        "Avg_Positions": avg_pos,
+        "Trades": trade_count
     })
 
 # =========================
@@ -242,5 +241,7 @@ print("\n===== Average =====")
 print("Avg CAGR  :", res_df["CAGR"].mean())
 print("Avg Sharpe:", res_df["Sharpe"].mean())
 print("Avg MaxDD :", res_df["MaxDD"].mean())
+print("Avg Pos   :", res_df["Avg_Positions"].mean())
+print("Trades    :", res_df["Trades"].sum())
 
 res_df.to_csv("rolling_backtest_realistic.csv", index=False)
