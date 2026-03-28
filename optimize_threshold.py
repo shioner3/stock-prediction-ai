@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 from lightgbm import LGBMRegressor
 
+# =========================
+# 設定
+# =========================
 DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
@@ -18,16 +21,11 @@ FEATURES = [
 TARGET = "Target"
 
 TOP_K = 5
-HOLD_DAYS = 5
-
-# =========================
-# 固定パラメータ
-# =========================
 THRESHOLD = 0.03
 STOP_LOSS = -0.03
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(DATA_PATH)
 
@@ -39,14 +37,22 @@ df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
 
 # =========================
-# 市場レジーム（超重要）
-# ※ここでは全体平均リターンで簡易定義
+# 市場レジーム（リーク修正版）
+# → Target禁止、過去リターンのみ
 # =========================
-df["MarketRet"] = df.groupby("Date")["Target"].transform("mean")
-df["MarketMA20"] = df["MarketRet"].rolling(20).mean()
+df["MarketRet"] = df.groupby("Date")["Close"].pct_change()
+df["MarketRet"] = df["MarketRet"].fillna(0)
+
+df["MarketMA20"] = df.groupby("Ticker")["MarketRet"].transform(
+    lambda x: x.rolling(20).mean()
+)
+
 df["Regime"] = df["MarketMA20"] > 0
 
 
+# =========================
+# 取引ログ
+# =========================
 all_returns = []
 
 # =========================
@@ -65,7 +71,7 @@ for i in range(3, len(years) - 1):
     dates = sorted(test_df["Date"].unique())
 
     model = None
-    last_train_month = None
+    last_month = None
 
     for d in dates:
 
@@ -75,14 +81,18 @@ for i in range(3, len(years) - 1):
             continue
 
         # =========================
-        # 月1学習
+        # 月次再学習
         # =========================
         current_month = (d.year, d.month)
 
-        if model is None or current_month != last_train_month:
-            model = LGBMRegressor()
+        if model is None or current_month != last_month:
+            model = LGBMRegressor(
+                n_estimators=200,
+                learning_rate=0.05,
+                random_state=42
+            )
             model.fit(train_until_now[FEATURES], train_until_now[TARGET])
-            last_train_month = current_month
+            last_month = current_month
 
         # =========================
         # 当日データ
@@ -93,10 +103,9 @@ for i in range(3, len(years) - 1):
             continue
 
         # =========================
-        # 市場レジームフィルター
+        # レジーム（未来禁止）
         # =========================
-        regime_ok = df[df["Date"] == d]["Regime"].iloc[0]
-
+        regime_ok = today["Regime"].iloc[0]
         if not regime_ok:
             continue
 
@@ -106,7 +115,7 @@ for i in range(3, len(years) - 1):
         today["Pred"] = model.predict(today[FEATURES])
 
         # =========================
-        # threshold
+        # フィルタ
         # =========================
         today = today[today["Pred"] > THRESHOLD]
 
@@ -119,14 +128,15 @@ for i in range(3, len(years) - 1):
         picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
         # =========================
-        # 損切り -3%
+        # 銘柄単位リターン
         # =========================
-        ret = picks["FutureReturn_5"].mean()
+        rets = picks["FutureReturn_5"].values
 
-        if ret < STOP_LOSS:
-            ret = STOP_LOSS
+        # STOP LOSS（銘柄単位）
+        rets = np.clip(rets, STOP_LOSS, None)
 
-        all_returns.append(ret)
+        all_returns.extend(rets)
+
 
 # =========================
 # 集計
@@ -137,16 +147,19 @@ if len(res) == 0:
     print("No trades")
     exit()
 
-cum = (1 + res).cumprod()
+# 資金曲線
+equity = (1 + res).cumprod()
 
-cagr = cum.iloc[-1] ** (252 / len(res)) - 1
-sharpe = res.mean() / res.std() * np.sqrt(252)
-maxdd = (cum / cum.cummax() - 1).min()
+cagr = equity.iloc[-1] ** (252 / len(res)) - 1
+sharpe = res.mean() / (res.std() + 1e-9) * np.sqrt(252)
+maxdd = (equity / equity.cummax() - 1).min()
 
+# =========================
+# 結果
+# =========================
 print("\n========================")
-print("RESULT (Regime + Stoploss)")
+print("CLEAN BACKTEST RESULT")
 print("========================")
-
 print("CAGR:", cagr)
 print("Sharpe:", sharpe)
 print("MaxDD:", maxdd)
@@ -155,4 +168,4 @@ print("Trades:", len(res))
 # 保存
 pd.DataFrame({
     "return": res
-}).to_csv("backtest_regime_stoploss.csv", index=False)
+}).to_csv("backtest_clean.csv", index=False)
