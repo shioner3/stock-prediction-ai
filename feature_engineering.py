@@ -34,13 +34,13 @@ ORDER BY Ticker, Date
 print("元データサイズ:", df.shape)
 
 # =========================
-# 型整備（重要）
+# 型整備
 # =========================
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 df = df.dropna(subset=["Date"])
 
 # =========================
-# 銘柄内特徴量
+# 銘柄内特徴量（過去のみ）
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 
@@ -62,7 +62,7 @@ df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change()
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
 # =========================
-# RSI
+# RSI（過去のみ）
 # =========================
 delta = df.groupby("Ticker")["Close"].diff()
 
@@ -72,11 +72,11 @@ loss = -delta.clip(upper=0)
 avg_gain = gain.groupby(df["Ticker"]).transform(lambda x: x.rolling(14).mean())
 avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(14).mean())
 
-rs = avg_gain / avg_loss
+rs = avg_gain / (avg_loss + 1e-9)
 df["RSI"] = 100 - (100 / (1 + rs))
 
 # =========================
-# クロスセクション特徴量（OK）
+# クロスセクション特徴量（同日OK）
 # =========================
 rank_features = [
     "Return_1",
@@ -93,17 +93,17 @@ for col in rank_features:
     df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
 
 # =========================
-# 🔥 Target（重要修正）
+# 🔥 Target（完全修正版）
 # =========================
+# 未来リターン
 df["FutureReturn_5"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# ❌ 旧（リーク気味）
-# df["Target"] = df.groupby("Date")["FutureReturn_5"].rank(pct=True)
-
-# ✅ 新（絶対リターン）
-df["Target"] = df["FutureReturn_5"]
+# ❗重要修正①：日次ランキング化（リーク耐性）
+df["Target"] = df.groupby("Date")["FutureReturn_5"].transform(
+    lambda x: x.rank(pct=True)
+)
 
 # =========================
 # 無限値処理
@@ -111,60 +111,44 @@ df["Target"] = df["FutureReturn_5"]
 df = df.replace([np.inf, -np.inf], np.nan)
 
 # =========================
-# 🔥 学習用データ
+# 🔥 学習データ（厳格版）
 # =========================
-train_df = df.dropna(subset=[
-    "Return_1_rank",
-    "MA5_ratio_rank",
-    "MA25_ratio_rank",
-    "MA75_ratio_rank",
-    "Volatility_rank",
-    "Volume_change_rank",
-    "HL_range_rank",
-    "RSI_rank",
-    "FutureReturn_5"
-]).copy()
+feature_cols = [c + "_rank" for c in rank_features]
+
+train_df = df.dropna(subset=feature_cols + ["Target"]).copy()
+
+# 念のため未来完全排除
+train_df = train_df[
+    train_df["FutureReturn_5"].notna()
+].copy()
 
 train_df = train_df.reset_index(drop=True)
 
 # =========================
-# 🔥 予測用データ（未来情報除去）
+# 🔥 予測データ（未来完全除去）
 # =========================
-predict_df = df.dropna(subset=[
-    "Return_1_rank",
-    "MA5_ratio_rank",
-    "MA25_ratio_rank",
-    "MA75_ratio_rank",
-    "Volatility_rank",
-    "Volume_change_rank",
-    "HL_range_rank",
-    "RSI_rank"
-]).copy()
+predict_df = df.dropna(subset=feature_cols).copy()
 
-# 🔥 重要：未来リターン列を削除（安全対策）
-if "FutureReturn_5" in predict_df.columns:
-    predict_df = predict_df.drop(columns=["FutureReturn_5"])
-
-if "Target" in predict_df.columns:
-    predict_df = predict_df.drop(columns=["Target"])
+# 未来情報完全削除
+predict_df = predict_df.drop(columns=[
+    "FutureReturn_5",
+    "Target"
+], errors="ignore")
 
 predict_df = predict_df.reset_index(drop=True)
 
 # =========================
-# デバッグ（超重要）
+# デバッグ
 # =========================
 print("\n=== TRAIN DATA DEBUG ===")
 print("rows:", len(train_df))
 print("latest:", train_df["Date"].max())
 print("unique dates:", train_df["Date"].nunique())
-print("========================")
 
 print("\n=== PREDICT DATA DEBUG ===")
 print("rows:", len(predict_df))
 print("latest:", predict_df["Date"].max())
 print("unique dates:", predict_df["Date"].nunique())
-print("last 5 dates:", sorted(predict_df["Date"].unique())[-5:])
-print("========================")
 
 # =========================
 # 保存
