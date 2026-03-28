@@ -25,18 +25,19 @@ HOLD_DAYS = 5
 STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 
+TRAIN_INTERVAL = 20   # ← 月1学習（約20営業日）
+
 # =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
-
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date")
 
 dates = sorted(df["Date"].unique())
 
 # =========================
-# ポジション管理
+# 状態管理
 # =========================
 positions = []
 equity_curve = []
@@ -56,13 +57,13 @@ for i, d in enumerate(dates):
         continue
 
     # =========================
-    # 学習
+    # 学習（★月1回）
     # =========================
     train_data = df[df["Date"] < d]
 
-    if len(train_data) > 1000 and (model is None or i % 20 == 0):
+    if len(train_data) > 1000 and (model is None or i % TRAIN_INTERVAL == 0):
         model = LGBMRegressor(
-            n_estimators=200,
+            n_estimators=300,
             learning_rate=0.05,
             random_state=42
         )
@@ -73,7 +74,7 @@ for i, d in enumerate(dates):
         continue
 
     # =========================
-    # ① エントリー（TOP5）
+    # ① エントリー（TOP K）
     # =========================
     today["Pred"] = model.predict(today[FEATURES])
     picks = today.sort_values("Pred", ascending=False).head(TOP_K)
@@ -87,7 +88,7 @@ for i, d in enumerate(dates):
         })
 
     # =========================
-    # ② ポジション評価（mark-to-market）
+    # ② ポジション評価
     # =========================
     daily_realized = 0.0
     new_positions = []
@@ -97,16 +98,17 @@ for i, d in enumerate(dates):
         current_row = today[today["Ticker"] == pos["ticker"]]
 
         if len(current_row) == 0:
+            new_positions.append(pos)
             continue
 
         current_price = current_row["Close"].values[0]
 
         ret = (current_price - pos["entry_price"]) / pos["entry_price"]
 
-        # STOP LOSS（含み損ベース）
+        # STOP LOSS
         ret = max(ret, STOP_LOSS)
 
-        # ③ 5日経過で確定
+        # 5日経過で確定
         if i >= pos["exit_index"]:
             daily_realized += ret
         else:
@@ -115,7 +117,7 @@ for i, d in enumerate(dates):
     positions = new_positions
 
     # =========================
-    # 資産更新（確定損益のみ）
+    # 資産更新
     # =========================
     capital *= (1 + daily_realized)
     equity_curve.append(capital)
@@ -131,7 +133,7 @@ sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
 maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 
 print("\n========================")
-print("5D HOLD BACKTEST (CORRECTED)")
+print("5D HOLD BACKTEST (MONTHLY TRAIN)")
 print("========================")
 print("CAGR:", cagr)
 print("Sharpe:", sharpe)
