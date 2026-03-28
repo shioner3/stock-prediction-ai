@@ -143,4 +143,18 @@ returns = equity_curve.pct_change().dropna()
 
 days = len(equity_curve)
 
-cagr =
+cagr = equity_curve.iloc[-1] ** (252 / days) - 1
+sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+maxdd = (equity_curve / equity_curve.cummax() - 1).min()
+
+print("\n========================")
+print("5D FIXED HOLD BACKTEST")
+print("========================")
+print("CAGR:", cagr)
+print("Sharpe:", sharpe)
+print("MaxDD:", maxdd)
+print("Days:", days)
+
+pd.DataFrame({
+    "equity": equity_curve
+}).to_csv("backtest_5d_fixed.csv", index=False)
