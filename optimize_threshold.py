@@ -31,7 +31,6 @@ INITIAL_CAPITAL = 1.0
 df = pd.read_parquet(DATA_PATH)
 
 df["Date"] = pd.to_datetime(df["Date"])
-df = df.dropna(subset=["Date"])
 df = df.sort_values("Date")
 
 dates = sorted(df["Date"].unique())
@@ -39,12 +38,11 @@ dates = sorted(df["Date"].unique())
 # =========================
 # ポジション管理
 # =========================
-positions = []   # active positions
+positions = []
 equity_curve = []
 capital = INITIAL_CAPITAL
 
 model = None
-last_train_i = None
 
 # =========================
 # 日次ループ
@@ -58,7 +56,7 @@ for i, d in enumerate(dates):
         continue
 
     # =========================
-    # 学習（定期更新）
+    # 学習
     # =========================
     train_data = df[df["Date"] < d]
 
@@ -75,32 +73,27 @@ for i, d in enumerate(dates):
         continue
 
     # =========================
-    # ① エントリー（TOP5選定）
+    # ① エントリー（TOP5）
     # =========================
     today["Pred"] = model.predict(today[FEATURES])
+    picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
-    # 上位ランキング（閾値ではなく分位）
-    candidates = today.sort_values("Pred", ascending=False).head(TOP_K)
-
-    # 新規ポジション追加
-    for _, row in candidates.iterrows():
+    for _, row in picks.iterrows():
         positions.append({
             "ticker": row["Ticker"],
-            "entry_date": d,
+            "entry_price": row["Close"],
             "entry_index": i,
-            "exit_index": i + HOLD_DAYS,
-            "entry_price": row["Close"]
+            "exit_index": i + HOLD_DAYS
         })
 
     # =========================
-    # ② 既存ポジションの損益更新
+    # ② ポジション評価（mark-to-market）
     # =========================
-    daily_pnl = 0.0
+    daily_realized = 0.0
     new_positions = []
 
     for pos in positions:
 
-        # 現在価格取得
         current_row = today[today["Ticker"] == pos["ticker"]]
 
         if len(current_row) == 0:
@@ -110,26 +103,25 @@ for i, d in enumerate(dates):
 
         ret = (current_price - pos["entry_price"]) / pos["entry_price"]
 
-        # STOP LOSS（評価時点）
+        # STOP LOSS（含み損ベース）
         ret = max(ret, STOP_LOSS)
 
-        # ポジション評価
+        # ③ 5日経過で確定
         if i >= pos["exit_index"]:
-            # ③ 5日経過 → 決済
-            daily_pnl += ret
+            daily_realized += ret
         else:
             new_positions.append(pos)
 
     positions = new_positions
 
     # =========================
-    # 資産更新
+    # 資産更新（確定損益のみ）
     # =========================
-    capital *= (1 + daily_pnl)
+    capital *= (1 + daily_realized)
     equity_curve.append(capital)
 
 # =========================
-# 結果計算
+# 結果
 # =========================
 equity_curve = pd.Series(equity_curve)
 returns = equity_curve.pct_change().dropna()
@@ -138,11 +130,8 @@ cagr = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
 sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
 maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 
-# =========================
-# 出力
-# =========================
 print("\n========================")
-print("5D HOLD BACKTEST (POSITION BASED)")
+print("5D HOLD BACKTEST (CORRECTED)")
 print("========================")
 print("CAGR:", cagr)
 print("Sharpe:", sharpe)
