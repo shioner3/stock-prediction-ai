@@ -17,8 +17,8 @@ FEATURES = [
 
 TARGET = "Target"
 
-TOP_K = 5                 # 🔥 最大5銘柄
-PRED_THRESHOLD = 0.0      # 🔥 期待値フィルター
+TOP_K = 5
+PRED_THRESHOLD = 0.0
 HOLD_DAYS = 5
 
 
@@ -54,6 +54,10 @@ for i in range(3, len(years) - 1):
 
     daily_returns = []
 
+    # 🔥 月1学習用
+    last_train_month = None
+    model = None
+
     for d in dates:
 
         train_until_now = train[train["Date"] < d]
@@ -61,33 +65,49 @@ for i in range(3, len(years) - 1):
         if len(train_until_now) < 1000:
             continue
 
-        model = LGBMRegressor()
-        model.fit(train_until_now[FEATURES], train_until_now[TARGET])
+        # =========================
+        # 🔥 月1学習（ここが核心）
+        # =========================
+        current_month = (d.year, d.month)
 
+        if model is None or current_month != last_train_month:
+            model = LGBMRegressor()
+            model.fit(train_until_now[FEATURES], train_until_now[TARGET])
+            last_train_month = current_month
+
+        # =========================
+        # 予測
+        # =========================
         today = test_df[test_df["Date"] == d].copy()
 
         if len(today) == 0:
             continue
 
-        # =========================
-        # 予測
-        # =========================
         today["Pred"] = model.predict(today[FEATURES])
 
-        # 🔥 フィルター（超重要）
+        # =========================
+        # フィルター
+        # =========================
         today = today[today["Pred"] > PRED_THRESHOLD]
 
         if len(today) == 0:
             continue  # ノートレード
 
-        # 🔥 最大5銘柄
+        # =========================
+        # 上位5銘柄
+        # =========================
         picks = today.sort_values("Pred", ascending=False).head(TOP_K)
 
-        # 🔥 外れ値カット（現実寄せ）
+        # =========================
+        # リターン計算（現実寄せ）
+        # =========================
         ret = picks["FutureReturn_5"].clip(-0.3, 0.5).mean()
 
         daily_returns.append(ret)
 
+    # =========================
+    # 年間結果
+    # =========================
     if len(daily_returns) == 0:
         continue
 
