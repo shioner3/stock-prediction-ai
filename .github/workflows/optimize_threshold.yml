@@ -52,7 +52,7 @@ jobs:
           ls -l
 
           echo "===== OPTIMIZATION RESULT ====="
-          cat threshold_optimization.csv || echo "no result file"
+          cat backtest_regime_stoploss.csv || echo "no result file"
 
       # =========================
       # 7️⃣ GitHubへ保存
