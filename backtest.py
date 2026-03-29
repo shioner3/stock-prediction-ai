@@ -23,33 +23,23 @@ TARGET = "Target"
 HOLD_DAYS = 5
 STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
-TRAIN_INTERVAL = 20  # 月1
+TRAIN_INTERVAL = 20
 
 # =========================
-# 🔥 レジーム設定（修正版）
+# レジーム
 # =========================
 def get_regime(score):
-    if score > 0.005:      # +0.2%
+    if score > 0.005:
         return "bull"
-    elif score > -0.005:   # -0.2%〜+0.2%
+    elif score > -0.005:
         return "neutral"
     else:
         return "bear"
 
-# レジーム別パラメータ
 REGIME_CONFIG = {
-    "bull": {
-        "quantile": 0.7,
-        "max_positions": 5
-    },
-    "neutral": {
-        "quantile": 0.85,
-        "max_positions": 2
-    },
-    "bear": {
-        "quantile": 1.0,
-        "max_positions": 0
-    }
+    "bull": {"quantile": 0.7, "max_positions": 5},
+    "neutral": {"quantile": 0.85, "max_positions": 2},
+    "bear": {"quantile": 1.0, "max_positions": 0}
 }
 
 # =========================
@@ -60,7 +50,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date")
 
 # =========================
-# レジーム（リークなし）
+# レジーム算出
 # =========================
 df["MarketRet"] = df.groupby("Date")["Close"].transform(
     lambda x: x.pct_change().mean()
@@ -123,7 +113,7 @@ for i in range(4, len(years) - 1):
         config = REGIME_CONFIG[regime]
 
         # =========================
-        # 学習（月1）
+        # 学習
         # =========================
         train_until = df[df["Date"] < d]
 
@@ -148,7 +138,6 @@ for i in range(4, len(years) - 1):
             current_positions = []
             entry_index = j
 
-            # bearならノートレード
             if config["max_positions"] == 0:
                 equity_curve.append(equity)
                 position_counts.append(0)
@@ -173,13 +162,14 @@ for i in range(4, len(years) - 1):
 
                     current_positions.append({
                         "ticker": row["Ticker"],
-                        "entry_price": entry_price
+                        "entry_price": entry_price,
+                        "stop_flag": False  # 🔥追加
                     })
 
                     trade_count += 1
 
         # =========================
-        # ② 評価
+        # ② ポジション評価
         # =========================
         if len(current_positions) == 0:
             equity_curve.append(equity)
@@ -187,20 +177,39 @@ for i in range(4, len(years) - 1):
             continue
 
         rets = []
+        next_positions = []
 
         for pos in current_positions:
+
+            # 🔥 STOP発動済 → 翌日Openで決済
+            if pos["stop_flag"]:
+                tomorrow_row = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
+
+                if len(tomorrow_row) > 0:
+                    exit_price = tomorrow_row["Open"].values[0]
+                    ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
+                    rets.append(ret)
+
+                continue
 
             current_row = today[today["Ticker"] == pos["ticker"]]
 
             if len(current_row) == 0:
+                next_positions.append(pos)
                 continue
 
             price = current_row["Close"].values[0]
-
             ret = (price - pos["entry_price"]) / pos["entry_price"]
-            ret = max(ret, STOP_LOSS)
 
-            rets.append(ret)
+            # 🔥 STOP判定（フラグのみ）
+            if ret <= STOP_LOSS:
+                pos["stop_flag"] = True
+                next_positions.append(pos)
+                continue
+
+            next_positions.append(pos)
+
+        current_positions = next_positions
 
         if len(rets) == 0:
             equity_curve.append(equity)
@@ -210,7 +219,7 @@ for i in range(4, len(years) - 1):
         portfolio_ret = np.mean(rets)
 
         # =========================
-        # ③ 決済
+        # ③ 決済（通常 or STOP）
         # =========================
         if (j - entry_index + 1) == HOLD_DAYS:
             equity *= (1 + portfolio_ret)
@@ -258,4 +267,4 @@ print("Avg MaxDD :", res_df["MaxDD"].mean())
 print("Avg Pos   :", res_df["Avg_Positions"].mean())
 print("Trades    :", res_df["Trades"].sum())
 
-res_df.to_csv("rolling_backtest_realistic_v3.csv", index=False)
+res_df.to_csv("rolling_backtest_realistic_v4.csv", index=False)
