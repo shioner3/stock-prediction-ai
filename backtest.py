@@ -29,9 +29,9 @@ TRAIN_INTERVAL = 20  # 月1
 # 🔥 レジーム設定（修正版）
 # =========================
 def get_regime(score):
-    if score > 0.002:      # +0.2%
+    if score > 0.005:      # +0.2%
         return "bull"
-    elif score > -0.002:   # -0.2%〜+0.2%
+    elif score > -0.005:   # -0.2%〜+0.2%
         return "neutral"
     else:
         return "bear"
