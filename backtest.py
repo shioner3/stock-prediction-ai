@@ -31,17 +31,6 @@ REGIME_CONFIG = {
 }
 
 # =========================
-# レジーム関数
-# =========================
-def get_regime(ma20, ma60_diff):
-    if ma20 > 0.003 and ma60_diff > 0:
-        return "bull"
-    elif ma20 > -0.003:
-        return "neutral"
-    else:
-        return "bear"
-
-# =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
@@ -93,6 +82,9 @@ for i in range(4, len(years) - 1):
     position_counts = []
     trade_count = 0
 
+    # 🔥 エッジ分解用
+    trade_returns = []
+
     dates = sorted(test_df["Date"].unique())
 
     for j in range(len(dates) - 1):
@@ -139,7 +131,6 @@ for i in range(4, len(years) - 1):
 
             if config["max_positions"] > 0:
 
-                today = today.copy()
                 today["pred"] = model.predict(today[FEATURES])
 
                 th = today["pred"].quantile(config["quantile"])
@@ -148,6 +139,7 @@ for i in range(4, len(years) - 1):
                 picks = picks.sort_values("pred", ascending=False)
                 picks = picks.head(config["max_positions"])
 
+                # weight
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
                 picks["weight"] = 1 / picks["vol"]
                 picks["weight"] /= picks["weight"].sum()
@@ -183,27 +175,42 @@ for i in range(4, len(years) - 1):
                 continue
 
             price = cur["Close"].iloc[0]
-            ret = (price - pos["entry_price"]) / pos["entry_price"]
+            low = cur["Low"].iloc[0]
 
+            ret = (price - pos["entry_price"]) / pos["entry_price"]
             hold_days = j - pos["entry_day"] + 1
 
-            exit_price = None
-
-            # STOP
+            # =========================
+            # STOP（改良版）
+            # =========================
             if ret <= STOP_LOSS:
-                tmr_pos = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
-                if not tmr_pos.empty:
-                    exit_price = tmr_pos["Open"].iloc[0]
+
+                tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
+
+                if not tmr.empty:
+                    tomorrow_open = tmr["Open"].iloc[0]
                 else:
-                    exit_price = price
+                    tomorrow_open = price
+
+                # 🔥 ここが今回の追加
+                exit_price = min(tomorrow_open, low)
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
                 equity *= (1 + pnl * pos["weight"])
+                trade_returns.append(pnl)
+
                 continue
 
+            # =========================
             # 通常決済
+            # =========================
             if hold_days >= HOLD_DAYS:
-                equity *= (1 + ret * pos["weight"])
+
+                pnl = ret
+                equity *= (1 + pnl * pos["weight"])
+                trade_returns.append(pnl)
+
                 continue
 
             new_positions.append(pos)
@@ -223,13 +230,27 @@ for i in range(4, len(years) - 1):
     sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 
+    # =========================
+    # 🔥 エッジ分解
+    # =========================
+    trade_returns = np.array(trade_returns)
+
+    win_rate = (trade_returns > 0).mean()
+    avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
+    avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
+
+    pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
+
     results.append({
         "train": f"{train_years[0]}-{train_years[-1]}",
         "test": f"{test_year}-{test_year+1}",
         "CAGR": cagr,
         "Sharpe": sharpe,
         "MaxDD": maxdd,
-        "AvgPos": np.mean(position_counts),
+        "WinRate": win_rate,
+        "AvgWin": avg_win,
+        "AvgLoss": avg_loss,
+        "PF": pf,
         "Trades": trade_count
     })
 
@@ -242,3 +263,5 @@ print(res)
 print("\nAVG CAGR:", res["CAGR"].mean())
 print("AVG Sharpe:", res["Sharpe"].mean())
 print("AVG DD:", res["MaxDD"].mean())
+print("AVG WinRate:", res["WinRate"].mean())
+print("AVG PF:", res["PF"].mean())
