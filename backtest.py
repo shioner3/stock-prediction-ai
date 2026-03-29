@@ -26,29 +26,29 @@ INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20  # 月1
 
 # =========================
-# レジーム設定
+# 🔥 レジーム設定（修正版）
 # =========================
 def get_regime(score):
-    if score > 0.01:
+    if score > 0.002:      # +0.2%
         return "bull"
-    elif score > 0:
+    elif score > -0.002:   # -0.2%〜+0.2%
         return "neutral"
     else:
         return "bear"
 
-# 🔥 修正ポイント
+# レジーム別パラメータ
 REGIME_CONFIG = {
     "bull": {
         "quantile": 0.7,
         "max_positions": 5
     },
     "neutral": {
-        "quantile": 0.85,   # 厳選
-        "max_positions": 2  # 絞る
+        "quantile": 0.85,
+        "max_positions": 2
     },
     "bear": {
-        "quantile": 1.0,   # 実質通さない
-        "max_positions": 0 # 完全ノートレード
+        "quantile": 1.0,
+        "max_positions": 0
     }
 }
 
@@ -60,7 +60,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date")
 
 # =========================
-# レジーム
+# レジーム（リークなし）
 # =========================
 df["MarketRet"] = df.groupby("Date")["Close"].transform(
     lambda x: x.pct_change().mean()
@@ -123,7 +123,7 @@ for i in range(4, len(years) - 1):
         config = REGIME_CONFIG[regime]
 
         # =========================
-        # 学習
+        # 学習（月1）
         # =========================
         train_until = df[df["Date"] < d]
 
@@ -148,7 +148,7 @@ for i in range(4, len(years) - 1):
             current_positions = []
             entry_index = j
 
-            # 🔥 bearならスキップ
+            # bearならノートレード
             if config["max_positions"] == 0:
                 equity_curve.append(equity)
                 position_counts.append(0)
@@ -258,4 +258,4 @@ print("Avg MaxDD :", res_df["MaxDD"].mean())
 print("Avg Pos   :", res_df["Avg_Positions"].mean())
 print("Trades    :", res_df["Trades"].sum())
 
-res_df.to_csv("rolling_backtest_realistic_v2.csv", index=False)
+res_df.to_csv("rolling_backtest_realistic_v3.csv", index=False)
