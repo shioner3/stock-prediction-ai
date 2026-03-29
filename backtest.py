@@ -15,10 +15,15 @@ FEATURES = [
     "Volatility_rank",
     "Volume_change_rank",
     "HL_range_rank",
-    "RSI_rank"
+    "RSI_rank",
+    "Return_5_rank",
+    "Return_20_rank",
+    "Volume_spike_rank",
+    "Breakout_rank",
+    "Return_vol_adj_rank"
 ]
 
-TARGET = "Target"
+TARGET = "Target_rank"
 
 HOLD_DAYS = 5
 STOP_LOSS = -0.03
@@ -50,6 +55,28 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date")
 
 # =========================
+# 🔥 Target生成（安全版）
+# =========================
+df["FutureReturn_5"] = (
+    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
+)
+
+df["Target_rank"] = df.groupby("Date")["FutureReturn_5"].transform(
+    lambda x: x.rank(pct=True)
+)
+
+# =========================
+# 🔥 生特徴量 正規化（Zスコア）
+# =========================
+norm_cols = ["Return_5", "Return_20", "Breakout", "Volume_spike", "Return_vol_adj"]
+
+for col in norm_cols:
+    if col in df.columns:
+        df[col + "_norm"] = df.groupby("Date")[col].transform(
+            lambda x: (x - x.mean()) / (x.std() + 1e-9)
+        )
+
+# =========================
 # レジーム算出
 # =========================
 df["MarketRet"] = df.groupby("Date")["Close"].transform(
@@ -76,7 +103,6 @@ for i in range(4, len(years) - 1):
     train_years = years[i-4:i]
     test_year = years[i]
 
-    train_df = df[df["Year"].isin(train_years)]
     test_df = df[df["Year"] == test_year]
 
     print(f"\n===== {train_years} → {test_year} =====")
@@ -85,8 +111,7 @@ for i in range(4, len(years) - 1):
     equity_curve = []
 
     model = None
-    current_positions = []
-    entry_index = None
+    positions = []
 
     position_counts = []
     trade_count = 0
@@ -98,12 +123,12 @@ for i in range(4, len(years) - 1):
         d = dates[j]
         next_d = dates[j + 1]
 
-        today = test_df[test_df["Date"] == d].copy()
-        tomorrow = test_df[test_df["Date"] == next_d].copy()
+        today = df[df["Date"] == d].copy()
+        tomorrow = df[df["Date"] == next_d].copy()
 
         if len(today) == 0 or len(tomorrow) == 0:
             equity_curve.append(equity)
-            position_counts.append(len(current_positions))
+            position_counts.append(len(positions))
             continue
 
         # =========================
@@ -115,7 +140,7 @@ for i in range(4, len(years) - 1):
         # =========================
         # 学習
         # =========================
-        train_until = df[df["Date"] < d]
+        train_until = df[df["Date"] < d].dropna(subset=FEATURES + [TARGET])
 
         if len(train_until) > 1000 and (model is None or j % TRAIN_INTERVAL == 0):
             model = LGBMRegressor(
@@ -127,43 +152,38 @@ for i in range(4, len(years) - 1):
 
         if model is None:
             equity_curve.append(equity)
-            position_counts.append(len(current_positions))
+            position_counts.append(len(positions))
             continue
 
         # =========================
-        # ① エントリー（5日ごと）
+        # ① エントリー
         # =========================
         if j % HOLD_DAYS == 0:
 
-            current_positions = []
-            entry_index = j
+            positions = []
 
-            if config["max_positions"] == 0:
-                equity_curve.append(equity)
-                position_counts.append(0)
-                continue
+            if config["max_positions"] > 0:
 
-            today["Pred"] = model.predict(today[FEATURES])
+                today["Pred"] = model.predict(today[FEATURES])
 
-            th = today["Pred"].quantile(config["quantile"])
-            today = today[today["Pred"] > th]
+                th = today["Pred"].quantile(config["quantile"])
+                today_f = today[today["Pred"] > th]
 
-            if len(today) > 0:
-                picks = today.sort_values("Pred", ascending=False).head(config["max_positions"])
+                picks = today_f.sort_values("Pred", ascending=False).head(config["max_positions"])
 
                 for _, row in picks.iterrows():
 
                     tomorrow_row = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
-
                     if len(tomorrow_row) == 0:
                         continue
 
                     entry_price = tomorrow_row["Open"].values[0]
 
-                    current_positions.append({
+                    positions.append({
                         "ticker": row["Ticker"],
                         "entry_price": entry_price,
-                        "stop_flag": False  # 🔥追加
+                        "entry_day": j,
+                        "exit_flag": False
                     })
 
                     trade_count += 1
@@ -171,29 +191,21 @@ for i in range(4, len(years) - 1):
         # =========================
         # ② ポジション評価
         # =========================
-        if len(current_positions) == 0:
-            equity_curve.append(equity)
-            position_counts.append(0)
-            continue
-
-        rets = []
+        realized_returns = []
         next_positions = []
 
-        for pos in current_positions:
+        for pos in positions:
 
-            # 🔥 STOP発動済 → 翌日Openで決済
-            if pos["stop_flag"]:
+            # すでにexitフラグ → 翌日Open決済
+            if pos["exit_flag"]:
                 tomorrow_row = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
-
                 if len(tomorrow_row) > 0:
                     exit_price = tomorrow_row["Open"].values[0]
                     ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
-                    rets.append(ret)
-
+                    realized_returns.append(ret)
                 continue
 
             current_row = today[today["Ticker"] == pos["ticker"]]
-
             if len(current_row) == 0:
                 next_positions.append(pos)
                 continue
@@ -201,31 +213,32 @@ for i in range(4, len(years) - 1):
             price = current_row["Close"].values[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            # 🔥 STOP判定（フラグのみ）
+            hold_days = j - pos["entry_day"] + 1
+
+            # STOP判定
             if ret <= STOP_LOSS:
-                pos["stop_flag"] = True
+                pos["exit_flag"] = True
                 next_positions.append(pos)
+                continue
+
+            # HOLD満了
+            if hold_days >= HOLD_DAYS:
+                realized_returns.append(ret)
                 continue
 
             next_positions.append(pos)
 
-        current_positions = next_positions
-
-        if len(rets) == 0:
-            equity_curve.append(equity)
-            position_counts.append(len(current_positions))
-            continue
-
-        portfolio_ret = np.mean(rets)
+        positions = next_positions
 
         # =========================
-        # ③ 決済（通常 or STOP）
+        # ③ 資産反映（確定分のみ）
         # =========================
-        if (j - entry_index + 1) == HOLD_DAYS:
+        if len(realized_returns) > 0:
+            portfolio_ret = np.mean(realized_returns)
             equity *= (1 + portfolio_ret)
 
         equity_curve.append(equity)
-        position_counts.append(len(current_positions))
+        position_counts.append(len(positions))
 
     # =========================
     # 評価
@@ -267,4 +280,4 @@ print("Avg MaxDD :", res_df["MaxDD"].mean())
 print("Avg Pos   :", res_df["Avg_Positions"].mean())
 print("Trades    :", res_df["Trades"].sum())
 
-res_df.to_csv("rolling_backtest_realistic_v4.csv", index=False)
+res_df.to_csv("rolling_backtest_final_realistic.csv", index=False)
