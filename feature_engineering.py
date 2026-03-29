@@ -134,7 +134,9 @@ df["FutureReturn_5"] = (
 
 # 👉 2種類用意（あとで選べる）
 
-df["Target_raw"] = df["FutureReturn_5"]
+df["Target_rank"] = df.groupby("Date")["FutureReturn_5"].transform(
+    lambda x: x.rank(pct=True)
+)
 
 # =========================
 # 無限値処理
