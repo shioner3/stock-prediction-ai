@@ -22,21 +22,7 @@ HOLD_DAYS = 5
 STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
-
-# weight制御
 MAX_WEIGHT = 0.4
-
-# =========================
-# レジーム
-# =========================
-def get_regime(score, trend):
-    if score > 0.003 and trend > 0:
-        return "bull"
-    elif score > -0.003:
-        return "neutral"
-    else:
-        return "bear"
-
 
 REGIME_CONFIG = {
     "bull": {"quantile": 0.6, "max_positions": 8},
@@ -45,19 +31,41 @@ REGIME_CONFIG = {
 }
 
 # =========================
+# レジーム関数
+# =========================
+def get_regime(ma20, ma60_diff):
+    if ma20 > 0.003 and ma60_diff > 0:
+        return "bull"
+    elif ma20 > -0.003:
+        return "neutral"
+    else:
+        return "bear"
+
+# =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values("Date")
+df = df.sort_values(["Date", "Ticker"])
 
-df["MarketRet"] = df.groupby("Date")["Close"].transform(lambda x: x.pct_change().mean()).fillna(0)
-df["MarketMA20"] = df["MarketRet"].rolling(20).mean()
-df["MarketMA60"] = df["MarketRet"].rolling(60).mean()
+# 市場リターン
+df["MarketRet"] = df.groupby("Date")["Close"].transform("mean").pct_change().fillna(0)
 
-df["Regime"] = df.apply(
-    lambda x: get_regime(x["MarketMA20"], x["MarketMA20"] - x["MarketMA60"]),
-    axis=1
+market = df.groupby("Date")["MarketRet"].mean().sort_index()
+market_ma20 = market.rolling(20).mean()
+market_ma60 = market.rolling(60).mean()
+
+market_df = pd.DataFrame({
+    "MarketMA20": market_ma20,
+    "MarketMA60": market_ma60
+}).fillna(0)
+
+df = df.merge(market_df, left_on="Date", right_index=True, how="left")
+
+df["Regime"] = np.where(
+    (df["MarketMA20"] > 0.003) & (df["MarketMA20"] - df["MarketMA60"] > 0),
+    "bull",
+    np.where(df["MarketMA20"] > -0.003, "neutral", "bear")
 )
 
 df["Year"] = df["Date"].dt.year
@@ -66,14 +74,14 @@ years = sorted(df["Year"].unique())
 results = []
 
 # =========================
-# ローリング
+# バックテスト
 # =========================
 for i in range(4, len(years) - 1):
 
     train_years = years[i-4:i]
     test_year = years[i]
 
-    test_df = df[df["Year"] == test_year]
+    test_df = df[df["Year"] == test_year].copy()
 
     print(f"\n===== {train_years} → {test_year} =====")
 
@@ -81,9 +89,7 @@ for i in range(4, len(years) - 1):
     equity_curve = []
 
     model = None
-
-    positions = []  # 🔥 ポジション管理
-
+    positions = []
     position_counts = []
     trade_count = 0
 
@@ -97,7 +103,7 @@ for i in range(4, len(years) - 1):
         today = test_df[test_df["Date"] == d].copy()
         tomorrow = test_df[test_df["Date"] == next_d].copy()
 
-        if len(today) == 0 or len(tomorrow) == 0:
+        if len(today) == 0:
             equity_curve.append(equity)
             position_counts.append(len(positions))
             continue
@@ -125,7 +131,7 @@ for i in range(4, len(years) - 1):
             continue
 
         # =========================
-        # ① エントリー
+        # エントリー
         # =========================
         if j % HOLD_DAYS == 0:
 
@@ -133,74 +139,69 @@ for i in range(4, len(years) - 1):
 
             if config["max_positions"] > 0:
 
+                today = today.copy()
                 today["pred"] = model.predict(today[FEATURES])
 
                 th = today["pred"].quantile(config["quantile"])
-                picks = today[today["pred"] > th].sort_values("pred", ascending=False)
+                picks = today[today["pred"] > th].copy()
 
-                picks = picks.head(config["max_positions"]).copy()
+                picks = picks.sort_values("pred", ascending=False)
+                picks = picks.head(config["max_positions"])
 
-                # =========================
-                # weight設計（正規分布型）
-                # =========================
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
-                picks["raw_w"] = 1 / picks["vol"]
-
-                picks["weight"] = picks["raw_w"] / picks["raw_w"].sum()
+                picks["weight"] = 1 / picks["vol"]
+                picks["weight"] /= picks["weight"].sum()
                 picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
-                picks["weight"] = picks["weight"] / picks["weight"].sum()
+                picks["weight"] /= picks["weight"].sum()
 
                 for _, row in picks.iterrows():
 
                     tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
 
-                    if len(tmr) == 0:
+                    if tmr.empty:
                         continue
 
                     positions.append({
                         "ticker": row["Ticker"],
-                        "entry_price": tmr["Open"].values[0],
+                        "entry_price": tmr["Open"].iloc[0],
                         "entry_day": j,
-                        "weight": row["weight"],
-                        "alive": True
+                        "weight": row["weight"]
                     })
 
                     trade_count += 1
 
         # =========================
-        # ② ポジション管理
+        # ポジション管理
         # =========================
         new_positions = []
 
         for pos in positions:
 
-            if not pos["alive"]:
-                continue
-
             cur = today[today["Ticker"] == pos["ticker"]]
-
-            if len(cur) == 0:
+            if cur.empty:
                 new_positions.append(pos)
                 continue
 
-            price = cur["Close"].values[0]
+            price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
             hold_days = j - pos["entry_day"] + 1
 
-            # =========================
-            # STOP
-            # =========================
-            if ret <= STOP_LOSS:
-                exit_price = tomorrow[tomorrow["Ticker"] == pos["ticker"]]["Open"].values[0]
-                pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
+            exit_price = None
 
+            # STOP
+            if ret <= STOP_LOSS:
+                tmr_pos = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
+                if not tmr_pos.empty:
+                    exit_price = tmr_pos["Open"].iloc[0]
+                else:
+                    exit_price = price
+
+                pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
                 equity *= (1 + pnl * pos["weight"])
                 continue
 
-            # =========================
             # 通常決済
-            # =========================
             if hold_days >= HOLD_DAYS:
                 equity *= (1 + ret * pos["weight"])
                 continue
