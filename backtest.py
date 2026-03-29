@@ -19,7 +19,7 @@ FEATURES = [
 ]
 
 HOLD_DAYS = 5
-STOP_LOSS = -0.03
+STOP_LOSS = -0.05   # 🔥 緩めた
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
@@ -82,7 +82,6 @@ for i in range(4, len(years) - 1):
     position_counts = []
     trade_count = 0
 
-    # 🔥 エッジ分解用
     trade_returns = []
 
     dates = sorted(test_df["Date"].unique())
@@ -139,9 +138,11 @@ for i in range(4, len(years) - 1):
                 picks = picks.sort_values("pred", ascending=False)
                 picks = picks.head(config["max_positions"])
 
-                # weight
+                # =========================
+                # 🔥 weight（マイルド化）
+                # =========================
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
-                picks["weight"] = 1 / picks["vol"]
+                picks["weight"] = 1 / np.sqrt(picks["vol"])   # 🔥 修正
                 picks["weight"] /= picks["weight"].sum()
                 picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
                 picks["weight"] /= picks["weight"].sum()
@@ -170,30 +171,27 @@ for i in range(4, len(years) - 1):
         for pos in positions:
 
             cur = today[today["Ticker"] == pos["ticker"]]
+
             if cur.empty:
                 new_positions.append(pos)
                 continue
 
             price = cur["Close"].iloc[0]
-            low = cur["Low"].iloc[0]
-
             ret = (price - pos["entry_price"]) / pos["entry_price"]
+
             hold_days = j - pos["entry_day"] + 1
 
             # =========================
-            # STOP（改良版）
+            # STOP
             # =========================
             if ret <= STOP_LOSS:
 
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
 
                 if not tmr.empty:
-                    tomorrow_open = tmr["Open"].iloc[0]
+                    exit_price = tmr["Open"].iloc[0]  # 🔥 修正
                 else:
-                    tomorrow_open = price
-
-                # 🔥 ここが今回の追加
-                exit_price = min(tomorrow_open, low)
+                    exit_price = price
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
@@ -230,15 +228,11 @@ for i in range(4, len(years) - 1):
     sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     maxdd = (equity_curve / equity_curve.cummax() - 1).min()
 
-    # =========================
-    # 🔥 エッジ分解
-    # =========================
     trade_returns = np.array(trade_returns)
 
     win_rate = (trade_returns > 0).mean()
     avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
     avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
-
     pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
 
     results.append({
