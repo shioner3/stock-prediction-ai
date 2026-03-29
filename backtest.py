@@ -18,16 +18,19 @@ FEATURES = [
     "RSI_rank"
 ]
 
+TARGET = "FutureReturn_5"  # 🔥 回帰ターゲットに変更
+
 HOLD_DAYS = 5
-STOP_LOSS = -0.05   # 🔥 緩めた
+STOP_LOSS = -0.05
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
 
+# 🔥 bearはノートレード
 REGIME_CONFIG = {
     "bull": {"quantile": 0.6, "max_positions": 8},
     "neutral": {"quantile": 0.8, "max_positions": 4},
-    "bear": {"quantile": 1.0, "max_positions": 1}
+    "bear": {"quantile": 1.0, "max_positions": 0}
 }
 
 # =========================
@@ -37,7 +40,9 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
-# 市場リターン
+# =========================
+# 市場レジーム
+# =========================
 df["MarketRet"] = df.groupby("Date")["Close"].transform("mean").pct_change().fillna(0)
 
 market = df.groupby("Date")["MarketRet"].mean().sort_index()
@@ -57,6 +62,9 @@ df["Regime"] = np.where(
     np.where(df["MarketMA20"] > -0.003, "neutral", "bear")
 )
 
+# =========================
+# 年
+# =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
 
@@ -79,9 +87,9 @@ for i in range(4, len(years) - 1):
 
     model = None
     positions = []
+
     position_counts = []
     trade_count = 0
-
     trade_returns = []
 
     dates = sorted(test_df["Date"].unique())
@@ -114,7 +122,7 @@ for i in range(4, len(years) - 1):
                 max_depth=6,
                 random_state=42
             )
-            model.fit(train_until[FEATURES], train_until["Target"])
+            model.fit(train_until[FEATURES], train_until[TARGET])
 
         if model is None:
             equity_curve.append(equity)
@@ -132,6 +140,14 @@ for i in range(4, len(years) - 1):
 
                 today["pred"] = model.predict(today[FEATURES])
 
+                # 🔥 期待値プラスだけ採用
+                today = today[today["pred"] > 0].copy()
+
+                if len(today) == 0:
+                    equity_curve.append(equity)
+                    position_counts.append(0)
+                    continue
+
                 th = today["pred"].quantile(config["quantile"])
                 picks = today[today["pred"] > th].copy()
 
@@ -139,10 +155,11 @@ for i in range(4, len(years) - 1):
                 picks = picks.head(config["max_positions"])
 
                 # =========================
-                # 🔥 weight（マイルド化）
+                # weight（マイルド）
                 # =========================
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
-                picks["weight"] = 1 / np.sqrt(picks["vol"])   # 🔥 修正
+                picks["weight"] = 1 / np.sqrt(picks["vol"])
+
                 picks["weight"] /= picks["weight"].sum()
                 picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
                 picks["weight"] /= picks["weight"].sum()
@@ -189,7 +206,7 @@ for i in range(4, len(years) - 1):
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
 
                 if not tmr.empty:
-                    exit_price = tmr["Open"].iloc[0]  # 🔥 修正
+                    exit_price = tmr["Open"].iloc[0]
                 else:
                     exit_price = price
 
