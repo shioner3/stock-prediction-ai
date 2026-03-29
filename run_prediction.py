@@ -6,7 +6,6 @@ from lightgbm import LGBMRegressor
 from datetime import datetime
 from pandas.tseries.offsets import BDay
 
-
 # =========================
 # 設定
 # =========================
@@ -32,7 +31,6 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
 PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
 
-
 FEATURES = [
     "Return_1_rank",
     "MA5_ratio_rank",
@@ -46,9 +44,8 @@ FEATURES = [
 
 TARGET = "Target"
 
-
 # =========================
-# 🔥 バックテスト（重要：無料のフック）
+# バックテスト（フック）
 # =========================
 BACKTEST_RESULTS = [
     {"period": "2019-2022", "cagr": 0.21, "sharpe": 1.05, "maxdd": -0.12},
@@ -59,7 +56,6 @@ BACKTEST_RESULTS = [
 AVG_CAGR = 1.03
 AVG_SHARPE = 2.32
 AVG_MAXDD = -0.09
-
 
 # =========================
 # ユーティリティ
@@ -108,9 +104,8 @@ def load_performance():
         "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
     }
 
-
 # =========================
-# 無料記事（売るための本体）
+# 記事生成
 # =========================
 def generate_free_article(today, regime):
 
@@ -128,7 +123,6 @@ def generate_free_article(today, regime):
     for _, row in today.head(TOP_N).iterrows():
         text += f"{int(row['PredRank'])}位：{row['銘柄名']}（{row['コード']}）\n"
 
-    # 🔥 バックテスト（最重要フック）
     text += f"""
 ========================
 ■ AIの実力（検証結果）
@@ -159,35 +153,17 @@ def generate_free_article(today, regime):
 
     text += """
 ========================
-■ なぜ勝てるのか？
-========================
-
-・複数指標の統合スコア
-・市場レジーム適応
-・短期最適化モデル
-
-========================
 ■ 注意
 ========================
 
 このままでは再現できません
-（ルールは非公開）
 
-========================
 👉 有料版で公開
-========================
-・売買ルール完全公開
-・エントリー条件
-・損切り基準
-・全ランキング
 """
 
     return text
 
 
-# =========================
-# 有料記事（再現性）
-# =========================
 def generate_premium_article(today, regime):
 
     text = """
@@ -195,48 +171,17 @@ def generate_premium_article(today, regime):
 ■ AI戦略（完全再現版）
 ========================
 
-・エントリー：当日 or 翌日
-・保有：5営業日
+・エントリー：翌日
+・保有：5日
 ・損切り：-3%
 """
 
-    if regime == "strong":
-        text += "\n強気 → 上位銘柄を複数エントリー\n"
-    elif regime == "neutral":
-        text += "\n中立 → 上位のみ\n"
-    else:
-        text += "\n弱気 → 基本ノートレード\n"
-
-    # 🔥 バックテスト詳細（信頼）
-    text += "\n========================\n■ バックテスト詳細\n========================\n"
-
-    for r in BACKTEST_RESULTS:
-        text += f"""
-{r['period']}
-CAGR: {int(r['cagr']*100)}%
-Sharpe: {r['sharpe']}
-MaxDD: {int(r['maxdd']*100)}%
-"""
-
-    text += f"""
-========================
-■ 平均成績
-========================
-
-年利：約{int(AVG_CAGR*100)}%
-Sharpe：{AVG_SHARPE}
-DD：約{int(abs(AVG_MAXDD)*100)}%
-
-========================
-■ TOP20ランキング
-========================
-"""
+    text += "\n========================\n■ TOP20ランキング\n========================\n"
 
     for _, row in today.head(20).iterrows():
         text += f"{int(row['PredRank'])}位 {row['銘柄名']} ({row['コード']})\n"
 
     return text
-
 
 # =========================
 # モデル
@@ -259,18 +204,25 @@ if not os.path.exists(MODEL_PATH):
 else:
     model = pickle.load(open(MODEL_PATH, "rb"))
 
-
 # =========================
 # 予測
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
 today["Pred"] = model.predict(today[FEATURES])
+
+# 🔥🔥🔥 ここが最重要修正
+today = today[today["Pred"] > 0].copy()
+
+# 万が一ゼロ件対策
+if len(today) == 0:
+    print("⚠️ 有望銘柄なし（Pred > 0 なし）")
+    exit()
+
 today = normalize(today)
 
 market_score = today["Pred"].mean()
 regime = get_regime(market_score)
-
 
 # =========================
 # 出力
@@ -281,4 +233,4 @@ premium_article = generate_premium_article(today, regime)
 with open(ARTICLE_PATH, "w", encoding="utf-8") as f:
     f.write(free_article + "\n\n================ 有料 =================\n\n" + premium_article)
 
-print("✅ 完了（売れる構成）")
+print("✅ 完了（勝てる銘柄のみ抽出モード）")
