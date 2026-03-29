@@ -18,17 +18,17 @@ FEATURES = [
     "RSI_rank"
 ]
 
-TARGET = "FutureReturn_5"  # 🔥 回帰ターゲットに変更
+TARGET = "FutureReturn_5"
 
 HOLD_DAYS = 5
-STOP_LOSS = -0.05
+STOP_LOSS = -0.03   # 🔥 修正
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
 
-# 🔥 bearはノートレード
+# 🔥 修正
 REGIME_CONFIG = {
-    "bull": {"quantile": 0.6, "max_positions": 8},
+    "bull": {"quantile": 0.7, "max_positions": 4},
     "neutral": {"quantile": 0.8, "max_positions": 4},
     "bear": {"quantile": 1.0, "max_positions": 0}
 }
@@ -102,7 +102,7 @@ for i in range(4, len(years) - 1):
         today = test_df[test_df["Date"] == d].copy()
         tomorrow = test_df[test_df["Date"] == next_d].copy()
 
-        if len(today) == 0:
+        if today.empty:
             equity_curve.append(equity)
             position_counts.append(len(positions))
             continue
@@ -138,28 +138,32 @@ for i in range(4, len(years) - 1):
 
             if config["max_positions"] > 0:
 
-                today["pred"] = model.predict(today[FEATURES])
+                today_pred = today.copy()
+                today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-                # 🔥 期待値プラスだけ採用
-                today = today[today["pred"] > 0].copy()
+                # 🔥 フィルタ強化
+                today_pred = today_pred[today_pred["pred"] > 0.01]
 
-                if len(today) == 0:
+                if today_pred.empty:
                     equity_curve.append(equity)
                     position_counts.append(0)
                     continue
 
-                th = today["pred"].quantile(config["quantile"])
-                picks = today[today["pred"] > th].copy()
+                th = today_pred["pred"].quantile(config["quantile"])
+                picks = today_pred[today_pred["pred"] > th].copy()
 
                 picks = picks.sort_values("pred", ascending=False)
                 picks = picks.head(config["max_positions"])
 
-                # =========================
-                # weight（マイルド）
-                # =========================
-                picks["vol"] = picks["Volatility_rank"] + 1e-6
-                picks["weight"] = 1 / np.sqrt(picks["vol"])
+                if picks.empty:
+                    equity_curve.append(equity)
+                    position_counts.append(0)
+                    continue
 
+                # =========================
+                # 🔥 weight = pred比例
+                # =========================
+                picks["weight"] = picks["pred"]
                 picks["weight"] /= picks["weight"].sum()
                 picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
                 picks["weight"] /= picks["weight"].sum()
@@ -239,6 +243,10 @@ for i in range(4, len(years) - 1):
     # 評価
     # =========================
     equity_curve = pd.Series(equity_curve)
+
+    if len(equity_curve) < 2:
+        continue
+
     returns = equity_curve.pct_change().dropna()
 
     cagr = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
@@ -247,10 +255,13 @@ for i in range(4, len(years) - 1):
 
     trade_returns = np.array(trade_returns)
 
-    win_rate = (trade_returns > 0).mean()
-    avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
-    avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
-    pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
+    if len(trade_returns) > 0:
+        win_rate = (trade_returns > 0).mean()
+        avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
+        avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
+        pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
+    else:
+        win_rate = avg_win = avg_loss = pf = np.nan
 
     results.append({
         "train": f"{train_years[0]}-{train_years[-1]}",
