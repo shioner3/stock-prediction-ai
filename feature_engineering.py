@@ -40,10 +40,18 @@ df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 df = df.dropna(subset=["Date"])
 
 # =========================
-# 銘柄内特徴量（過去のみ）
+# 基本特徴量
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 
+# 🔥 モメンタム（最重要）
+df["Return_5"] = df.groupby("Ticker")["Close"].pct_change(5)
+df["Return_10"] = df.groupby("Ticker")["Close"].pct_change(10)
+df["Return_20"] = df.groupby("Ticker")["Close"].pct_change(20)
+
+# =========================
+# 移動平均
+# =========================
 df["MA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean())
 df["MA25"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(25).mean())
 df["MA75"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(75).mean())
@@ -52,17 +60,37 @@ df["MA5_ratio"] = df["Close"] / df["MA5"]
 df["MA25_ratio"] = df["Close"] / df["MA25"]
 df["MA75_ratio"] = df["Close"] / df["MA75"]
 
-df["Volatility"] = (
-    df.groupby("Ticker")["Return_1"]
-    .transform(lambda x: x.rolling(20).std())
+# =========================
+# ボラ・出来高
+# =========================
+df["Volatility"] = df.groupby("Ticker")["Return_1"].transform(
+    lambda x: x.rolling(20).std()
 )
 
 df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change()
 
-df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
+# 🔥 出来高スパイク
+df["Volume_MA20"] = df.groupby("Ticker")["Volume"].transform(
+    lambda x: x.rolling(20).mean()
+)
+df["Volume_spike"] = df["Volume"] / df["Volume_MA20"]
 
 # =========================
-# RSI（過去のみ）
+# 値動き強さ
+# =========================
+df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
+
+# 🔥 ブレイクアウト
+df["High_20"] = df.groupby("Ticker")["High"].transform(
+    lambda x: x.rolling(20).max()
+)
+df["Breakout"] = df["Close"] / df["High_20"]
+
+# 🔥 ボラ調整リターン
+df["Return_vol_adj"] = df["Return_5"] / (df["Volatility"] + 1e-9)
+
+# =========================
+# RSI
 # =========================
 delta = df.groupby("Ticker")["Close"].diff()
 
@@ -76,7 +104,7 @@ rs = avg_gain / (avg_loss + 1e-9)
 df["RSI"] = 100 - (100 / (1 + rs))
 
 # =========================
-# クロスセクション特徴量（同日OK）
+# 🔥 クロスセクションrank
 # =========================
 rank_features = [
     "Return_1",
@@ -86,24 +114,27 @@ rank_features = [
     "Volatility",
     "Volume_change",
     "HL_range",
-    "RSI"
+    "RSI",
+    "Return_5",
+    "Return_20",
+    "Volume_spike",
+    "Breakout",
+    "Return_vol_adj"
 ]
 
 for col in rank_features:
     df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
 
 # =========================
-# 🔥 Target（完全修正版）
+# 🔥 Target（改良版）
 # =========================
-# 未来リターン
 df["FutureReturn_5"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# ❗重要修正①：日次ランキング化（リーク耐性）
-df["Target"] = df.groupby("Date")["FutureReturn_5"].transform(
-    lambda x: x.rank(pct=True)
-)
+# 👉 2種類用意（あとで選べる）
+
+df["Target_raw"] = df["FutureReturn_5"]
 
 # =========================
 # 無限値処理
@@ -111,13 +142,18 @@ df["Target"] = df.groupby("Date")["FutureReturn_5"].transform(
 df = df.replace([np.inf, -np.inf], np.nan)
 
 # =========================
-# 🔥 学習データ（厳格版）
+# 🔥 学習データ
 # =========================
-feature_cols = [c + "_rank" for c in rank_features]
+feature_cols = [c + "_rank" for c in rank_features] + [
+    "Return_5",
+    "Return_20",
+    "Breakout",
+    "Volume_spike",
+    "Return_vol_adj"
+]
 
-train_df = df.dropna(subset=feature_cols + ["Target"]).copy()
+train_df = df.dropna(subset=feature_cols + ["Target_rank"]).copy()
 
-# 念のため未来完全排除
 train_df = train_df[
     train_df["FutureReturn_5"].notna()
 ].copy()
@@ -125,14 +161,14 @@ train_df = train_df[
 train_df = train_df.reset_index(drop=True)
 
 # =========================
-# 🔥 予測データ（未来完全除去）
+# 🔥 予測データ
 # =========================
 predict_df = df.dropna(subset=feature_cols).copy()
 
-# 未来情報完全削除
 predict_df = predict_df.drop(columns=[
     "FutureReturn_5",
-    "Target"
+    "Target_rank",
+    "Target_raw"
 ], errors="ignore")
 
 predict_df = predict_df.reset_index(drop=True)
