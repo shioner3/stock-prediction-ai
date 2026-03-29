@@ -25,20 +25,28 @@ STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 
+# 🔥 weight制御
+MAX_WEIGHT = 0.4
+MIN_WEIGHT = 0.05
+
 # =========================
-# レジーム
+# レジーム（強化版）
 # =========================
-def get_regime(score):
-    if score > 0.005:
+def get_regime(score, trend):
+
+    if score > 0.003 and trend > 0:
         return "bull"
-    elif score > -0.005:
+
+    elif score > -0.003:
         return "neutral"
+
     else:
         return "bear"
 
+
 REGIME_CONFIG = {
     "bull": {"quantile": 0.7, "max_positions": 5},
-    "neutral": {"quantile": 0.85, "max_positions": 2},
+    "neutral": {"quantile": 0.85, "max_positions": 3},
     "bear": {"quantile": 1.0, "max_positions": 0}
 }
 
@@ -50,15 +58,19 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values("Date")
 
 # =========================
-# レジーム算出
+# 市場レジーム（強化）
 # =========================
 df["MarketRet"] = df.groupby("Date")["Close"].transform(
     lambda x: x.pct_change().mean()
 ).fillna(0)
 
 df["MarketMA20"] = df["MarketRet"].rolling(20).mean()
+df["MarketMA60"] = df["MarketRet"].rolling(60).mean()
+
 df["RegimeScore"] = df["MarketMA20"]
-df["Regime"] = df["RegimeScore"].apply(get_regime)
+df["Trend"] = df["MarketMA20"] - df["MarketMA60"]
+
+df["Regime"] = df.apply(lambda x: get_regime(x["RegimeScore"], x["Trend"]), axis=1)
 
 # =========================
 # 年
@@ -117,8 +129,9 @@ for i in range(4, len(years) - 1):
 
         if len(train_until) > 1000 and (model is None or j % TRAIN_INTERVAL == 0):
             model = LGBMRegressor(
-                n_estimators=200,
+                n_estimators=300,
                 learning_rate=0.05,
+                max_depth=6,
                 random_state=42
             )
             model.fit(train_until[FEATURES], train_until[TARGET])
@@ -129,20 +142,34 @@ for i in range(4, len(years) - 1):
             continue
 
         # =========================
-        # ① エントリー（5日ごと）
+        # ① エントリー
         # =========================
         if j % HOLD_DAYS == 0:
 
             current_positions = []
 
-            if config["max_positions"] != 0:
+            if config["max_positions"] > 0:
 
                 today["Pred"] = model.predict(today[FEATURES])
 
-                th = today["Pred"].quantile(config["quantile"])
-                today = today[today["Pred"] > th]
+                # 🔥 ボラ取得
+                today["Volatility"] = today["Volatility_rank"] + 1e-6
 
-                picks = today.sort_values("Pred", ascending=False).head(config["max_positions"])
+                # 🔥 weight = 1/vol
+                today["raw_weight"] = 1 / today["Volatility"]
+
+                # 🔥 正規化
+                today["weight"] = today["raw_weight"] / today["raw_weight"].sum()
+
+                # 🔥 上限・下限クリップ
+                today["weight"] = today["weight"].clip(MIN_WEIGHT, MAX_WEIGHT)
+
+                # 🔥 再正規化
+                today["weight"] = today["weight"] / today["weight"].sum()
+
+                # 上位抽出
+                th = today["Pred"].quantile(config["quantile"])
+                picks = today[today["Pred"] > th].sort_values("Pred", ascending=False).head(config["max_positions"])
 
                 for _, row in picks.iterrows():
 
@@ -157,6 +184,7 @@ for i in range(4, len(years) - 1):
                         "ticker": row["Ticker"],
                         "entry_price": entry_price,
                         "entry_day": j,
+                        "weight": row["weight"],
                         "stop_flag": False
                     })
 
@@ -169,7 +197,7 @@ for i in range(4, len(years) - 1):
 
         for pos in current_positions:
 
-            # STOP発動済 → 翌日Openで決済
+            # STOP確定
             if pos["stop_flag"]:
                 tomorrow_row = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
 
@@ -177,7 +205,7 @@ for i in range(4, len(years) - 1):
                     exit_price = tomorrow_row["Open"].values[0]
                     ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
-                    equity *= (1 + ret)  # 🔥 即反映
+                    equity *= (1 + ret * pos["weight"])
 
                 continue
 
@@ -190,21 +218,17 @@ for i in range(4, len(years) - 1):
             price = current_row["Close"].values[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            # =========================
             # STOP判定
-            # =========================
             if ret <= STOP_LOSS:
                 pos["stop_flag"] = True
                 new_positions.append(pos)
                 continue
 
-            # =========================
             # HOLD満了
-            # =========================
             hold_days = j - pos["entry_day"] + 1
 
             if hold_days >= HOLD_DAYS:
-                equity *= (1 + ret)  # 🔥 即反映
+                equity *= (1 + ret * pos["weight"])
                 continue
 
             new_positions.append(pos)
@@ -254,4 +278,4 @@ print("Avg MaxDD :", res_df["MaxDD"].mean())
 print("Avg Pos   :", res_df["Avg_Positions"].mean())
 print("Trades    :", res_df["Trades"].sum())
 
-res_df.to_csv("rolling_backtest_realistic_v5.csv", index=False)
+res_df.to_csv("rolling_backtest_realistic_v6.csv", index=False)
