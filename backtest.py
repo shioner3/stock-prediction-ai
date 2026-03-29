@@ -76,7 +76,6 @@ for i in range(4, len(years) - 1):
     train_years = years[i-4:i]
     test_year = years[i]
 
-    train_df = df[df["Year"].isin(train_years)]
     test_df = df[df["Year"] == test_year]
 
     print(f"\n===== {train_years} → {test_year} =====")
@@ -86,7 +85,6 @@ for i in range(4, len(years) - 1):
 
     model = None
     current_positions = []
-    entry_index = None
 
     position_counts = []
     trade_count = 0
@@ -136,19 +134,14 @@ for i in range(4, len(years) - 1):
         if j % HOLD_DAYS == 0:
 
             current_positions = []
-            entry_index = j
 
-            if config["max_positions"] == 0:
-                equity_curve.append(equity)
-                position_counts.append(0)
-                continue
+            if config["max_positions"] != 0:
 
-            today["Pred"] = model.predict(today[FEATURES])
+                today["Pred"] = model.predict(today[FEATURES])
 
-            th = today["Pred"].quantile(config["quantile"])
-            today = today[today["Pred"] > th]
+                th = today["Pred"].quantile(config["quantile"])
+                today = today[today["Pred"] > th]
 
-            if len(today) > 0:
                 picks = today.sort_values("Pred", ascending=False).head(config["max_positions"])
 
                 for _, row in picks.iterrows():
@@ -163,7 +156,8 @@ for i in range(4, len(years) - 1):
                     current_positions.append({
                         "ticker": row["Ticker"],
                         "entry_price": entry_price,
-                        "stop_flag": False  # 🔥追加
+                        "entry_day": j,
+                        "stop_flag": False
                     })
 
                     trade_count += 1
@@ -171,58 +165,51 @@ for i in range(4, len(years) - 1):
         # =========================
         # ② ポジション評価
         # =========================
-        if len(current_positions) == 0:
-            equity_curve.append(equity)
-            position_counts.append(0)
-            continue
-
-        rets = []
-        next_positions = []
+        new_positions = []
 
         for pos in current_positions:
 
-            # 🔥 STOP発動済 → 翌日Openで決済
+            # STOP発動済 → 翌日Openで決済
             if pos["stop_flag"]:
                 tomorrow_row = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
 
                 if len(tomorrow_row) > 0:
                     exit_price = tomorrow_row["Open"].values[0]
                     ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
-                    rets.append(ret)
+
+                    equity *= (1 + ret)  # 🔥 即反映
 
                 continue
 
             current_row = today[today["Ticker"] == pos["ticker"]]
 
             if len(current_row) == 0:
-                next_positions.append(pos)
+                new_positions.append(pos)
                 continue
 
             price = current_row["Close"].values[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            # 🔥 STOP判定（フラグのみ）
+            # =========================
+            # STOP判定
+            # =========================
             if ret <= STOP_LOSS:
                 pos["stop_flag"] = True
-                next_positions.append(pos)
+                new_positions.append(pos)
                 continue
 
-            next_positions.append(pos)
+            # =========================
+            # HOLD満了
+            # =========================
+            hold_days = j - pos["entry_day"] + 1
 
-        current_positions = next_positions
+            if hold_days >= HOLD_DAYS:
+                equity *= (1 + ret)  # 🔥 即反映
+                continue
 
-        if len(rets) == 0:
-            equity_curve.append(equity)
-            position_counts.append(len(current_positions))
-            continue
+            new_positions.append(pos)
 
-        portfolio_ret = np.mean(rets)
-
-        # =========================
-        # ③ 決済（通常 or STOP）
-        # =========================
-        if (j - entry_index + 1) == HOLD_DAYS:
-            equity *= (1 + portfolio_ret)
+        current_positions = new_positions
 
         equity_curve.append(equity)
         position_counts.append(len(current_positions))
@@ -267,4 +254,4 @@ print("Avg MaxDD :", res_df["MaxDD"].mean())
 print("Avg Pos   :", res_df["Avg_Positions"].mean())
 print("Trades    :", res_df["Trades"].sum())
 
-res_df.to_csv("rolling_backtest_realistic_v4.csv", index=False)
+res_df.to_csv("rolling_backtest_realistic_v5.csv", index=False)
