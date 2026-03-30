@@ -159,12 +159,7 @@ for i in range(4, len(years) - 1):
         if "limit_up_flag" in today_pred:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
 
-        if "Volume" in today_pred:
-            today_pred = today_pred[today_pred["Volume"] > 100000]
-
-        if "Volume_ratio" in today_pred:
-            today_pred = today_pred[today_pred["Volume_ratio"] < 3]
-
+        
         debug_filter_hits["after_pred"] += len(today_pred)
 
         if today_pred.empty:
