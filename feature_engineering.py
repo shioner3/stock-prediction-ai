@@ -145,7 +145,7 @@ df["FutureReturn_3"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-df["Target"] = df.groupby("Date")["FutureReturn_3"].rank(pct=True)
+df["Target"] = df["FutureReturn_3"]
 
 
 # =========================
