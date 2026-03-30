@@ -26,15 +26,15 @@ INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
 
-# 🔥 集中投資＋調整
+# 🔥 安定バランス型
 REGIME_CONFIG = {
-    "bull": {"quantile": 0.65, "max_positions": 4},
+    "bull": {"quantile": 0.6, "max_positions": 6},
     "neutral": {"quantile": 0.8, "max_positions": 4},
     "bear": {"quantile": 1.0, "max_positions": 0}
 }
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
@@ -63,7 +63,7 @@ df["Regime"] = np.where(
 )
 
 # =========================
-# 年
+# 年ごと
 # =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
@@ -141,7 +141,7 @@ for i in range(4, len(years) - 1):
                 today_pred = today.copy()
                 today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-                # 🔥 フィルタ強化（軽め）
+                # 🔥 軽めフィルタ
                 today_pred = today_pred[today_pred["pred"] > 0.005]
 
                 if today_pred.empty:
@@ -149,15 +149,11 @@ for i in range(4, len(years) - 1):
                     position_counts.append(0)
                     continue
 
-                # 🔥 スコア合成
-                today_pred["score"] = (
-                    today_pred["pred"] * today_pred["MA5_ratio_rank"]
-                )
+                # 🔥 predそのまま使用
+                th = today_pred["pred"].quantile(config["quantile"])
+                picks = today_pred[today_pred["pred"] > th].copy()
 
-                th = today_pred["score"].quantile(config["quantile"])
-                picks = today_pred[today_pred["score"] > th].copy()
-
-                picks = picks.sort_values("score", ascending=False)
+                picks = picks.sort_values("pred", ascending=False)
                 picks = picks.head(config["max_positions"])
 
                 if picks.empty:
@@ -166,7 +162,7 @@ for i in range(4, len(years) - 1):
                     continue
 
                 # =========================
-                # 🔥 安定weight（ボラ逆数）
+                # weight（安定）
                 # =========================
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
                 picks["weight"] = 1 / np.sqrt(picks["vol"])
@@ -209,34 +205,25 @@ for i in range(4, len(years) - 1):
 
             hold_days = j - pos["entry_day"] + 1
 
-            # =========================
-            # STOP
-            # =========================
+            # 損切り
             if ret <= STOP_LOSS:
 
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
 
-                if not tmr.empty:
-                    exit_price = tmr["Open"].iloc[0]
-                else:
-                    exit_price = price
+                exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
-
                 continue
 
-            # =========================
-            # 通常決済
-            # =========================
+            # 利確（期間）
             if hold_days >= HOLD_DAYS:
 
                 pnl = ret
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
-
                 continue
 
             new_positions.append(pos)
