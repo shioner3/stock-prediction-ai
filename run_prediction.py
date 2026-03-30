@@ -9,7 +9,7 @@ from datetime import datetime
 # 設定
 # =========================
 TOP_N = 5
-HOLD_DAYS = 3  # ★変更（重要）
+HOLD_DAYS = 3
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -29,7 +29,7 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
 
 # =========================
-# 🔥 3日専用特徴量
+# 特徴量
 # =========================
 FEATURES = [
     "Return_1_rank",
@@ -45,19 +45,6 @@ FEATURES = [
 ]
 
 TARGET = "Target"
-
-# =========================
-# バックテスト（短期仕様に調整）
-# =========================
-BACKTEST_RESULTS = [
-    {"period": "2019-2022", "cagr": 0.35, "sharpe": 1.40, "maxdd": -0.18},
-    {"period": "2020-2023", "cagr": 1.50, "sharpe": 3.50, "maxdd": -0.08},
-    {"period": "2021-2024", "cagr": 1.80, "sharpe": 3.00, "maxdd": -0.12},
-]
-
-AVG_CAGR = 1.20
-AVG_SHARPE = 2.80
-AVG_MAXDD = -0.12
 
 # =========================
 # ユーティリティ
@@ -79,7 +66,6 @@ def normalize(df):
     return df
 
 
-# 🔥 短期用レジーム（閾値少し強め）
 def get_regime(score):
     if score > 0.56:
         return "strong"
@@ -109,20 +95,88 @@ def load_performance():
 
 
 # =========================
-# 🔥 無料記事（短期仕様）
+# モデル
 # =========================
-def generate_free_article(today, regime):
+train_df = pd.read_parquet(TRAIN_DATA_PATH)
+predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
-    text = f"""
-========================
-■ 本日の市場判断（短期）
-========================
-市場：{regime}
+train_df = normalize_columns(train_df)
+predict_df = normalize_columns(predict_df)
 
-========================
-■ 注目銘柄（TOP5）
-========================
-"""
+train_df["Date"] = pd.to_datetime(train_df["Date"])
+predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 
-    for _, row in today.head(TOP_N).iterrows():
-        text += f
+latest_date = predict_df["Date"].max()
+
+# 毎回再学習
+model = LGBMRegressor(n_estimators=200, learning_rate=0.05)
+model.fit(train_df[FEATURES], train_df[TARGET])
+
+pickle.dump(model, open(MODEL_PATH, "wb"))
+
+# =========================
+# 予測
+# =========================
+today = predict_df[predict_df["Date"] == latest_date].copy()
+
+today["Pred"] = model.predict(today[FEATURES])
+
+# =========================
+# 🔥 地雷フィルター（超重要）
+# =========================
+
+# 決算（事前に列がある前提）
+if "is_earnings" in today.columns:
+    today = today[today["is_earnings"] == 0]
+
+# ストップ高翌日
+if "limit_up_flag" in today.columns:
+    today = today[today["limit_up_flag"] == 0]
+
+# 出来高（流動性）
+if "Volume" in today.columns:
+    today = today[today["Volume"] > 100000]
+
+# 出来高異常
+if "Volume_ratio" in today.columns:
+    today = today[today["Volume_ratio"] < 3]
+
+# =========================
+# スコアフィルター
+# =========================
+today = today[today["Pred"] > 0.52]
+
+if len(today) == 0:
+    print("⚠️ フィルター後に銘柄なし")
+    exit()
+
+# =========================
+# ランキング
+# =========================
+today = normalize(today)
+
+# =========================
+# レジーム
+# =========================
+market_score = today["Pred"].mean()
+regime = get_regime(market_score)
+
+# =========================
+# ログ保存（重要）
+# =========================
+today["predict_date"] = latest_date
+today["target_date"] = latest_date + pd.Timedelta(days=HOLD_DAYS)
+
+if os.path.exists(PRED_LOG_PATH):
+    today.to_csv(PRED_LOG_PATH, mode="a", header=False, index=False)
+else:
+    today.to_csv(PRED_LOG_PATH, index=False)
+
+# =========================
+# 出力
+# =========================
+print("\n=== 今日の銘柄 ===")
+print(today.head(TOP_N)[["コード", "銘柄名", "Pred"]])
+
+print("\n市場状態:", regime)
+print("銘柄数:", len(today))
