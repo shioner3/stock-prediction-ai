@@ -26,16 +26,17 @@ STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 MAX_WEIGHT = 0.4
 
-# 🔥 改善ポイント
-PRED_THRESHOLD = 0.55
-MARKET_THRESHOLD = 0.52
+PRED_THRESHOLD = 0.52   # 🔥 少し緩和（重要）
+MARKET_THRESHOLD = 0.50
 
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
+
+df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
 # 市場レジーム
@@ -46,21 +47,24 @@ market = df.groupby("Date")["MarketRet"].mean().sort_index()
 market_ma20 = market.rolling(20).mean()
 market_ma60 = market.rolling(60).mean()
 
-market_df = pd.DataFrame({
-    "MarketMA20": market_ma20,
-    "MarketMA60": market_ma60
-}).fillna(0)
-
-df = df.merge(market_df, left_on="Date", right_index=True, how="left")
+df = df.merge(
+    pd.DataFrame({
+        "MarketMA20": market_ma20,
+        "MarketMA60": market_ma60
+    }).fillna(0),
+    left_on="Date",
+    right_index=True,
+    how="left"
+)
 
 df["Regime"] = np.where(
-    (df["MarketMA20"] > 0.003) & (df["MarketMA20"] - df["MarketMA60"] > 0),
+    (df["MarketMA20"] > 0.002),
     "bull",
-    np.where(df["MarketMA20"] > -0.003, "neutral", "bear")
+    np.where(df["MarketMA20"] > -0.002, "neutral", "bear")
 )
 
 # =========================
-# 年ごと
+# 年
 # =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
@@ -89,8 +93,13 @@ for i in range(4, len(years) - 1):
     trade_returns = []
 
     dates = sorted(test_df["Date"].unique())
-
     prev_month = None
+
+    debug_filter_hits = {
+        "after_pred": 0,
+        "after_market": 0,
+        "after_score": 0
+    }
 
     for j in range(len(dates) - 1):
 
@@ -107,7 +116,7 @@ for i in range(4, len(years) - 1):
         regime = today["Regime"].iloc[0]
 
         # =========================
-        # 🔥 月次学習（超重要）
+        # 月次学習
         # =========================
         current_month = d.month
 
@@ -115,13 +124,17 @@ for i in range(4, len(years) - 1):
 
             train_until = df[df["Date"] < d]
 
-            if len(train_until) > 1000:
+            if len(train_until) > 2000:
+
                 model = LGBMRegressor(
-                    n_estimators=200,
+                    n_estimators=300,
                     learning_rate=0.05,
                     random_state=42
                 )
+
                 model.fit(train_until[FEATURES], train_until[TARGET])
+
+                print(f"[TRAIN] {d} samples={len(train_until)}")
 
             prev_month = current_month
 
@@ -136,53 +149,67 @@ for i in range(4, len(years) - 1):
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
         # =========================
-        # 🔥 地雷フィルター
+        # 地雷フィルター
         # =========================
-        if "is_earnings" in today_pred.columns:
+        before = len(today_pred)
+
+        if "is_earnings" in today_pred:
             today_pred = today_pred[today_pred["is_earnings"] == 0]
 
-        if "limit_up_flag" in today_pred.columns:
+        if "limit_up_flag" in today_pred:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
 
-        if "Volume" in today_pred.columns:
+        if "Volume" in today_pred:
             today_pred = today_pred[today_pred["Volume"] > 100000]
 
-        if "Volume_ratio" in today_pred.columns:
+        if "Volume_ratio" in today_pred:
             today_pred = today_pred[today_pred["Volume_ratio"] < 3]
 
-        # =========================
-        # 🔥 市場フィルター（重要）
-        # =========================
-        market_score = today_pred["pred"].mean()
-
-        if market_score < MARKET_THRESHOLD or regime == "bear":
-            equity_curve.append(equity)
-            continue
-
-        # =========================
-        # 🔥 スコアフィルター
-        # =========================
-        today_pred = today_pred[today_pred["pred"] > PRED_THRESHOLD]
+        debug_filter_hits["after_pred"] += len(today_pred)
 
         if today_pred.empty:
             equity_curve.append(equity)
             continue
 
         # =========================
-        # 🔥 レジーム別設定
+        # 市場フィルター
         # =========================
-        if regime == "bull":
-            hold_days = 4
-            max_positions = 6
-        elif regime == "neutral":
-            hold_days = 3
-            max_positions = 4
-        else:
+        market_score = today_pred["pred"].mean()
+
+        if np.isnan(market_score):
+            market_score = 0
+
+        if market_score < MARKET_THRESHOLD or regime == "bear":
             equity_curve.append(equity)
             continue
 
+        debug_filter_hits["after_market"] += len(today_pred)
+
         # =========================
-        # エントリー（周期制御）
+        # スコアフィルター
+        # =========================
+        today_pred = today_pred[today_pred["pred"] > PRED_THRESHOLD]
+
+        debug_filter_hits["after_score"] += len(today_pred)
+
+        # 🔥 fallback（重要）
+        if today_pred.empty:
+            today_pred = today.copy()
+            today_pred["pred"] = model.predict(today_pred[FEATURES])
+            today_pred = today_pred.sort_values("pred", ascending=False).head(3)
+
+        # =========================
+        # レジーム
+        # =========================
+        if regime == "bull":
+            hold_days = 4
+            max_positions = 5
+        else:
+            hold_days = 3
+            max_positions = 3
+
+        # =========================
+        # エントリー
         # =========================
         if j % hold_days == 0:
 
@@ -190,12 +217,8 @@ for i in range(4, len(years) - 1):
 
             picks = today_pred.sort_values("pred", ascending=False).head(max_positions)
 
-            # weight
             picks["vol"] = picks["Volatility_rank"] + 1e-6
             picks["weight"] = 1 / np.sqrt(picks["vol"])
-
-            picks["weight"] /= picks["weight"].sum()
-            picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
             picks["weight"] /= picks["weight"].sum()
 
             for _, row in picks.iterrows():
@@ -216,7 +239,7 @@ for i in range(4, len(years) - 1):
                 trade_count += 1
 
         # =========================
-        # ポジション管理
+        # 管理
         # =========================
         new_positions = []
 
@@ -233,19 +256,21 @@ for i in range(4, len(years) - 1):
 
             hold_days_now = j - pos["entry_day"] + 1
 
-            # 損切り
             if ret <= STOP_LOSS:
+
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
                 exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
                 continue
 
-            # 利確
             if hold_days_now >= pos["hold_days"]:
+
                 pnl = ret
+
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
                 continue
@@ -253,7 +278,6 @@ for i in range(4, len(years) - 1):
             new_positions.append(pos)
 
         positions = new_positions
-
         equity_curve.append(equity)
 
     # =========================
@@ -273,9 +297,12 @@ for i in range(4, len(years) - 1):
     trade_returns = np.array(trade_returns)
 
     win_rate = (trade_returns > 0).mean() if len(trade_returns) > 0 else 0
-    avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
-    avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
-    pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
+    pf = np.nan
+    if len(trade_returns) > 0:
+        wins = trade_returns[trade_returns > 0]
+        losses = trade_returns[trade_returns <= 0]
+        if len(wins) > 0 and len(losses) > 0:
+            pf = wins.mean() / abs(losses.mean())
 
     results.append({
         "train": f"{train_years[0]}-{train_years[-1]}",
