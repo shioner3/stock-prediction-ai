@@ -20,13 +20,14 @@ FEATURES = [
 
 TARGET = "FutureReturn_5"
 
-HOLD_DAYS = 5
-STOP_LOSS = -0.03
+# 🔥 修正ポイント
+HOLD_DAYS = 3
+STOP_LOSS = -0.02
+
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
 
-# 🔥 安定バランス型
 REGIME_CONFIG = {
     "bull": {"quantile": 0.6, "max_positions": 6},
     "neutral": {"quantile": 0.8, "max_positions": 4},
@@ -141,19 +142,16 @@ for i in range(4, len(years) - 1):
                 today_pred = today.copy()
                 today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-                # 🔥 軽めフィルタ
-                today_pred = today_pred[today_pred["pred"] > 0.005]
+                # 🔥 フィルタ強化
+                today_pred = today_pred[today_pred["pred"] > 0.01]
 
                 if today_pred.empty:
                     equity_curve.append(equity)
                     position_counts.append(0)
                     continue
 
-                # 🔥 predそのまま使用
-                th = today_pred["pred"].quantile(config["quantile"])
-                picks = today_pred[today_pred["pred"] > th].copy()
-
-                picks = picks.sort_values("pred", ascending=False)
+                # 🔥 rankベース選定（重要）
+                picks = today_pred.sort_values("pred", ascending=False)
                 picks = picks.head(config["max_positions"])
 
                 if picks.empty:
@@ -162,7 +160,7 @@ for i in range(4, len(years) - 1):
                     continue
 
                 # =========================
-                # weight（安定）
+                # weight（ボラ逆数）
                 # =========================
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
                 picks["weight"] = 1 / np.sqrt(picks["vol"])
@@ -209,7 +207,6 @@ for i in range(4, len(years) - 1):
             if ret <= STOP_LOSS:
 
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
-
                 exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
