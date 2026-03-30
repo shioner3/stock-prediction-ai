@@ -1,7 +1,6 @@
 import pandas as pd
 import os
 import glob
-from datetime import datetime
 
 # =========================
 # 設定
@@ -9,6 +8,8 @@ from datetime import datetime
 PRED_LOG_PATTERN = "logs/predictions_*.csv"
 PERF_LOG = "logs/performance.csv"
 PRICE_FILE = "stock_data/prices.parquet"
+
+HOLD_DAYS = 3  # ★重要
 
 # =========================
 # 初期チェック
@@ -24,7 +25,7 @@ if not os.path.exists(PRICE_FILE):
     exit()
 
 # =========================
-# 🔥 予測ログ全読み込み（ここが重要）
+# 予測ログ
 # =========================
 df_list = []
 
@@ -43,7 +44,7 @@ df_pred = pd.concat(df_list, ignore_index=True)
 df_price = pd.read_parquet(PRICE_FILE)
 
 # =========================
-# 🔥 列名吸収（超重要）
+# 列名吸収
 # =========================
 if "コード" in df_pred.columns:
     df_pred = df_pred.rename(columns={"コード": "Ticker"})
@@ -53,7 +54,6 @@ if "コード" in df_pred.columns:
 # =========================
 df_price["Date"] = pd.to_datetime(df_price["Date"])
 df_pred["predict_date"] = pd.to_datetime(df_pred["predict_date"])
-df_pred["target_date"] = pd.to_datetime(df_pred["target_date"])
 
 today = pd.Timestamp.today().normalize()
 
@@ -81,12 +81,14 @@ for _, row in df_pred.iterrows():
 
     ticker = row["Ticker"]
     predict_date = row["predict_date"]
-    target_date = row["target_date"]
 
     key = f"{ticker}_{predict_date.strftime('%Y-%m-%d')}"
 
     if key in existing_keys:
         continue
+
+    # 🔥 target_dateを再計算（安全）
+    target_date = predict_date + pd.tseries.offsets.BDay(HOLD_DAYS)
 
     if target_date > today:
         continue
@@ -102,15 +104,15 @@ for _, row in df_pred.iterrows():
     ret = (end_price.values[0] / start_price.values[0]) - 1
 
     # =========================
-    # レジーム
+    # 🔥 3日用レジーム
     # =========================
     market_score = row.get("Pred", 0)
 
-    if market_score > 0.55:
+    if market_score > 0.56:
         regime = "strong"
-    elif market_score > 0.52:
+    elif market_score > 0.53:
         regime = "slightly_strong"
-    elif market_score > 0.5:
+    elif market_score > 0.51:
         regime = "neutral"
     else:
         regime = "weak"
@@ -158,9 +160,6 @@ if os.path.exists(PERF_LOG):
     print("平均リターン:", round(avg_return, 4))
     print("Sharpe:", round(sharpe, 3))
 
-    # =========================
-    # レジーム別
-    # =========================
     print("\n📊 市場別実績")
 
     for regime in ["strong", "slightly_strong", "neutral", "weak"]:
