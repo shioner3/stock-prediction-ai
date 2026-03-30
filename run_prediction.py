@@ -17,6 +17,7 @@ TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
 
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
+MODEL_META_PATH = os.path.join(BASE_DIR, "model_meta.pkl")  # ★追加
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -93,9 +94,8 @@ def load_performance():
         "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
     }
 
-
 # =========================
-# モデル
+# データ読み込み
 # =========================
 train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
@@ -107,12 +107,35 @@ train_df["Date"] = pd.to_datetime(train_df["Date"])
 predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 
 latest_date = predict_df["Date"].max()
+current_month = latest_date.strftime("%Y-%m")
 
-# 毎回再学習
-model = LGBMRegressor(n_estimators=200, learning_rate=0.05)
-model.fit(train_df[FEATURES], train_df[TARGET])
+# =========================
+# 🔥 月次学習ロジック
+# =========================
+retrain = True
 
-pickle.dump(model, open(MODEL_PATH, "wb"))
+if os.path.exists(MODEL_PATH) and os.path.exists(MODEL_META_PATH):
+    meta = pickle.load(open(MODEL_META_PATH, "rb"))
+    last_train_month = meta.get("train_month")
+
+    if last_train_month == current_month:
+        retrain = False
+
+# =========================
+# モデル
+# =========================
+if retrain:
+    print("🔄 モデル再学習（今月初回）")
+
+    model = LGBMRegressor(n_estimators=200, learning_rate=0.05)
+    model.fit(train_df[FEATURES], train_df[TARGET])
+
+    pickle.dump(model, open(MODEL_PATH, "wb"))
+    pickle.dump({"train_month": current_month}, open(MODEL_META_PATH, "wb"))
+
+else:
+    print("⚡ 既存モデル使用（再学習スキップ）")
+    model = pickle.load(open(MODEL_PATH, "rb"))
 
 # =========================
 # 予測
@@ -122,22 +145,17 @@ today = predict_df[predict_df["Date"] == latest_date].copy()
 today["Pred"] = model.predict(today[FEATURES])
 
 # =========================
-# 🔥 地雷フィルター（超重要）
+# 🔥 地雷フィルター
 # =========================
-
-# 決算（事前に列がある前提）
 if "is_earnings" in today.columns:
     today = today[today["is_earnings"] == 0]
 
-# ストップ高翌日
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
 
-# 出来高（流動性）
 if "Volume" in today.columns:
     today = today[today["Volume"] > 100000]
 
-# 出来高異常
 if "Volume_ratio" in today.columns:
     today = today[today["Volume_ratio"] < 3]
 
@@ -162,7 +180,7 @@ market_score = today["Pred"].mean()
 regime = get_regime(market_score)
 
 # =========================
-# ログ保存（重要）
+# ログ保存
 # =========================
 today["predict_date"] = latest_date
 today["target_date"] = latest_date + pd.Timedelta(days=HOLD_DAYS)
