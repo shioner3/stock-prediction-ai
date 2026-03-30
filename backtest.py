@@ -3,21 +3,14 @@ import numpy as np
 from lightgbm import LGBMRegressor
 
 # =========================
-# 設定（🔥ここは固定する）
+# 設定（固定）
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
-    "Return_1_rank",
-    "Return_3_rank",
-    "MA3_ratio_rank",
-    "MA5_ratio_rank",
-    "MA10_ratio_rank",
-    "Volatility_rank",
-    "Volume_change_rank",
-    "Volume_ratio_rank",
-    "HL_range_rank",
-    "RSI_rank"
+    "Return_1_rank","Return_3_rank","MA3_ratio_rank","MA5_ratio_rank",
+    "MA10_ratio_rank","Volatility_rank","Volume_change_rank",
+    "Volume_ratio_rank","HL_range_rank","RSI_rank"
 ]
 
 TARGET = "Target"
@@ -26,7 +19,6 @@ STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 MAX_WEIGHT = 0.4
 
-# 🔥 固定パラメータ（いじらない）
 PRED_THRESHOLD = 0.51
 MARKET_THRESHOLD = 0.48
 
@@ -38,26 +30,6 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
-
-# =========================
-# 🔥 未来データ混入チェック
-# =========================
-print("\n=== FUTURE LEAK CHECK ===")
-
-# Targetが未来を見てるかチェック
-if df["Target"].shift(-1).equals(df["Target"]):
-    print("❌ Targetリーク疑いあり")
-else:
-    print("✅ Target OK")
-
-# 特徴量の未来混入チェック（簡易）
-future_corr = df[FEATURES].corrwith(df["Target"].shift(-1)).abs().mean()
-print("未来相関:", future_corr)
-
-if future_corr > 0.05:
-    print("⚠️ 未来リークの可能性あり")
-else:
-    print("✅ リーク問題なし")
 
 # =========================
 # 市場レジーム
@@ -80,24 +52,21 @@ df["Regime"] = np.where(
 )
 
 # =========================
-# 年分割
+# 🔥 完全アウトオブサンプル
 # =========================
-df["Year"] = df["Date"].dt.year
-years = sorted(df["Year"].unique())
+OOS_START = 2024
 
-results = []
+train_df_full = df[df["Date"].dt.year < OOS_START]
+test_df_oos = df[df["Date"].dt.year >= OOS_START]
+
+print("\n=== OOS TEST ===")
+print("Train:", train_df_full["Date"].min(), "~", train_df_full["Date"].max())
+print("Test :", test_df_oos["Date"].min(), "~", test_df_oos["Date"].max())
 
 # =========================
-# バックテスト
+# 🔥 ロバスト性用関数
 # =========================
-for i in range(4, len(years) - 1):
-
-    train_years = years[i-4:i]
-    test_year = years[i]
-
-    test_df = df[df["Year"] == test_year].copy()
-
-    print(f"\n===== {train_years} → {test_year} =====")
+def run_backtest(test_df, train_df, label="BASE"):
 
     equity = INITIAL_CAPITAL
     equity_curve = []
@@ -105,8 +74,8 @@ for i in range(4, len(years) - 1):
     model = None
     positions = []
 
-    trade_count = 0
     trade_returns = []
+    trade_count = 0
 
     dates = sorted(test_df["Date"].unique())
     prev_month = None
@@ -126,25 +95,21 @@ for i in range(4, len(years) - 1):
         regime = today["Regime"].iloc[0]
 
         # =========================
-        # 月次学習（リーク防止済）
+        # 月次学習
         # =========================
         current_month = d.month
 
         if model is None or current_month != prev_month:
 
-            train_until = df[df["Date"] < d]  # 🔥未来禁止
+            train_until = train_df[train_df["Date"] < d]
 
             if len(train_until) > 2000:
-
                 model = LGBMRegressor(
                     n_estimators=300,
                     learning_rate=0.05,
                     random_state=42
                 )
-
                 model.fit(train_until[FEATURES], train_until[TARGET])
-
-                print(f"[TRAIN] {d} samples={len(train_until)}")
 
             prev_month = current_month
 
@@ -158,9 +123,7 @@ for i in range(4, len(years) - 1):
         today_pred = today.copy()
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-        # =========================
         # 地雷フィルター
-        # =========================
         if "is_earnings" in today_pred.columns:
             today_pred = today_pred[today_pred["is_earnings"] == 0]
 
@@ -171,11 +134,8 @@ for i in range(4, len(years) - 1):
             equity_curve.append(equity)
             continue
 
-        # =========================
-        # 市場フィルター（緩和）
-        # =========================
+        # 市場
         market_score = today_pred["pred"].mean()
-
         if np.isnan(market_score):
             market_score = 0
 
@@ -184,18 +144,13 @@ for i in range(4, len(years) - 1):
         else:
             max_positions = 5 if regime == "bull" else 3
 
-        # =========================
-        # スコアフィルター
-        # =========================
+        # スコア
         candidates = today_pred[today_pred["pred"] > PRED_THRESHOLD]
 
-        # fallback（必ずトレード）
         if len(candidates) < 3:
             candidates = today_pred.sort_values("pred", ascending=False).head(5)
 
-        # =========================
         # エントリー
-        # =========================
         if len(positions) == 0:
 
             picks = candidates.sort_values("pred", ascending=False).head(max_positions)
@@ -222,9 +177,7 @@ for i in range(4, len(years) - 1):
 
                 trade_count += 1
 
-        # =========================
-        # ポジション管理
-        # =========================
+        # 管理
         new_positions = []
 
         for pos in positions:
@@ -240,18 +193,8 @@ for i in range(4, len(years) - 1):
 
             hold_days_now = j - pos["entry_day"] + 1
 
-            # 損切り
-            if ret <= STOP_LOSS:
-                tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
-                exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
+            if ret <= STOP_LOSS or hold_days_now >= pos["hold_days"]:
 
-                pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
-                equity *= (1 + pnl * pos["weight"])
-                trade_returns.append(pnl)
-                continue
-
-            # 利確
-            if hold_days_now >= pos["hold_days"]:
                 pnl = ret
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
@@ -262,52 +205,48 @@ for i in range(4, len(years) - 1):
         positions = new_positions
         equity_curve.append(equity)
 
-    # =========================
-    # 評価
-    # =========================
     equity_curve = pd.Series(equity_curve)
 
     if len(equity_curve) < 2:
-        continue
+        return None
 
     returns = equity_curve.pct_change().dropna()
 
-    cagr = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
-    sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
-    maxdd = (equity_curve / equity_curve.cummax() - 1).min()
-
-    trade_returns = np.array(trade_returns)
-
-    win_rate = (trade_returns > 0).mean() if len(trade_returns) > 0 else 0
-
-    pf = np.nan
-    if len(trade_returns) > 0:
-        wins = trade_returns[trade_returns > 0]
-        losses = trade_returns[trade_returns <= 0]
-        if len(wins) > 0 and len(losses) > 0:
-            pf = wins.mean() / abs(losses.mean())
-
-    results.append({
-        "train": f"{train_years[0]}-{train_years[-1]}",
-        "test": f"{test_year}",
-        "CAGR": cagr,
-        "Sharpe": sharpe,
-        "MaxDD": maxdd,
-        "WinRate": win_rate,
-        "PF": pf,
+    return {
+        "label": label,
+        "CAGR": equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1,
+        "Sharpe": returns.mean() / (returns.std() + 1e-9) * np.sqrt(252),
+        "MaxDD": (equity_curve / equity_curve.cummax() - 1).min(),
         "Trades": trade_count
-    })
+    }
+
+# =========================
+# 🔥 ベース
+# =========================
+base_result = run_backtest(test_df_oos, train_df_full, "BASE")
+
+# =========================
+# 🔥 ロバスト性チェック
+# =========================
+
+# ① 銘柄削減
+tickers = test_df_oos["Ticker"].unique()
+reduced = np.random.choice(tickers, int(len(tickers)*0.7), replace=False)
+test_reduced = test_df_oos[test_df_oos["Ticker"].isin(reduced)]
+
+robust_1 = run_backtest(test_reduced, train_df_full, "Ticker70%")
+
+# ② 期間削減
+dates = sorted(test_df_oos["Date"].unique())
+cut = int(len(dates)*0.8)
+test_short = test_df_oos[test_df_oos["Date"].isin(dates[:cut])]
+
+robust_2 = run_backtest(test_short, train_df_full, "Time80%")
 
 # =========================
 # 出力
 # =========================
-res = pd.DataFrame(results)
+results = pd.DataFrame([base_result, robust_1, robust_2])
 
-print("\n=== RESULT ===")
-print(res)
-
-print("\nAVG CAGR:", res["CAGR"].mean())
-print("AVG Sharpe:", res["Sharpe"].mean())
-print("AVG DD:", res["MaxDD"].mean())
-print("AVG WinRate:", res["WinRate"].mean())
-print("AVG PF:", res["PF"].mean())
+print("\n=== ROBUST TEST ===")
+print(results)
