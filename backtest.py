@@ -9,30 +9,25 @@ DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
     "Return_1_rank",
+    "Return_3_rank",
+    "MA3_ratio_rank",
     "MA5_ratio_rank",
-    "MA25_ratio_rank",
-    "MA75_ratio_rank",
+    "MA10_ratio_rank",
     "Volatility_rank",
     "Volume_change_rank",
+    "Volume_ratio_rank",
     "HL_range_rank",
     "RSI_rank"
 ]
 
-TARGET = "FutureReturn_5"
+TARGET = "Target"
 
-# 🔥 修正ポイント
 HOLD_DAYS = 3
-STOP_LOSS = -0.02
+STOP_LOSS = -0.03
 
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
-
-REGIME_CONFIG = {
-    "bull": {"quantile": 0.6, "max_positions": 6},
-    "neutral": {"quantile": 0.8, "max_positions": 4},
-    "bear": {"quantile": 1.0, "max_positions": 0}
-}
 
 # =========================
 # データ読み込み
@@ -64,7 +59,7 @@ df["Regime"] = np.where(
 )
 
 # =========================
-# 年ごと
+# 年ごと分割
 # =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
@@ -89,7 +84,6 @@ for i in range(4, len(years) - 1):
     model = None
     positions = []
 
-    position_counts = []
     trade_count = 0
     trade_returns = []
 
@@ -105,11 +99,9 @@ for i in range(4, len(years) - 1):
 
         if today.empty:
             equity_curve.append(equity)
-            position_counts.append(len(positions))
             continue
 
         regime = today["Regime"].iloc[0]
-        config = REGIME_CONFIG[regime]
 
         # =========================
         # 学習
@@ -118,72 +110,76 @@ for i in range(4, len(years) - 1):
 
         if len(train_until) > 1000 and (model is None or j % TRAIN_INTERVAL == 0):
             model = LGBMRegressor(
-                n_estimators=300,
+                n_estimators=200,
                 learning_rate=0.05,
-                max_depth=6,
                 random_state=42
             )
             model.fit(train_until[FEATURES], train_until[TARGET])
 
         if model is None:
             equity_curve.append(equity)
-            position_counts.append(len(positions))
             continue
 
         # =========================
-        # エントリー
+        # エントリー（3日周期）
         # =========================
         if j % HOLD_DAYS == 0:
 
             positions = []
 
-            if config["max_positions"] > 0:
+            today_pred = today.copy()
+            today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-                today_pred = today.copy()
-                today_pred["pred"] = model.predict(today_pred[FEATURES])
+            # =========================
+            # 🔥 地雷フィルター
+            # =========================
+            if "is_earnings" in today_pred.columns:
+                today_pred = today_pred[today_pred["is_earnings"] == 0]
 
-                # 🔥 フィルタ強化
-                today_pred = today_pred[today_pred["pred"] > 0.01]
+            if "limit_up_flag" in today_pred.columns:
+                today_pred = today_pred[today_pred["limit_up_flag"] == 0]
 
-                if today_pred.empty:
-                    equity_curve.append(equity)
-                    position_counts.append(0)
+            if "Volume" in today_pred.columns:
+                today_pred = today_pred[today_pred["Volume"] > 100000]
+
+            if "Volume_ratio" in today_pred.columns:
+                today_pred = today_pred[today_pred["Volume_ratio"] < 3]
+
+            # スコアフィルター
+            today_pred = today_pred[today_pred["pred"] > 0.52]
+
+            if today_pred.empty:
+                equity_curve.append(equity)
+                continue
+
+            # 上位銘柄
+            picks = today_pred.sort_values("pred", ascending=False).head(5)
+
+            # =========================
+            # weight（ボラ逆数）
+            # =========================
+            picks["vol"] = picks["Volatility_rank"] + 1e-6
+            picks["weight"] = 1 / np.sqrt(picks["vol"])
+
+            picks["weight"] /= picks["weight"].sum()
+            picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
+            picks["weight"] /= picks["weight"].sum()
+
+            for _, row in picks.iterrows():
+
+                tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
+
+                if tmr.empty:
                     continue
 
-                # 🔥 rankベース選定（重要）
-                picks = today_pred.sort_values("pred", ascending=False)
-                picks = picks.head(config["max_positions"])
+                positions.append({
+                    "ticker": row["Ticker"],
+                    "entry_price": tmr["Open"].iloc[0],
+                    "entry_day": j,
+                    "weight": row["weight"]
+                })
 
-                if picks.empty:
-                    equity_curve.append(equity)
-                    position_counts.append(0)
-                    continue
-
-                # =========================
-                # weight（ボラ逆数）
-                # =========================
-                picks["vol"] = picks["Volatility_rank"] + 1e-6
-                picks["weight"] = 1 / np.sqrt(picks["vol"])
-
-                picks["weight"] /= picks["weight"].sum()
-                picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
-                picks["weight"] /= picks["weight"].sum()
-
-                for _, row in picks.iterrows():
-
-                    tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
-
-                    if tmr.empty:
-                        continue
-
-                    positions.append({
-                        "ticker": row["Ticker"],
-                        "entry_price": tmr["Open"].iloc[0],
-                        "entry_day": j,
-                        "weight": row["weight"]
-                    })
-
-                    trade_count += 1
+                trade_count += 1
 
         # =========================
         # ポジション管理
@@ -205,7 +201,6 @@ for i in range(4, len(years) - 1):
 
             # 損切り
             if ret <= STOP_LOSS:
-
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
                 exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
 
@@ -217,7 +212,6 @@ for i in range(4, len(years) - 1):
 
             # 利確（期間）
             if hold_days >= HOLD_DAYS:
-
                 pnl = ret
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
@@ -228,7 +222,6 @@ for i in range(4, len(years) - 1):
         positions = new_positions
 
         equity_curve.append(equity)
-        position_counts.append(len(positions))
 
     # =========================
     # 評価
@@ -246,23 +239,18 @@ for i in range(4, len(years) - 1):
 
     trade_returns = np.array(trade_returns)
 
-    if len(trade_returns) > 0:
-        win_rate = (trade_returns > 0).mean()
-        avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
-        avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
-        pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
-    else:
-        win_rate = avg_win = avg_loss = pf = np.nan
+    win_rate = (trade_returns > 0).mean() if len(trade_returns) > 0 else 0
+    avg_win = trade_returns[trade_returns > 0].mean() if np.any(trade_returns > 0) else 0
+    avg_loss = trade_returns[trade_returns <= 0].mean() if np.any(trade_returns <= 0) else 0
+    pf = abs(avg_win / avg_loss) if avg_loss != 0 else np.nan
 
     results.append({
         "train": f"{train_years[0]}-{train_years[-1]}",
-        "test": f"{test_year}-{test_year+1}",
+        "test": f"{test_year}",
         "CAGR": cagr,
         "Sharpe": sharpe,
         "MaxDD": maxdd,
         "WinRate": win_rate,
-        "AvgWin": avg_win,
-        "AvgLoss": avg_loss,
         "PF": pf,
         "Trades": trade_count
     })
