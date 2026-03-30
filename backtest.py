@@ -26,8 +26,9 @@ STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 MAX_WEIGHT = 0.4
 
-PRED_THRESHOLD = 0.52   # 🔥 少し緩和（重要）
-MARKET_THRESHOLD = 0.50
+# 🔥 緩和
+PRED_THRESHOLD = 0.51
+MARKET_THRESHOLD = 0.48
 
 # =========================
 # データ
@@ -45,26 +46,21 @@ df["MarketRet"] = df.groupby("Date")["Close"].transform("mean").pct_change().fil
 
 market = df.groupby("Date")["MarketRet"].mean().sort_index()
 market_ma20 = market.rolling(20).mean()
-market_ma60 = market.rolling(60).mean()
 
 df = df.merge(
-    pd.DataFrame({
-        "MarketMA20": market_ma20,
-        "MarketMA60": market_ma60
-    }).fillna(0),
+    pd.DataFrame({"MarketMA20": market_ma20}).fillna(0),
     left_on="Date",
     right_index=True,
     how="left"
 )
 
 df["Regime"] = np.where(
-    (df["MarketMA20"] > 0.002),
-    "bull",
+    df["MarketMA20"] > 0.002, "bull",
     np.where(df["MarketMA20"] > -0.002, "neutral", "bear")
 )
 
 # =========================
-# 年
+# 年分割
 # =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
@@ -95,12 +91,6 @@ for i in range(4, len(years) - 1):
     dates = sorted(test_df["Date"].unique())
     prev_month = None
 
-    debug_filter_hits = {
-        "after_pred": 0,
-        "after_market": 0,
-        "after_score": 0
-    }
-
     for j in range(len(dates) - 1):
 
         d = dates[j]
@@ -125,16 +115,12 @@ for i in range(4, len(years) - 1):
             train_until = df[df["Date"] < d]
 
             if len(train_until) > 2000:
-
                 model = LGBMRegressor(
                     n_estimators=300,
                     learning_rate=0.05,
                     random_state=42
                 )
-
                 model.fit(train_until[FEATURES], train_until[TARGET])
-
-                print(f"[TRAIN] {d} samples={len(train_until)}")
 
             prev_month = current_month
 
@@ -149,77 +135,58 @@ for i in range(4, len(years) - 1):
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
         # =========================
-        # 地雷フィルター
+        # 地雷フィルター（軽め）
         # =========================
-        before = len(today_pred)
-
-        if "is_earnings" in today_pred:
+        if "is_earnings" in today_pred.columns:
             today_pred = today_pred[today_pred["is_earnings"] == 0]
 
-        if "limit_up_flag" in today_pred:
+        if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
-
-        
-        debug_filter_hits["after_pred"] += len(today_pred)
 
         if today_pred.empty:
             equity_curve.append(equity)
             continue
 
         # =========================
-        # 市場フィルター
+        # 市場フィルター（緩和）
         # =========================
         market_score = today_pred["pred"].mean()
 
         if np.isnan(market_score):
             market_score = 0
 
-        if market_score < MARKET_THRESHOLD or regime == "bear":
-            equity_curve.append(equity)
-            continue
-
-        debug_filter_hits["after_market"] += len(today_pred)
+        # 🔥 完全停止しない
+        if market_score < MARKET_THRESHOLD:
+            max_positions = 2
+        else:
+            max_positions = 5 if regime == "bull" else 3
 
         # =========================
         # スコアフィルター
         # =========================
-        today_pred = today_pred[today_pred["pred"] > PRED_THRESHOLD]
+        candidates = today_pred[today_pred["pred"] > PRED_THRESHOLD]
 
-        debug_filter_hits["after_score"] += len(today_pred)
-
-        # 🔥 fallback（重要）
-        if today_pred.empty:
-            today_pred = today.copy()
-            today_pred["pred"] = model.predict(today_pred[FEATURES])
-            today_pred = today_pred.sort_values("pred", ascending=False).head(3)
+        # 🔥 fallback（必ずトレード）
+        if len(candidates) < 3:
+            candidates = today_pred.sort_values("pred", ascending=False).head(5)
 
         # =========================
-        # レジーム
+        # エントリー（常時）
         # =========================
-        if regime == "bull":
-            hold_days = 4
-            max_positions = 5
-        else:
-            hold_days = 3
-            max_positions = 3
+        if len(positions) == 0:
 
-        # =========================
-        # エントリー
-        # =========================
-        if j % hold_days == 0:
+            picks = candidates.sort_values("pred", ascending=False).head(max_positions)
 
-            positions = []
-
-            picks = today_pred.sort_values("pred", ascending=False).head(max_positions)
-
+            # weight
             picks["vol"] = picks["Volatility_rank"] + 1e-6
             picks["weight"] = 1 / np.sqrt(picks["vol"])
             picks["weight"] /= picks["weight"].sum()
 
+            hold_days = 3 if regime != "bull" else 4
+
             for _, row in picks.iterrows():
 
                 tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
-
                 if tmr.empty:
                     continue
 
@@ -234,7 +201,7 @@ for i in range(4, len(years) - 1):
                 trade_count += 1
 
         # =========================
-        # 管理
+        # ポジション管理
         # =========================
         new_positions = []
 
@@ -251,21 +218,19 @@ for i in range(4, len(years) - 1):
 
             hold_days_now = j - pos["entry_day"] + 1
 
+            # 損切り
             if ret <= STOP_LOSS:
-
                 tmr = tomorrow[tomorrow["Ticker"] == pos["ticker"]]
                 exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
-
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
                 continue
 
+            # 利確
             if hold_days_now >= pos["hold_days"]:
-
                 pnl = ret
-
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
                 continue
@@ -292,6 +257,7 @@ for i in range(4, len(years) - 1):
     trade_returns = np.array(trade_returns)
 
     win_rate = (trade_returns > 0).mean() if len(trade_returns) > 0 else 0
+
     pf = np.nan
     if len(trade_returns) > 0:
         wins = trade_returns[trade_returns > 0]
