@@ -1,9 +1,7 @@
 import pandas as pd
 import numpy as np
 import duckdb
-import yfinance as yf
 import os
-import pickle
 
 # =========================
 # 設定
@@ -13,10 +11,9 @@ PARQUET_FILE = "stock_data/prices.parquet"
 TRAIN_SAVE_PATH = "ml_dataset.parquet"
 PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
-HOLD_DAYS = 3
+EARNINGS_FILE = "stock_data/earnings.parquet"
 
-# キャッシュ（超重要：高速化）
-CACHE_FILE = "earnings_cache.pkl"
+HOLD_DAYS = 3
 
 # =========================
 # データ読み込み
@@ -41,8 +38,9 @@ print("元データサイズ:", df.shape)
 
 df["Date"] = pd.to_datetime(df["Date"])
 
+
 # =========================
-# 🔥 短期特徴量
+# 🔥 基本特徴量
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3)
@@ -66,8 +64,9 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
+
 # =========================
-# RSI（短期）
+# RSI
 # =========================
 delta = df.groupby("Ticker")["Close"].diff()
 
@@ -80,66 +79,47 @@ avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
 rs = avg_gain / avg_loss
 df["RSI"] = 100 - (100 / (1 + rs))
 
+
 # =========================
-# 🔥 ストップ高検出（超重要）
+# 🔥 ストップ高検出
 # =========================
 df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
+df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
-# 翌日フラグに変換
-df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1)
-df["limit_up_flag"] = df["limit_up_flag"].fillna(0)
 
-# =========================
-# 🔥 決算フラグ（キャッシュ付き）
-# =========================
-def get_earnings_dates(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df_e = t.earnings_dates
-
-        if df_e is None or len(df_e) == 0:
-            return []
-
-        return pd.to_datetime(df_e.index).date.tolist()
-    except:
-        return []
-
-# キャッシュ読み込み
-if os.path.exists(CACHE_FILE):
-    earnings_cache = pickle.load(open(CACHE_FILE, "rb"))
+# =========================================================
+# 🔥 決算（外部キャッシュ版・重要）
+# =========================================================
+if os.path.exists(EARNINGS_FILE):
+    earnings_df = pd.read_parquet(EARNINGS_FILE)
+    print("⚡ earnings: キャッシュ使用")
 else:
-    earnings_cache = {}
+    print("⚠ earningsファイルなし（先に取得処理を実行）")
+    earnings_df = pd.DataFrame(columns=["Ticker", "Date"])
+
 
 df["is_earnings"] = 0
 
-tickers = df["Ticker"].unique()
+if not earnings_df.empty:
 
-for i, ticker in enumerate(tickers):
+    earnings_df["Date"] = pd.to_datetime(earnings_df["Date"]).dt.date
 
-    if ticker in earnings_cache:
-        dates = earnings_cache[ticker]
-    else:
-        print(f"決算取得中 {i+1}/{len(tickers)}: {ticker}")
-        dates = get_earnings_dates(ticker)
-        earnings_cache[ticker] = dates
+    earnings_map = earnings_df.groupby("Ticker")["Date"].apply(list).to_dict()
 
-    if len(dates) == 0:
-        continue
+    for ticker, dates in earnings_map.items():
 
-    ticker_mask = df["Ticker"] == ticker
+        ticker_mask = df["Ticker"] == ticker
 
-    for d in dates:
-        mask = ticker_mask & (
-            (df["Date"].dt.date >= d - pd.Timedelta(days=1)) &
-            (df["Date"].dt.date <= d + pd.Timedelta(days=1))
-        )
-        df.loc[mask, "is_earnings"] = 1
+        for d in dates:
+            mask = ticker_mask & (
+                (df["Date"].dt.date >= d - pd.Timedelta(days=1)) &
+                (df["Date"].dt.date <= d + pd.Timedelta(days=1))
+            )
+            df.loc[mask, "is_earnings"] = 1
 
-# キャッシュ保存
-pickle.dump(earnings_cache, open(CACHE_FILE, "wb"))
 
 # =========================
-# クロスセクション特徴量
+# クロスセクションランキング
 # =========================
 rank_features = [
     "Return_1",
@@ -157,8 +137,9 @@ rank_features = [
 for col in rank_features:
     df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
 
+
 # =========================
-# 🔥 Target（3日）
+# Target（3日先リターン）
 # =========================
 df["FutureReturn_3"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
@@ -166,13 +147,15 @@ df["FutureReturn_3"] = (
 
 df["Target"] = df.groupby("Date")["FutureReturn_3"].rank(pct=True)
 
+
 # =========================
 # 無限値処理
 # =========================
 df = df.replace([np.inf, -np.inf], np.nan)
 
+
 # =========================
-# 学習用
+# 学習データ
 # =========================
 train_df = df.dropna(subset=[
     "Return_1_rank",
@@ -190,8 +173,9 @@ train_df = df.dropna(subset=[
 
 train_df = train_df.reset_index(drop=True)
 
+
 # =========================
-# 予測用
+# 予測データ
 # =========================
 predict_df = df.dropna(subset=[
     "Return_1_rank",
@@ -208,18 +192,18 @@ predict_df = df.dropna(subset=[
 
 predict_df = predict_df.reset_index(drop=True)
 
+
 # =========================
 # デバッグ
 # =========================
-print("\n=== TRAIN DATA DEBUG ===")
+print("\n=== TRAIN DEBUG ===")
 print("rows:", len(train_df))
 print("latest:", train_df["Date"].max())
-print("========================")
 
-print("\n=== PREDICT DATA DEBUG ===")
+print("\n=== PREDICT DEBUG ===")
 print("rows:", len(predict_df))
 print("latest:", predict_df["Date"].max())
-print("========================")
+
 
 # =========================
 # 保存
