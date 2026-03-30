@@ -21,14 +21,14 @@ FEATURES = [
 TARGET = "FutureReturn_5"
 
 HOLD_DAYS = 5
-STOP_LOSS = -0.03   # 🔥 修正
+STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
 
-# 🔥 修正
+# 🔥 安定化設定
 REGIME_CONFIG = {
-    "bull": {"quantile": 0.7, "max_positions": 4},
+    "bull": {"quantile": 0.6, "max_positions": 6},
     "neutral": {"quantile": 0.8, "max_positions": 4},
     "bear": {"quantile": 1.0, "max_positions": 0}
 }
@@ -141,8 +141,8 @@ for i in range(4, len(years) - 1):
                 today_pred = today.copy()
                 today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-                # 🔥 フィルタ強化
-                today_pred = today_pred[today_pred["pred"] > 0.01]
+                # 🔥 フィルタ緩和
+                today_pred = today_pred[today_pred["pred"] > 0]
 
                 if today_pred.empty:
                     equity_curve.append(equity)
@@ -161,9 +161,11 @@ for i in range(4, len(years) - 1):
                     continue
 
                 # =========================
-                # 🔥 weight = pred比例
+                # 🔥 安定weight
                 # =========================
-                picks["weight"] = picks["pred"]
+                picks["vol"] = picks["Volatility_rank"] + 1e-6
+                picks["weight"] = 1 / np.sqrt(picks["vol"])
+
                 picks["weight"] /= picks["weight"].sum()
                 picks["weight"] = picks["weight"].clip(0, MAX_WEIGHT)
                 picks["weight"] /= picks["weight"].sum()
