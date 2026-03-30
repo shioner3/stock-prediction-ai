@@ -26,9 +26,9 @@ INITIAL_CAPITAL = 1.0
 TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
 
-# 🔥 安定化設定
+# 🔥 集中投資＋調整
 REGIME_CONFIG = {
-    "bull": {"quantile": 0.6, "max_positions": 6},
+    "bull": {"quantile": 0.65, "max_positions": 4},
     "neutral": {"quantile": 0.8, "max_positions": 4},
     "bear": {"quantile": 1.0, "max_positions": 0}
 }
@@ -141,18 +141,23 @@ for i in range(4, len(years) - 1):
                 today_pred = today.copy()
                 today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-                # 🔥 フィルタ緩和
-                today_pred = today_pred[today_pred["pred"] > 0]
+                # 🔥 フィルタ強化（軽め）
+                today_pred = today_pred[today_pred["pred"] > 0.005]
 
                 if today_pred.empty:
                     equity_curve.append(equity)
                     position_counts.append(0)
                     continue
 
-                th = today_pred["pred"].quantile(config["quantile"])
-                picks = today_pred[today_pred["pred"] > th].copy()
+                # 🔥 スコア合成
+                today_pred["score"] = (
+                    today_pred["pred"] * today_pred["MA5_ratio_rank"]
+                )
 
-                picks = picks.sort_values("pred", ascending=False)
+                th = today_pred["score"].quantile(config["quantile"])
+                picks = today_pred[today_pred["score"] > th].copy()
+
+                picks = picks.sort_values("score", ascending=False)
                 picks = picks.head(config["max_positions"])
 
                 if picks.empty:
@@ -161,7 +166,7 @@ for i in range(4, len(years) - 1):
                     continue
 
                 # =========================
-                # 🔥 安定weight
+                # 🔥 安定weight（ボラ逆数）
                 # =========================
                 picks["vol"] = picks["Volatility_rank"] + 1e-6
                 picks["weight"] = 1 / np.sqrt(picks["vol"])
