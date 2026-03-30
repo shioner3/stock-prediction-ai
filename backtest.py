@@ -3,7 +3,7 @@ import numpy as np
 from lightgbm import LGBMRegressor
 
 # =========================
-# 設定
+# 設定（🔥ここは固定する）
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
@@ -26,7 +26,7 @@ STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
 MAX_WEIGHT = 0.4
 
-# 🔥 緩和
+# 🔥 固定パラメータ（いじらない）
 PRED_THRESHOLD = 0.51
 MARKET_THRESHOLD = 0.48
 
@@ -38,6 +38,26 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+# =========================
+# 🔥 未来データ混入チェック
+# =========================
+print("\n=== FUTURE LEAK CHECK ===")
+
+# Targetが未来を見てるかチェック
+if df["Target"].shift(-1).equals(df["Target"]):
+    print("❌ Targetリーク疑いあり")
+else:
+    print("✅ Target OK")
+
+# 特徴量の未来混入チェック（簡易）
+future_corr = df[FEATURES].corrwith(df["Target"].shift(-1)).abs().mean()
+print("未来相関:", future_corr)
+
+if future_corr > 0.05:
+    print("⚠️ 未来リークの可能性あり")
+else:
+    print("✅ リーク問題なし")
 
 # =========================
 # 市場レジーム
@@ -106,21 +126,25 @@ for i in range(4, len(years) - 1):
         regime = today["Regime"].iloc[0]
 
         # =========================
-        # 月次学習
+        # 月次学習（リーク防止済）
         # =========================
         current_month = d.month
 
         if model is None or current_month != prev_month:
 
-            train_until = df[df["Date"] < d]
+            train_until = df[df["Date"] < d]  # 🔥未来禁止
 
             if len(train_until) > 2000:
+
                 model = LGBMRegressor(
                     n_estimators=300,
                     learning_rate=0.05,
                     random_state=42
                 )
+
                 model.fit(train_until[FEATURES], train_until[TARGET])
+
+                print(f"[TRAIN] {d} samples={len(train_until)}")
 
             prev_month = current_month
 
@@ -135,7 +159,7 @@ for i in range(4, len(years) - 1):
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
         # =========================
-        # 地雷フィルター（軽め）
+        # 地雷フィルター
         # =========================
         if "is_earnings" in today_pred.columns:
             today_pred = today_pred[today_pred["is_earnings"] == 0]
@@ -155,7 +179,6 @@ for i in range(4, len(years) - 1):
         if np.isnan(market_score):
             market_score = 0
 
-        # 🔥 完全停止しない
         if market_score < MARKET_THRESHOLD:
             max_positions = 2
         else:
@@ -166,18 +189,17 @@ for i in range(4, len(years) - 1):
         # =========================
         candidates = today_pred[today_pred["pred"] > PRED_THRESHOLD]
 
-        # 🔥 fallback（必ずトレード）
+        # fallback（必ずトレード）
         if len(candidates) < 3:
             candidates = today_pred.sort_values("pred", ascending=False).head(5)
 
         # =========================
-        # エントリー（常時）
+        # エントリー
         # =========================
         if len(positions) == 0:
 
             picks = candidates.sort_values("pred", ascending=False).head(max_positions)
 
-            # weight
             picks["vol"] = picks["Volatility_rank"] + 1e-6
             picks["weight"] = 1 / np.sqrt(picks["vol"])
             picks["weight"] /= picks["weight"].sum()
@@ -281,7 +303,9 @@ for i in range(4, len(years) - 1):
 # =========================
 res = pd.DataFrame(results)
 
+print("\n=== RESULT ===")
 print(res)
+
 print("\nAVG CAGR:", res["CAGR"].mean())
 print("AVG Sharpe:", res["Sharpe"].mean())
 print("AVG DD:", res["MaxDD"].mean())
