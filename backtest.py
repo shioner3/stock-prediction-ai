@@ -22,12 +22,13 @@ FEATURES = [
 
 TARGET = "Target"
 
-HOLD_DAYS = 3
 STOP_LOSS = -0.03
-
 INITIAL_CAPITAL = 1.0
-TRAIN_INTERVAL = 20
 MAX_WEIGHT = 0.4
+
+# 🔥 改善ポイント
+PRED_THRESHOLD = 0.55
+MARKET_THRESHOLD = 0.52
 
 # =========================
 # データ読み込み
@@ -59,7 +60,7 @@ df["Regime"] = np.where(
 )
 
 # =========================
-# 年ごと分割
+# 年ごと
 # =========================
 df["Year"] = df["Date"].dt.year
 years = sorted(df["Year"].unique())
@@ -89,6 +90,8 @@ for i in range(4, len(years) - 1):
 
     dates = sorted(test_df["Date"].unique())
 
+    prev_month = None
+
     for j in range(len(dates) - 1):
 
         d = dates[j]
@@ -104,60 +107,90 @@ for i in range(4, len(years) - 1):
         regime = today["Regime"].iloc[0]
 
         # =========================
-        # 学習
+        # 🔥 月次学習（超重要）
         # =========================
-        train_until = df[df["Date"] < d]
+        current_month = d.month
 
-        if len(train_until) > 1000 and (model is None or j % TRAIN_INTERVAL == 0):
-            model = LGBMRegressor(
-                n_estimators=200,
-                learning_rate=0.05,
-                random_state=42
-            )
-            model.fit(train_until[FEATURES], train_until[TARGET])
+        if model is None or current_month != prev_month:
+
+            train_until = df[df["Date"] < d]
+
+            if len(train_until) > 1000:
+                model = LGBMRegressor(
+                    n_estimators=200,
+                    learning_rate=0.05,
+                    random_state=42
+                )
+                model.fit(train_until[FEATURES], train_until[TARGET])
+
+            prev_month = current_month
 
         if model is None:
             equity_curve.append(equity)
             continue
 
         # =========================
-        # エントリー（3日周期）
+        # 予測
         # =========================
-        if j % HOLD_DAYS == 0:
+        today_pred = today.copy()
+        today_pred["pred"] = model.predict(today_pred[FEATURES])
+
+        # =========================
+        # 🔥 地雷フィルター
+        # =========================
+        if "is_earnings" in today_pred.columns:
+            today_pred = today_pred[today_pred["is_earnings"] == 0]
+
+        if "limit_up_flag" in today_pred.columns:
+            today_pred = today_pred[today_pred["limit_up_flag"] == 0]
+
+        if "Volume" in today_pred.columns:
+            today_pred = today_pred[today_pred["Volume"] > 100000]
+
+        if "Volume_ratio" in today_pred.columns:
+            today_pred = today_pred[today_pred["Volume_ratio"] < 3]
+
+        # =========================
+        # 🔥 市場フィルター（重要）
+        # =========================
+        market_score = today_pred["pred"].mean()
+
+        if market_score < MARKET_THRESHOLD or regime == "bear":
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 🔥 スコアフィルター
+        # =========================
+        today_pred = today_pred[today_pred["pred"] > PRED_THRESHOLD]
+
+        if today_pred.empty:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 🔥 レジーム別設定
+        # =========================
+        if regime == "bull":
+            hold_days = 4
+            max_positions = 6
+        elif regime == "neutral":
+            hold_days = 3
+            max_positions = 4
+        else:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # エントリー（周期制御）
+        # =========================
+        if j % hold_days == 0:
 
             positions = []
 
-            today_pred = today.copy()
-            today_pred["pred"] = model.predict(today_pred[FEATURES])
+            picks = today_pred.sort_values("pred", ascending=False).head(max_positions)
 
-            # =========================
-            # 🔥 地雷フィルター
-            # =========================
-            if "is_earnings" in today_pred.columns:
-                today_pred = today_pred[today_pred["is_earnings"] == 0]
-
-            if "limit_up_flag" in today_pred.columns:
-                today_pred = today_pred[today_pred["limit_up_flag"] == 0]
-
-            if "Volume" in today_pred.columns:
-                today_pred = today_pred[today_pred["Volume"] > 100000]
-
-            if "Volume_ratio" in today_pred.columns:
-                today_pred = today_pred[today_pred["Volume_ratio"] < 3]
-
-            # スコアフィルター
-            today_pred = today_pred[today_pred["pred"] > 0.52]
-
-            if today_pred.empty:
-                equity_curve.append(equity)
-                continue
-
-            # 上位銘柄
-            picks = today_pred.sort_values("pred", ascending=False).head(5)
-
-            # =========================
-            # weight（ボラ逆数）
-            # =========================
+            # weight
             picks["vol"] = picks["Volatility_rank"] + 1e-6
             picks["weight"] = 1 / np.sqrt(picks["vol"])
 
@@ -176,7 +209,8 @@ for i in range(4, len(years) - 1):
                     "ticker": row["Ticker"],
                     "entry_price": tmr["Open"].iloc[0],
                     "entry_day": j,
-                    "weight": row["weight"]
+                    "weight": row["weight"],
+                    "hold_days": hold_days
                 })
 
                 trade_count += 1
@@ -197,7 +231,7 @@ for i in range(4, len(years) - 1):
             price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            hold_days = j - pos["entry_day"] + 1
+            hold_days_now = j - pos["entry_day"] + 1
 
             # 損切り
             if ret <= STOP_LOSS:
@@ -205,13 +239,12 @@ for i in range(4, len(years) - 1):
                 exit_price = tmr["Open"].iloc[0] if not tmr.empty else price
 
                 pnl = (exit_price - pos["entry_price"]) / pos["entry_price"]
-
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
                 continue
 
-            # 利確（期間）
-            if hold_days >= HOLD_DAYS:
+            # 利確
+            if hold_days_now >= pos["hold_days"]:
                 pnl = ret
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
