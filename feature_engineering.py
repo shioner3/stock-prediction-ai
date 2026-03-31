@@ -91,9 +91,14 @@ df["Volume_ma10"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling
 df["Volume_accel"] = df["Volume"] / df["Volume_ma10"]
 
 # ボラ拡張
-df["ATR"] = (
-    df["High"] - df["Low"]
-).groupby(df["Ticker"]).transform(lambda x: x.rolling(14).mean())
+# TR（True Range簡易版）
+df["TR"] = df["High"] - df["Low"]
+
+df["ATR"] = df.groupby("Ticker")["TR"].transform(
+    lambda x: x.rolling(14).mean()
+)
+
+df["ATR_ratio"] = df["ATR"] / df["Close"]
 
 # =========================
 # RSI（修正版）
