@@ -129,6 +129,10 @@ def run_backtest(test_df, train_df, label="BASE"):
 
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
+            
+            # 出来高フィルター（追加）
+        if "Volume" in today_pred.columns:
+            today_pred = today_pred[today_pred["Volume"] > 10000]
 
         if today_pred.empty:
             equity_curve.append(equity)
