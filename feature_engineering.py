@@ -87,37 +87,6 @@ df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
 df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
 
-# =========================================================
-# 🔥 決算（外部キャッシュ版・重要）
-# =========================================================
-if os.path.exists(EARNINGS_FILE):
-    earnings_df = pd.read_parquet(EARNINGS_FILE)
-    print("⚡ earnings: キャッシュ使用")
-else:
-    print("⚠ earningsファイルなし（先に取得処理を実行）")
-    earnings_df = pd.DataFrame(columns=["Ticker", "Date"])
-
-
-df["is_earnings"] = 0
-
-if not earnings_df.empty:
-
-    earnings_df["Date"] = pd.to_datetime(earnings_df["Date"]).dt.date
-
-    earnings_map = earnings_df.groupby("Ticker")["Date"].apply(list).to_dict()
-
-    for ticker, dates in earnings_map.items():
-
-        ticker_mask = df["Ticker"] == ticker
-
-        for d in dates:
-            mask = ticker_mask & (
-                (df["Date"].dt.date >= d - pd.Timedelta(days=1)) &
-                (df["Date"].dt.date <= d + pd.Timedelta(days=1))
-            )
-            df.loc[mask, "is_earnings"] = 1
-
-
 # =========================
 # クロスセクションランキング
 # =========================
