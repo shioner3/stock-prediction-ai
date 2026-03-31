@@ -11,9 +11,8 @@ PARQUET_FILE = "stock_data/prices.parquet"
 TRAIN_SAVE_PATH = "ml_dataset.parquet"
 PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
-EARNINGS_FILE = "stock_data/earnings.parquet"
-
 HOLD_DAYS = 3
+MIN_COUNT = 3000  # 🔥 追加（重要）
 
 # =========================
 # データ読み込み
@@ -31,13 +30,26 @@ SELECT
     Close,
     Volume
 FROM '{PARQUET_FILE}'
-ORDER BY Ticker, Date
 """).df()
 
 print("元データサイズ:", df.shape)
 
 df["Date"] = pd.to_datetime(df["Date"])
 
+# =========================
+# 🔥 ソート保証（超重要）
+# =========================
+df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+
+# =========================
+# 🔥 日付完全性フィルター（最重要）
+# =========================
+counts = df["Date"].value_counts()
+valid_dates = counts[counts >= MIN_COUNT].index
+
+df = df[df["Date"].isin(valid_dates)].copy()
+
+print("フィルタ後サイズ:", df.shape)
 
 # =========================
 # 🔥 基本特徴量
@@ -64,7 +76,6 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
-
 # =========================
 # RSI
 # =========================
@@ -79,13 +90,11 @@ avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
 rs = avg_gain / avg_loss
 df["RSI"] = 100 - (100 / (1 + rs))
 
-
 # =========================
-# 🔥 ストップ高検出
+# ストップ高
 # =========================
 df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
 df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
-
 
 # =========================
 # クロスセクションランキング
@@ -106,9 +115,8 @@ rank_features = [
 for col in rank_features:
     df[col + "_rank"] = df.groupby("Date")[col].rank(pct=True)
 
-
 # =========================
-# Target（3日先リターン）
+# 🔥 Target（リーク対策済）
 # =========================
 df["FutureReturn_3"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
@@ -116,12 +124,13 @@ df["FutureReturn_3"] = (
 
 df["Target"] = df["FutureReturn_3"]
 
+# 🔥 最終日除外（超重要）
+df = df[df["Date"] < df["Date"].max()]
 
 # =========================
 # 無限値処理
 # =========================
 df = df.replace([np.inf, -np.inf], np.nan)
-
 
 # =========================
 # 学習データ
@@ -142,11 +151,12 @@ train_df = df.dropna(subset=[
 
 train_df = train_df.reset_index(drop=True)
 
+# =========================
+# 予測データ（最新日のみ）
+# =========================
+latest_date = df["Date"].max()
 
-# =========================
-# 予測データ
-# =========================
-predict_df = df.dropna(subset=[
+predict_df = df[df["Date"] == latest_date].dropna(subset=[
     "Return_1_rank",
     "Return_3_rank",
     "MA3_ratio_rank",
@@ -161,7 +171,6 @@ predict_df = df.dropna(subset=[
 
 predict_df = predict_df.reset_index(drop=True)
 
-
 # =========================
 # デバッグ
 # =========================
@@ -172,7 +181,6 @@ print("latest:", train_df["Date"].max())
 print("\n=== PREDICT DEBUG ===")
 print("rows:", len(predict_df))
 print("latest:", predict_df["Date"].max())
-
 
 # =========================
 # 保存
