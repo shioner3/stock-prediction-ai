@@ -144,6 +144,14 @@ def run_backtest(test_df, train_df, label="BASE"):
 
         today_pred = today_pred.dropna(subset=["pred"])
 
+        THRESHOLD = 0.35
+
+        today_pred = today_pred[today_pred["pred"] > THRESHOLD]
+
+        if today_pred.empty:
+            equity_curve.append(equity)
+            continue
+
         if today_pred.empty:
             equity_curve.append(equity)
             continue
