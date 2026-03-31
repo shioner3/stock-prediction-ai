@@ -147,9 +147,6 @@ today["Pred"] = model.predict(today[FEATURES])
 # =========================
 # 🔥 地雷フィルター
 # =========================
-if "is_earnings" in today.columns:
-    today = today[today["is_earnings"] == 0]
-
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
 
