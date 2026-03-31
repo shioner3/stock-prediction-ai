@@ -116,6 +116,10 @@ def run_backtest(test_df, train_df, label="BASE"):
         # =========================
         today_pred = today.copy()
         today_pred["pred"] = model.predict_proba(today_pred[FEATURES])[:, 1]
+        # 🔥 デバッグ（最初の数回だけでOK）
+        if j < 3:
+            print("\n=== PRED CHECK ===", d)
+            print(today_pred["pred"].describe())
 
         # =========================
         # フィルター
