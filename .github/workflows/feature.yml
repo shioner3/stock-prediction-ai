@@ -30,14 +30,22 @@ jobs:
           pip install -r requirements_ai.txt
 
       # =========================
-      # 4️⃣ 特徴量生成のみ（ここが本体）
+      # 4️⃣ データ準備
+      # =========================
+      - name: Prepare data
+        run: |
+          python download_prices.py
+          python feature_engineering.py
+
+      # =========================
+      # 5️⃣ 特徴量生成のみ（ここが本体）
       # =========================
       - name: Run Feature Engineering
         run: |
           python feature_engineering.py
 
       # =========================
-      # 5️⃣ 結果確認（デバッグ）
+      # 6️⃣ 結果確認（デバッグ）
       # =========================
       - name: Check outputs
         run: |
@@ -48,7 +56,7 @@ jobs:
           ls -lh *.parquet || echo "no parquet"
 
       # =========================
-      # 6️⃣ GitHubへ保存
+      # 7️⃣ GitHubへ保存
       # =========================
       - name: Commit datasets
         run: |
