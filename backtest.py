@@ -27,7 +27,7 @@ INITIAL_CAPITAL = 1.0
 THRESHOLD = 0.30
 HOLD_DAYS = 7
 TOP_N = 2
-STOP_LOSS = -0.05
+STOP_LOSS = -0.03
 
 # =========================
 # データ読み込み
@@ -128,6 +128,13 @@ for d in dates:
 
     # 🔥 ② トレンドフィルター
     today = today[today["EMA_gap"] > 0]
+    
+    # 市場平均
+    market = today["Return_1"].mean()
+
+    if market < -0.01:
+        equity_curve.append(equity)
+        continue
 
     if today.empty:
         equity_curve.append(equity)
