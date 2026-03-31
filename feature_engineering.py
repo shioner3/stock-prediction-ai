@@ -124,8 +124,8 @@ df["FutureReturn_3"] = (
 
 df["Target"] = df["FutureReturn_3"]
 
-# 🔥 最終日除外（超重要）
-df = df[df["Date"] < df["Date"].max()]
+# 🔥 正しいやり方（銘柄単位で未来がない行を削除）
+df = df.dropna(subset=["Target"])
 
 # =========================
 # 無限値処理
