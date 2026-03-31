@@ -15,13 +15,15 @@ FEATURES = [
 
 TARGET = "Target"
 
-STOP_LOSS = -0.03
+# 🔥 損切り無効化（重要）
+STOP_LOSS = -1  
+
 INITIAL_CAPITAL = 1.0
 
 PRED_THRESHOLD = 0.51
 MARKET_THRESHOLD = 0.48
 
-MIN_TICKERS = 3000  # 🔥 追加（重要）
+MIN_TICKERS = 3000
 
 # =========================
 # データ
@@ -33,10 +35,9 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# 🔥 最新日の完全性チェック（超重要）
+# 完全性チェック
 # =========================
 counts = df["Date"].value_counts()
-
 valid_dates = counts[counts >= MIN_TICKERS].index
 latest_valid_date = valid_dates.max()
 
@@ -44,7 +45,6 @@ print("\n=== DATA CHECK ===")
 print("最新日:", df["Date"].max())
 print("有効最新日:", latest_valid_date)
 
-# 🔥 不完全データ除外
 df = df[df["Date"] <= latest_valid_date]
 
 # =========================
@@ -111,7 +111,7 @@ def run_backtest(test_df, train_df, label="BASE"):
         regime = today["Regime"].iloc[0]
 
         # =========================
-        # 月次学習（リーク防止）
+        # 月次学習
         # =========================
         current_month = d.month
 
@@ -145,7 +145,6 @@ def run_backtest(test_df, train_df, label="BASE"):
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
 
-        # 🔥 出来高フィルター（安全）
         if "Volume" in today_pred.columns:
             today_pred = today_pred[today_pred["Volume"].fillna(0) > 10000]
 
@@ -184,7 +183,8 @@ def run_backtest(test_df, train_df, label="BASE"):
             picks["weight"] = 1 / np.sqrt(picks["vol"])
             picks["weight"] /= picks["weight"].sum()
 
-            hold_days = 3 if regime != "bull" else 4
+            # 🔥 完全固定（超重要）
+            hold_days = 3
 
             for _, row in picks.iterrows():
 
@@ -220,7 +220,8 @@ def run_backtest(test_df, train_df, label="BASE"):
 
             hold_days_now = j - pos["entry_day"] + 1
 
-            if ret <= STOP_LOSS or hold_days_now >= pos["hold_days"]:
+            # 🔥 損切り削除（超重要）
+            if hold_days_now >= pos["hold_days"]:
                 pnl = ret
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
@@ -251,7 +252,6 @@ def run_backtest(test_df, train_df, label="BASE"):
 # =========================
 base_result = run_backtest(test_df_oos, train_df_full, "BASE")
 
-# ロバスト
 tickers = test_df_oos["Ticker"].unique()
 reduced = np.random.choice(tickers, int(len(tickers)*0.7), replace=False)
 test_reduced = test_df_oos[test_df_oos["Ticker"].isin(reduced)]
@@ -264,9 +264,6 @@ test_short = test_df_oos[test_df_oos["Date"].isin(dates[:cut])]
 
 robust_2 = run_backtest(test_short, train_df_full, "Time80%")
 
-# =========================
-# 出力
-# =========================
 results = pd.DataFrame([base_result, robust_1, robust_2])
 
 print("\n=== ROBUST TEST ===")
