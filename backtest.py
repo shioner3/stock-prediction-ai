@@ -123,10 +123,8 @@ def run_backtest(test_df, train_df, label="BASE"):
         today_pred = today.copy()
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-        # 地雷フィルター
-        if "is_earnings" in today_pred.columns:
-            today_pred = today_pred[today_pred["is_earnings"] == 0]
-
+        # 地雷フィルタ
+            
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
             
