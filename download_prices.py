@@ -194,50 +194,6 @@ print("銘柄数:", counts.get(latest_valid, 0))
 # =========================
 df_all.to_parquet(PARQUET_FILE, index=False)
 
-# =========================================================
-# 決算データ（月1キャッシュ）
-# =========================================================
-def fetch_earnings(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df = t.earnings_dates
-        if df is None:
-            return None
-
-        df = df.reset_index()
-        df["Ticker"] = ticker
-        return df
-
-    except:
-        return None
-
-def load_or_update_earnings():
-    today_month = pd.Timestamp.now().strftime("%Y-%m")
-
-    if os.path.exists(EARNINGS_FILE) and os.path.exists(EARNINGS_META):
-        meta = pd.read_pickle(EARNINGS_META)
-
-        if meta.get("month") == today_month:
-            print("\n⚡ earnings: キャッシュ使用")
-            return pd.read_parquet(EARNINGS_FILE)
-
-    print("\n🔄 earnings: 月次フル更新")
-
-    dfs = []
-
-    for t in tqdm(tickers[:]):
-        df = fetch_earnings(t)
-        if df is not None:
-            dfs.append(df)
-
-        time.sleep(0.2)
-
-    result = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-
-    result.to_parquet(EARNINGS_FILE, index=False)
-    pd.to_pickle({"month": today_month}, EARNINGS_META)
-
-    return result
 
 # =========================
 # 実行（決算更新）
