@@ -10,10 +10,6 @@ import time
 CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
-# 🔥 追加（不足してた）
-EARNINGS_FILE = "stock_data/earnings.parquet"
-EARNINGS_META = "stock_data/earnings_meta.pkl"
-
 RECENT_DAYS = 10
 MIN_COUNT = 3000
 
@@ -54,6 +50,11 @@ print("銘柄数:", len(tickers))
 today = pd.Timestamp.now().normalize()
 
 # =========================
+# 🔥 キャッシュ確認（追加）
+# =========================
+print("PARQUET exists:", os.path.exists(PARQUET_FILE))
+
+# =========================
 # 株価データ読み込み
 # =========================
 if os.path.exists(PARQUET_FILE):
@@ -71,6 +72,12 @@ else:
     )
 
 # =========================
+# 🔥 デバッグ出力（追加）
+# =========================
+print("df_existing rows:", len(df_existing))
+print("latest date:", df_existing["Date"].max() if not df_existing.empty else None)
+
+# =========================
 # 最終取得日
 # =========================
 last_dates = {}
@@ -79,9 +86,11 @@ if not df_existing.empty:
     last_dates = df_existing.groupby("Ticker")["Date"].max().to_dict()
 
 # =========================
-# 🔥 更新対象銘柄（ここ追加）
+# 🔥 更新対象銘柄（修正版）
 # =========================
 update_tickers = []
+
+global_last = df_existing["Date"].max() if not df_existing.empty else None
 
 for t in tickers:
     if t not in last_dates:
@@ -89,20 +98,9 @@ for t in tickers:
     else:
         last = last_dates[t]
 
-        # 最新日を基準にする
-        global_last = df_existing["Date"].max() if not df_existing.empty else None
-
-        update_tickers = []
-
-        for t in tickers:
-            if t not in last_dates:
-                update_tickers.append(t)
-            else:
-                last = last_dates[t]
-
-                # 🔥 「全体の最新日より古い」だけ更新
-                if global_last is None or last < global_last:
-                    update_tickers.append(t)
+        # 🔥 「全体の最新日より古い」だけ更新
+        if global_last is None or last < global_last:
+            update_tickers.append(t)
 
 print("更新対象銘柄数:", len(update_tickers))
 
@@ -127,7 +125,7 @@ def fetch_batch(batch, start=None):
     return None
 
 # =========================
-# 🔥 差分取得（修正済み）
+# 🔥 差分取得
 # =========================
 print("\n=== 差分取得 ===")
 
@@ -137,7 +135,6 @@ for i in tqdm(range(0, len(update_tickers), BATCH_SIZE)):
 
     batch = update_tickers[i:i+BATCH_SIZE]
 
-    # 🔥 start最適化（安全）
     start = min([
         last_dates.get(t, pd.Timestamp("2018-01-01"))
         for t in batch
@@ -201,10 +198,9 @@ print("有効最新日:", latest_valid)
 print("銘柄数:", counts.get(latest_valid, 0))
 
 # =========================
-# 保存（株価）
+# 保存
 # =========================
 df_all.to_parquet(PARQUET_FILE, index=False)
-
 
 # =========================
 # 完了
