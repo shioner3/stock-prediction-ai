@@ -11,6 +11,9 @@ from datetime import datetime
 TOP_N = 3
 HOLD_DAYS = 3
 
+CANDIDATES = 20
+THRESHOLD = 0.32
+
 BASE_DIR = os.path.dirname(__file__)
 
 TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
@@ -26,7 +29,7 @@ month_str = datetime.now().strftime("%Y-%m")
 PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
 # =========================
-# 🔥 FEATURES（backtestと完全一致）
+# FEATURES（backtestと完全一致）
 # =========================
 FEATURES = [
     "Return_1","Return_3","Return_5",
@@ -63,7 +66,6 @@ def get_regime(score):
         return "neutral"
     else:
         return "weak"
-
 
 # =========================
 # データ読み込み
@@ -127,7 +129,7 @@ else:
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
 # =========================
-# 🔥 feature安全化（重要）
+# feature安全化
 # =========================
 today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -147,7 +149,7 @@ print("\n=== PRED CHECK ===")
 print(today["Pred"].describe())
 
 # =========================
-# フィルター
+# 基本フィルター
 # =========================
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
@@ -162,18 +164,29 @@ if today.empty:
     exit()
 
 # =========================
-# Top N
+# 🔥 ハイブリッド選定（最重要）
 # =========================
-today = today.sort_values("Pred", ascending=False).head(TOP_N)
+
+# ① 候補（rank）
+candidates = today.sort_values("Pred", ascending=False).head(CANDIDATES)
+
+# ② 生値フィルター
+filtered = candidates[candidates["Pred"] > THRESHOLD]
+
+# ③ fallback
+if len(filtered) < TOP_N:
+    filtered = candidates.head(TOP_N)
+
+# ④ 最終
+today = filtered.head(TOP_N).copy()
 
 # =========================
 # ランキング
 # =========================
-today = today.copy()
 today["PredRank"] = range(1, len(today) + 1)
 
 # =========================
-# レジーム判定
+# レジーム
 # =========================
 market_score = today["Pred"].mean()
 regime = get_regime(market_score)
