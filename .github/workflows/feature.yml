@@ -1,24 +1,62 @@
-name: Run Feature Engineering
+name: Feature Engineering
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # 手動実行
 
 jobs:
-  run-feature:
+  feature:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================
+      # 1️⃣ リポジトリ取得
+      # =========================
       - uses: actions/checkout@v3
 
-      - name: Pythonセットアップ
+      # =========================
+      # 2️⃣ Python環境
+      # =========================
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
-      - name: 依存関係インストール
+      # =========================
+      # 3️⃣ 依存関係
+      # =========================
+      - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install --upgrade pip
+          pip install -r requirements_ai.txt
 
-      - name: 特徴量生成だけ実行
+      # =========================
+      # 4️⃣ 特徴量生成のみ（ここが本体）
+      # =========================
+      - name: Run Feature Engineering
         run: |
           python feature_engineering.py
+
+      # =========================
+      # 5️⃣ 結果確認（デバッグ）
+      # =========================
+      - name: Check outputs
+        run: |
+          echo "===== FILES ====="
+          ls -l
+
+          echo "===== DATA CHECK ====="
+          ls -lh *.parquet || echo "no parquet"
+
+      # =========================
+      # 6️⃣ GitHubへ保存
+      # =========================
+      - name: Commit datasets
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add ml_dataset.parquet ml_dataset_latest.parquet || true
+
+          git commit -m "update feature dataset [skip ci]" || echo "no change"
+
+          git push origin HEAD:main
