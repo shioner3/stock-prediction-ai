@@ -28,6 +28,8 @@ TOP_N = 3
 MAX_POSITIONS = 5
 HOLD_DAYS = 3
 
+THRESHOLD = 0.35  # 🔥 ハイブリッドの入口
+
 # =========================
 # データ
 # =========================
@@ -39,7 +41,7 @@ df = df.sort_values(["Date", "Ticker"])
 print("\n=== TARGET CHECK ===")
 print("Target mean:", df["Target"].mean())
 
-# 無限値処理（重要）
+# 無限値処理
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
@@ -47,9 +49,6 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 # =========================
 counts = df["Date"].value_counts()
 valid_dates = counts[counts >= MIN_TICKERS].index
-
-if len(valid_dates) == 0:
-    raise ValueError("No valid dates with enough tickers")
 
 latest_valid_date = valid_dates.max()
 
@@ -72,7 +71,31 @@ print("Train:", train_df_full["Date"].min(), "~", train_df_full["Date"].max())
 print("Test :", test_df_oos["Date"].min(), "~", test_df_oos["Date"].max())
 
 # =========================
-# バックテスト関数
+# 🔥 ハイブリッドスコア
+# =========================
+def make_hybrid_score(df):
+    df = df.copy()
+
+    # ① モメンタム系ランキング
+    df["mom_rank"] = df["Return_5"].rank(pct=True)
+
+    # ② トレンド系ランキング
+    df["trend_rank"] = df["EMA_gap"].rank(pct=True)
+
+    # ③ ボラ逆張り（低ボラ優先）
+    df["vol_rank"] = (-df["Volatility"]).rank(pct=True)
+
+    # ④ 総合スコア
+    df["hybrid_score"] = (
+        0.4 * df["mom_rank"] +
+        0.3 * df["trend_rank"] +
+        0.3 * df["vol_rank"]
+    )
+
+    return df
+
+# =========================
+# バックテスト
 # =========================
 def run_backtest(test_df, train_df, label="BASE"):
 
@@ -99,7 +122,7 @@ def run_backtest(test_df, train_df, label="BASE"):
             continue
 
         # =========================
-        # 月次学習（リーク防止）
+        # 月次学習
         # =========================
         current_month = d.month
 
@@ -108,13 +131,11 @@ def run_backtest(test_df, train_df, label="BASE"):
             train_until = train_df[train_df["Date"] < d]
 
             if len(train_until) > 2000:
-
                 model = LGBMClassifier(
                     n_estimators=300,
                     learning_rate=0.05,
                     random_state=42
                 )
-
                 model.fit(train_until[FEATURES], train_until[TARGET])
 
             prev_month = current_month
@@ -134,7 +155,7 @@ def run_backtest(test_df, train_df, label="BASE"):
             print(today_pred["pred"].describe())
 
         # =========================
-        # フィルター（軽量化）
+        # フィルター
         # =========================
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
@@ -144,22 +165,18 @@ def run_backtest(test_df, train_df, label="BASE"):
 
         today_pred = today_pred.dropna(subset=["pred"])
 
-        THRESHOLD = 0.35
-
+        # 🔥 ① 確率フィルター
         today_pred = today_pred[today_pred["pred"] > THRESHOLD]
 
         if today_pred.empty:
             equity_curve.append(equity)
             continue
 
-        if today_pred.empty:
-            equity_curve.append(equity)
-            continue
+        # 🔥 ② ハイブリッドスコア生成
+        today_pred = make_hybrid_score(today_pred)
 
-        # =========================
-        # Top N選定
-        # =========================
-        picks = today_pred.sort_values("pred", ascending=False).head(TOP_N)
+        # 🔥 ③ ハイブリッドで選定
+        picks = today_pred.sort_values("hybrid_score", ascending=False).head(TOP_N)
 
         # =========================
         # エントリー
@@ -192,7 +209,7 @@ def run_backtest(test_df, train_df, label="BASE"):
             trade_count += 1
 
         # =========================
-        # ポジション管理
+        # 決済
         # =========================
         new_positions = []
 
@@ -219,9 +236,6 @@ def run_backtest(test_df, train_df, label="BASE"):
         equity_curve.append(equity)
 
     equity_curve = pd.Series(equity_curve)
-
-    if len(equity_curve) < 2:
-        return None
 
     returns = equity_curve.pct_change().dropna()
 
