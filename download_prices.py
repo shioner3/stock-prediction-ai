@@ -229,7 +229,7 @@ def load_or_update_earnings():
 
     dfs = []
 
-    for t in tqdm(tickers[:200]):  # ★重いので制限（必要なら解除）
+    for t in tqdm(tickers[:]):  
         df = fetch_earnings(t)
         if df is not None:
             dfs.append(df)
