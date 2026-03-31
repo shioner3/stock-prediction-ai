@@ -196,13 +196,6 @@ df_all.to_parquet(PARQUET_FILE, index=False)
 
 
 # =========================
-# 実行（決算更新）
-# =========================
-earnings_df = load_or_update_earnings()
-
-print("\n決算データ件数:", len(earnings_df))
-
-# =========================
 # 完了
 # =========================
 print("\n=== 完了 ===")
