@@ -49,6 +49,15 @@ jobs:
           python feature_engineering.py
 
       # =========================
+      # 6️⃣ キャッシュ保存（超重要）
+      # =========================
+      - name: Save price cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data/prices.parquet
+          key: price-cache-v1
+
+      # =========================
       # 5️⃣ 特徴量生成のみ（ここが本体）
       # =========================
       - name: Run Feature Engineering
