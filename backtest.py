@@ -3,7 +3,7 @@ import numpy as np
 from lightgbm import LGBMRegressor
 
 # =========================
-# 設定（固定）
+# 設定
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
@@ -15,15 +15,12 @@ FEATURES = [
 
 TARGET = "Target"
 
-# 🔥 損切り無効化（重要）
-STOP_LOSS = -1  
-
 INITIAL_CAPITAL = 1.0
 
-PRED_THRESHOLD = 0.51
-MARKET_THRESHOLD = 0.48
-
 MIN_TICKERS = 3000
+
+TOP_N = 5          # 🔥 固定エントリー数（最重要）
+MAX_POSITIONS = 5  # 🔥 最大保有数
 
 # =========================
 # データ
@@ -90,7 +87,6 @@ def run_backtest(test_df, train_df, label="BASE"):
     model = None
     positions = []
 
-    trade_returns = []
     trade_count = 0
 
     dates = sorted(test_df["Date"].unique())
@@ -108,10 +104,8 @@ def run_backtest(test_df, train_df, label="BASE"):
             equity_curve.append(equity)
             continue
 
-        regime = today["Regime"].iloc[0]
-
         # =========================
-        # 月次学習
+        # 月次学習（リーク防止）
         # =========================
         current_month = d.month
 
@@ -139,9 +133,7 @@ def run_backtest(test_df, train_df, label="BASE"):
         today_pred = today.copy()
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-        # =========================
         # フィルター
-        # =========================
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
 
@@ -153,40 +145,23 @@ def run_backtest(test_df, train_df, label="BASE"):
             continue
 
         # =========================
-        # 市場フィルター
+        # 🔥 Top Nだけ選ぶ（超重要）
         # =========================
-        market_score = today_pred["pred"].mean()
-        if np.isnan(market_score):
-            market_score = 0
-
-        if market_score < MARKET_THRESHOLD:
-            max_positions = 2
-        else:
-            max_positions = 5 if regime == "bull" else 3
-
-        # =========================
-        # スコア
-        # =========================
-        candidates = today_pred[today_pred["pred"] > PRED_THRESHOLD]
-
-        if len(candidates) < 3:
-            candidates = today_pred.sort_values("pred", ascending=False).head(5)
+        picks = today_pred.sort_values("pred", ascending=False).head(TOP_N)
 
         # =========================
         # エントリー
         # =========================
-        if len(positions) == 0:
-
-            picks = candidates.sort_values("pred", ascending=False).head(max_positions)
-
-            picks["vol"] = picks["Volatility_rank"] + 1e-6
-            picks["weight"] = 1 / np.sqrt(picks["vol"])
-            picks["weight"] /= picks["weight"].sum()
-
-            # 🔥 完全固定（超重要）
-            hold_days = 3
+        if len(positions) < MAX_POSITIONS:
 
             for _, row in picks.iterrows():
+
+                if len(positions) >= MAX_POSITIONS:
+                    break
+
+                # 重複防止
+                if any(p["ticker"] == row["Ticker"] for p in positions):
+                    continue
 
                 tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
                 if tmr.empty:
@@ -196,8 +171,8 @@ def run_backtest(test_df, train_df, label="BASE"):
                     "ticker": row["Ticker"],
                     "entry_price": tmr["Open"].iloc[0],
                     "entry_day": j,
-                    "weight": row["weight"],
-                    "hold_days": hold_days
+                    "weight": 1.0 / MAX_POSITIONS,  # 🔥 等ウェイト
+                    "hold_days": 3
                 })
 
                 trade_count += 1
@@ -220,11 +195,8 @@ def run_backtest(test_df, train_df, label="BASE"):
 
             hold_days_now = j - pos["entry_day"] + 1
 
-            # 🔥 損切り削除（超重要）
             if hold_days_now >= pos["hold_days"]:
-                pnl = ret
-                equity *= (1 + pnl * pos["weight"])
-                trade_returns.append(pnl)
+                equity *= (1 + ret * pos["weight"])
                 continue
 
             new_positions.append(pos)
