@@ -31,6 +31,9 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
+print("\n=== TARGET CHECK ===")
+print("Target mean:", df["Target"].mean())
+
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
