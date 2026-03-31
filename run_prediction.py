@@ -9,7 +9,7 @@ from datetime import datetime
 # 設定
 # =========================
 TOP_N = 5
-HOLD_DAYS = 5  # 🔥 featureと統一
+HOLD_DAYS = 5
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -22,22 +22,22 @@ MODEL_META_PATH = os.path.join(BASE_DIR, "model_meta.pkl")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-ARTICLE_PATH = "note_article.txt"
-
 month_str = datetime.now().strftime("%Y-%m")
 PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 
-PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
-
 # =========================
-# 特徴量（🔥 生値に変更）
+# 🔥 FEATURES（backtestと完全一致）
 # =========================
 FEATURES = [
-    "Return_1","Return_3",
+    "Return_1","Return_3","Return_5",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
-    "Volume_change","Volume_ratio",
-    "HL_range","RSI"
+    "Volume_change","Volume_ratio","Volume_accel",
+    "HL_range",
+    "EMA_gap",
+    "Momentum_5","Momentum_10",
+    "ATR_ratio",
+    "RSI"
 ]
 
 TARGET = "Target"
@@ -52,13 +52,6 @@ def normalize_columns(df):
     if "銘柄名" not in df.columns and "Name" in df.columns:
         rename_map["Name"] = "銘柄名"
     return df.rename(columns=rename_map) if rename_map else df
-
-
-def normalize(df):
-    df = df.copy()
-    df = df.sort_values("Pred", ascending=False)
-    df["PredRank"] = range(1, len(df) + 1)
-    return df
 
 
 def get_regime(score):
@@ -88,13 +81,13 @@ latest_date = predict_df["Date"].max()
 current_month = latest_date.strftime("%Y-%m")
 
 # =========================
-# 🔥 Targetチェック（追加）
+# TARGETチェック
 # =========================
 print("\n=== TARGET CHECK ===")
 print("Target mean:", train_df["Target"].mean())
 
 # =========================
-# 月次学習判定
+# モデル再学習判定
 # =========================
 retrain = True
 
@@ -106,10 +99,12 @@ if os.path.exists(MODEL_PATH) and os.path.exists(MODEL_META_PATH):
         retrain = False
 
 # =========================
-# モデル
+# 学習
 # =========================
 if retrain:
     print("🔄 モデル再学習")
+
+    train_df[FEATURES] = train_df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     model = LGBMClassifier(
         n_estimators=300,
@@ -127,14 +122,26 @@ else:
     model = pickle.load(open(MODEL_PATH, "rb"))
 
 # =========================
-# 予測
+# 予測データ
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
+# =========================
+# 🔥 feature安全化（重要）
+# =========================
+today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+missing_cols = [c for c in FEATURES if c not in today.columns]
+if len(missing_cols) > 0:
+    raise ValueError(f"Missing features: {missing_cols}")
+
+# =========================
+# 予測
+# =========================
 today["Pred"] = model.predict_proba(today[FEATURES])[:, 1]
 
 # =========================
-# 🔥 予測分布チェック（追加）
+# 予測分布チェック
 # =========================
 print("\n=== PRED CHECK ===")
 print(today["Pred"].describe())
@@ -148,22 +155,25 @@ if "limit_up_flag" in today.columns:
 if "Volume" in today.columns:
     today = today[today["Volume"].fillna(0) > 10000]
 
-# =========================
-# 🔥 Top Nだけ使う（シンプル）
-# =========================
-today = today.sort_values("Pred", ascending=False).head(TOP_N)
+today = today.dropna(subset=["Pred"])
 
-if len(today) == 0:
+if today.empty:
     print("⚠️ 銘柄なし")
     exit()
 
 # =========================
-# ランキング
+# Top N
 # =========================
-today = normalize(today)
+today = today.sort_values("Pred", ascending=False).head(TOP_N)
 
 # =========================
-# レジーム
+# ランキング
+# =========================
+today = today.copy()
+today["PredRank"] = range(1, len(today) + 1)
+
+# =========================
+# レジーム判定
 # =========================
 market_score = today["Pred"].mean()
 regime = get_regime(market_score)
@@ -183,7 +193,7 @@ else:
 # 出力
 # =========================
 print("\n=== 今日の銘柄 ===")
-print(today[["コード", "銘柄名", "Pred"]])
+print(today[["コード", "銘柄名", "Pred", "PredRank"]])
 
 print("\n市場状態:", regime)
 print("銘柄数:", len(today))
