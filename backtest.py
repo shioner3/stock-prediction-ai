@@ -23,11 +23,11 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-# 🔥 固定パラメータ
 THRESHOLD = 0.30
 HOLD_DAYS = 7
 TOP_N = 2
 STOP_LOSS = -0.03
+TAKE_PROFIT = 0.10   # 🔥 利確追加
 
 # =========================
 # データ読み込み
@@ -109,6 +109,11 @@ for d in dates:
             equity *= (1 + ret * pos["weight"])
             continue
 
+        # 🔥 利確（追加）
+        if ret > TAKE_PROFIT:
+            equity *= (1 + ret * pos["weight"])
+            continue
+
         # 通常決済
         if d >= pos["exit_date"]:
             equity *= (1 + ret * pos["weight"])
@@ -123,15 +128,14 @@ for d in dates:
     # =========================
     today = today.copy()
 
-    # 🔥 ① 確率フィルター
+    # ① 確率フィルター
     today = today[today["pred"] > THRESHOLD]
 
-    # 🔥 ② トレンドフィルター
+    # ② トレンドフィルター
     today = today[today["EMA_gap"] > 0]
-    
-    # 市場平均
-    market = today["Return_1"].mean()
 
+    # ③ 市場フィルター
+    market = today["Return_1"].mean()
     if market < -0.01:
         equity_curve.append(equity)
         continue
@@ -140,13 +144,12 @@ for d in dates:
         equity_curve.append(equity)
         continue
 
-    # 🔥 ③ ハイブリッド
+    # ④ ハイブリッド
     today = make_hybrid_score(today)
-
     picks = today.sort_values("hybrid_score", ascending=False).head(TOP_N)
 
     # =========================
-    # 🔥 ロット調整（predベース）
+    # ロット調整
     # =========================
     total_pred = picks["pred"].sum()
 
@@ -162,7 +165,8 @@ for d in dates:
         if any(p["ticker"] == row["Ticker"] for p in positions):
             continue
 
-        weight = row["pred"] / total_pred  # 🔥 ここがロット調整
+        # 🔥 ロット制限（追加）
+        weight = min(row["pred"] / total_pred, 0.6)
 
         positions.append({
             "ticker": row["Ticker"],
@@ -177,10 +181,9 @@ for d in dates:
 # 結果
 # =========================
 equity_curve = pd.Series(equity_curve)
-
 returns = equity_curve.pct_change().dropna()
 
-print("\n=== FINAL BACKTEST (HYBRID) ===")
+print("\n=== FINAL BACKTEST (HYBRID v2) ===")
 print("CAGR:", equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1)
 print("Sharpe:", returns.mean() / (returns.std() + 1e-9) * np.sqrt(252))
 print("MaxDD:", (equity_curve / equity_curve.cummax() - 1).min())
