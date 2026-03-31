@@ -15,50 +15,73 @@ jobs:
 
     steps:
 
-      # ① checkout（超重要）
+      # =========================
+      # ① checkout
+      # =========================
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      # ② キャッシュ
-      - name: Cache price data
-        uses: actions/cache@v3
-        with:
-          path: stock_data
-          key: prices-cache-v1
-          restore-keys: |
-            prices-cache-
-
-      # ③ ディレクトリ
+      # =========================
+      # ② ディレクトリ作成（先に作る）
+      # =========================
       - name: Create data directory
         run: mkdir -p stock_data logs
 
+      # =========================
+      # ③ キャッシュ復元（最重要）
+      # =========================
+      - name: Restore data cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data
+          key: stock-data-cache-v1
+          restore-keys: |
+            stock-data-cache-
+
+      # =========================
       # ④ Python
+      # =========================
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
+      # =========================
       # ⑤ 依存関係
+      # =========================
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements_ai.txt
 
+      # =========================
       # ⑥ 実行
+      # =========================
       - name: Run daily AI pipeline
         run: python run_daily.py
 
-      # ⑦ push（完全修正版）
+      # =========================
+      # ⑦ キャッシュ保存（重要）
+      # =========================
+      - name: Save data cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data
+          key: stock-data-cache-v1
+
+      # =========================
+      # ⑧ push（順序修正）
+      # =========================
       - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
+          # 🔥 先にpull（超重要）
+          git pull --rebase origin main
+
           git add today_picks_free.csv note_article.txt logs/ || true
           git commit -m "Update outputs [skip ci]" || echo "no change"
-
-          # 🔥 これが最重要
-          git pull --rebase origin main
 
           git push origin HEAD:main
