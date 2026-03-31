@@ -89,9 +89,20 @@ for t in tickers:
     else:
         last = last_dates[t]
 
-        # 🔥 1日以上ズレてたら更新
-        if (today - last).days >= 1:
-            update_tickers.append(t)
+        # 最新日を基準にする
+        global_last = df_existing["Date"].max() if not df_existing.empty else None
+
+        update_tickers = []
+
+        for t in tickers:
+            if t not in last_dates:
+                update_tickers.append(t)
+            else:
+                last = last_dates[t]
+
+                # 🔥 「全体の最新日より古い」だけ更新
+                if global_last is None or last < global_last:
+                    update_tickers.append(t)
 
 print("更新対象銘柄数:", len(update_tickers))
 
