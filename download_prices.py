@@ -10,9 +10,6 @@ import time
 CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
-# 🔥 決算キャッシュ（追加）
-EARNINGS_FILE = "stock_data/earnings.parquet"
-EARNINGS_META = "stock_data/earnings_meta.pkl"
 
 RECENT_DAYS = 10
 MIN_COUNT = 3000
