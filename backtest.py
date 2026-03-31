@@ -17,10 +17,11 @@ TARGET = "Target"
 
 STOP_LOSS = -0.03
 INITIAL_CAPITAL = 1.0
-MAX_WEIGHT = 0.4
 
 PRED_THRESHOLD = 0.51
 MARKET_THRESHOLD = 0.48
+
+MIN_TICKERS = 3000  # 🔥 追加（重要）
 
 # =========================
 # データ
@@ -30,6 +31,21 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+# =========================
+# 🔥 最新日の完全性チェック（超重要）
+# =========================
+counts = df["Date"].value_counts()
+
+valid_dates = counts[counts >= MIN_TICKERS].index
+latest_valid_date = valid_dates.max()
+
+print("\n=== DATA CHECK ===")
+print("最新日:", df["Date"].max())
+print("有効最新日:", latest_valid_date)
+
+# 🔥 不完全データ除外
+df = df[df["Date"] <= latest_valid_date]
 
 # =========================
 # 市場レジーム
@@ -52,7 +68,7 @@ df["Regime"] = np.where(
 )
 
 # =========================
-# 🔥 完全アウトオブサンプル
+# OOS分割
 # =========================
 OOS_START = 2024
 
@@ -64,7 +80,7 @@ print("Train:", train_df_full["Date"].min(), "~", train_df_full["Date"].max())
 print("Test :", test_df_oos["Date"].min(), "~", test_df_oos["Date"].max())
 
 # =========================
-# 🔥 ロバスト性用関数
+# バックテスト関数
 # =========================
 def run_backtest(test_df, train_df, label="BASE"):
 
@@ -95,7 +111,7 @@ def run_backtest(test_df, train_df, label="BASE"):
         regime = today["Regime"].iloc[0]
 
         # =========================
-        # 月次学習
+        # 月次学習（リーク防止）
         # =========================
         current_month = d.month
 
@@ -123,20 +139,23 @@ def run_backtest(test_df, train_df, label="BASE"):
         today_pred = today.copy()
         today_pred["pred"] = model.predict(today_pred[FEATURES])
 
-        # 地雷フィルタ
-            
+        # =========================
+        # フィルター
+        # =========================
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
-            
-            # 出来高フィルター（追加）
+
+        # 🔥 出来高フィルター（安全）
         if "Volume" in today_pred.columns:
-            today_pred = today_pred[today_pred["Volume"] > 10000]
+            today_pred = today_pred[today_pred["Volume"].fillna(0) > 10000]
 
         if today_pred.empty:
             equity_curve.append(equity)
             continue
 
-        # 市場
+        # =========================
+        # 市場フィルター
+        # =========================
         market_score = today_pred["pred"].mean()
         if np.isnan(market_score):
             market_score = 0
@@ -146,13 +165,17 @@ def run_backtest(test_df, train_df, label="BASE"):
         else:
             max_positions = 5 if regime == "bull" else 3
 
+        # =========================
         # スコア
+        # =========================
         candidates = today_pred[today_pred["pred"] > PRED_THRESHOLD]
 
         if len(candidates) < 3:
             candidates = today_pred.sort_values("pred", ascending=False).head(5)
 
+        # =========================
         # エントリー
+        # =========================
         if len(positions) == 0:
 
             picks = candidates.sort_values("pred", ascending=False).head(max_positions)
@@ -179,7 +202,9 @@ def run_backtest(test_df, train_df, label="BASE"):
 
                 trade_count += 1
 
+        # =========================
         # 管理
+        # =========================
         new_positions = []
 
         for pos in positions:
@@ -196,7 +221,6 @@ def run_backtest(test_df, train_df, label="BASE"):
             hold_days_now = j - pos["entry_day"] + 1
 
             if ret <= STOP_LOSS or hold_days_now >= pos["hold_days"]:
-
                 pnl = ret
                 equity *= (1 + pnl * pos["weight"])
                 trade_returns.append(pnl)
@@ -223,22 +247,17 @@ def run_backtest(test_df, train_df, label="BASE"):
     }
 
 # =========================
-# 🔥 ベース
+# 実行
 # =========================
 base_result = run_backtest(test_df_oos, train_df_full, "BASE")
 
-# =========================
-# 🔥 ロバスト性チェック
-# =========================
-
-# ① 銘柄削減
+# ロバスト
 tickers = test_df_oos["Ticker"].unique()
 reduced = np.random.choice(tickers, int(len(tickers)*0.7), replace=False)
 test_reduced = test_df_oos[test_df_oos["Ticker"].isin(reduced)]
 
 robust_1 = run_backtest(test_reduced, train_df_full, "Ticker70%")
 
-# ② 期間削減
 dates = sorted(test_df_oos["Date"].unique())
 cut = int(len(dates)*0.8)
 test_short = test_df_oos[test_df_oos["Date"].isin(dates[:cut])]
