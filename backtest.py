@@ -25,10 +25,8 @@ INITIAL_CAPITAL = 1.0
 
 THRESHOLD = 0.30
 HOLD_DAYS = 7
-TOP_N = 2
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
-WEIGHT_CAP = 0.6
 
 # =========================
 # データ
@@ -59,13 +57,7 @@ model.fit(train_df[FEATURES], train_df[TARGET])
 test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
 # =========================
-# 🔥 市場リターン作成（追加）
-# =========================
-market_df = test_df.groupby("Date")["Return_1"].mean().reset_index()
-market_df["market_ma5"] = market_df["Return_1"].rolling(5).mean()
-
-# =========================
-# ハイブリッド
+# ハイブリッドスコア
 # =========================
 def make_hybrid_score(df):
     df = df.copy()
@@ -94,7 +86,6 @@ dates = sorted(test_df["Date"].unique())
 for d in dates:
 
     today = test_df[test_df["Date"] == d]
-    market_row = market_df[market_df["Date"] == d]
 
     # =========================
     # 決済
@@ -112,14 +103,17 @@ for d in dates:
         price = cur["Close"].iloc[0]
         ret = (price - pos["entry_price"]) / pos["entry_price"]
 
+        # 損切り
         if ret < STOP_LOSS:
             equity *= (1 + ret * pos["weight"])
             continue
 
+        # 利確
         if ret > TAKE_PROFIT:
             equity *= (1 + ret * pos["weight"])
             continue
 
+        # 期限決済
         if d >= pos["exit_date"]:
             equity *= (1 + ret * pos["weight"])
             continue
@@ -133,10 +127,10 @@ for d in dates:
     # =========================
     today_f = today.copy()
 
-    # ① 確率
+    # ① 確率フィルター
     today_f = today_f[today_f["pred"] > THRESHOLD]
 
-    # ② トレンド
+    # ② トレンドフィルター
     today_f = today_f[today_f["EMA_gap"] > 0]
 
     if today_f.empty:
@@ -144,20 +138,23 @@ for d in dates:
         continue
 
     # =========================
-    # 🔥 市場フィルタ強化
+    # 🔥 レジーム判定（ここが本質）
     # =========================
-    market_ma5 = market_row["market_ma5"].values[0] if not market_row.empty else 0
+    market = today_f["Return_1"].mean()
     market_pred_mean = today_f["pred"].mean()
 
-    if market_ma5 < 0 or market_pred_mean < 0.32:
-        equity_curve.append(equity)
-        continue
+    if market < -0.01 or market_pred_mean < 0.30:
+        weight_cap = 0.3
+        top_n = 1
+    else:
+        weight_cap = 0.6
+        top_n = 2
 
     # =========================
     # ハイブリッド
     # =========================
     today_f = make_hybrid_score(today_f)
-    picks = today_f.sort_values("hybrid_score", ascending=False).head(TOP_N)
+    picks = today_f.sort_values("hybrid_score", ascending=False).head(top_n)
 
     total_pred = picks["pred"].sum()
     if total_pred == 0:
@@ -172,7 +169,7 @@ for d in dates:
         if any(p["ticker"] == row["Ticker"] for p in positions):
             continue
 
-        weight = min(row["pred"] / total_pred, WEIGHT_CAP)
+        weight = min(row["pred"] / total_pred, weight_cap)
 
         positions.append({
             "ticker": row["Ticker"],
@@ -189,7 +186,7 @@ for d in dates:
 equity_curve = pd.Series(equity_curve)
 returns = equity_curve.pct_change().dropna()
 
-print("\n=== FINAL BACKTEST (MARKET FILTER v2) ===")
+print("\n=== FINAL BACKTEST (REGIME MODEL) ===")
 print("CAGR:", equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1)
 print("Sharpe:", returns.mean() / (returns.std() + 1e-9) * np.sqrt(252))
 print("MaxDD:", (equity_curve / equity_curve.cummax() - 1).min())
