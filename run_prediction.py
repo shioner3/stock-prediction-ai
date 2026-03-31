@@ -2,14 +2,14 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMClassifier
 from datetime import datetime
 
 # =========================
 # 設定
 # =========================
 TOP_N = 5
-HOLD_DAYS = 3
+HOLD_DAYS = 5  # 🔥 featureと統一
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -17,7 +17,7 @@ TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
 
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
-MODEL_META_PATH = os.path.join(BASE_DIR, "model_meta.pkl")  # ★追加
+MODEL_META_PATH = os.path.join(BASE_DIR, "model_meta.pkl")
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -30,19 +30,14 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 PERF_LOG_PATH = os.path.join(LOG_DIR, "performance.csv")
 
 # =========================
-# 特徴量
+# 特徴量（🔥 生値に変更）
 # =========================
 FEATURES = [
-    "Return_1_rank",
-    "Return_3_rank",
-    "MA3_ratio_rank",
-    "MA5_ratio_rank",
-    "MA10_ratio_rank",
-    "Volatility_rank",
-    "Volume_change_rank",
-    "Volume_ratio_rank",
-    "HL_range_rank",
-    "RSI_rank"
+    "Return_1","Return_3",
+    "MA3_ratio","MA5_ratio","MA10_ratio",
+    "Volatility",
+    "Volume_change","Volume_ratio",
+    "HL_range","RSI"
 ]
 
 TARGET = "Target"
@@ -61,8 +56,7 @@ def normalize_columns(df):
 
 def normalize(df):
     df = df.copy()
-    df["PredRank"] = df["Pred"].rank(ascending=False, method="first")
-    df = df.sort_values("PredRank")
+    df = df.sort_values("Pred", ascending=False)
     df["PredRank"] = range(1, len(df) + 1)
     return df
 
@@ -77,22 +71,6 @@ def get_regime(score):
     else:
         return "weak"
 
-
-def load_performance():
-    if not os.path.exists(PERF_LOG_PATH):
-        return None
-
-    df = pd.read_csv(PERF_LOG_PATH)
-    if len(df) < 10:
-        return None
-
-    df = df.tail(100)
-
-    return {
-        "win_rate": df["win"].mean(),
-        "avg_return": df["return"].mean(),
-        "sharpe": df["return"].mean() / df["return"].std() if df["return"].std() != 0 else 0
-    }
 
 # =========================
 # データ読み込み
@@ -110,7 +88,13 @@ latest_date = predict_df["Date"].max()
 current_month = latest_date.strftime("%Y-%m")
 
 # =========================
-# 🔥 月次学習ロジック
+# 🔥 Targetチェック（追加）
+# =========================
+print("\n=== TARGET CHECK ===")
+print("Target mean:", train_df["Target"].mean())
+
+# =========================
+# 月次学習判定
 # =========================
 retrain = True
 
@@ -125,16 +109,21 @@ if os.path.exists(MODEL_PATH) and os.path.exists(MODEL_META_PATH):
 # モデル
 # =========================
 if retrain:
-    print("🔄 モデル再学習（今月初回）")
+    print("🔄 モデル再学習")
 
-    model = LGBMRegressor(n_estimators=200, learning_rate=0.05)
+    model = LGBMClassifier(
+        n_estimators=300,
+        learning_rate=0.05,
+        random_state=42
+    )
+
     model.fit(train_df[FEATURES], train_df[TARGET])
 
     pickle.dump(model, open(MODEL_PATH, "wb"))
     pickle.dump({"train_month": current_month}, open(MODEL_META_PATH, "wb"))
 
 else:
-    print("⚡ 既存モデル使用（再学習スキップ）")
+    print("⚡ 既存モデル使用")
     model = pickle.load(open(MODEL_PATH, "rb"))
 
 # =========================
@@ -142,25 +131,30 @@ else:
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
-today["Pred"] = model.predict(today[FEATURES])
+today["Pred"] = model.predict_proba(today[FEATURES])[:, 1]
 
 # =========================
-# 🔥 地雷フィルター
+# 🔥 予測分布チェック（追加）
+# =========================
+print("\n=== PRED CHECK ===")
+print(today["Pred"].describe())
+
+# =========================
+# フィルター
 # =========================
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
 
-# 出来高フィルター（追加）
-if "Volume" in today_pred.columns:
-    today_pred = today_pred[today_pred["Volume"] > 10000]
+if "Volume" in today.columns:
+    today = today[today["Volume"].fillna(0) > 10000]
 
 # =========================
-# スコアフィルター
+# 🔥 Top Nだけ使う（シンプル）
 # =========================
-today = today[today["Pred"] > 0.52]
+today = today.sort_values("Pred", ascending=False).head(TOP_N)
 
 if len(today) == 0:
-    print("⚠️ フィルター後に銘柄なし")
+    print("⚠️ 銘柄なし")
     exit()
 
 # =========================
@@ -189,7 +183,7 @@ else:
 # 出力
 # =========================
 print("\n=== 今日の銘柄 ===")
-print(today.head(TOP_N)[["コード", "銘柄名", "Pred"]])
+print(today[["コード", "銘柄名", "Pred"]])
 
 print("\n市場状態:", regime)
 print("銘柄数:", len(today))
