@@ -8,11 +8,15 @@ from lightgbm import LGBMClassifier
 DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
-    "Return_1","Return_3",
+    "Return_1","Return_3","Return_5",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
-    "Volume_change","Volume_ratio",
-    "HL_range","RSI"
+    "Volume_change","Volume_ratio","Volume_accel",
+    "HL_range",
+    "EMA_gap",
+    "Momentum_5","Momentum_10",
+    "ATR_ratio",
+    "RSI"
 ]
 
 TARGET = "Target"
@@ -22,25 +26,31 @@ MIN_TICKERS = 3000
 
 TOP_N = 5
 MAX_POSITIONS = 5
-HOLD_DAYS = 5  # 🔥 feature側と完全一致
+HOLD_DAYS = 5
 
 # =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
+
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 print("\n=== TARGET CHECK ===")
 print("Target mean:", df["Target"].mean())
 
+# 無限値処理（重要）
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# 完全性チェック
+# データ品質チェック
 # =========================
 counts = df["Date"].value_counts()
 valid_dates = counts[counts >= MIN_TICKERS].index
+
+if len(valid_dates) == 0:
+    raise ValueError("No valid dates with enough tickers")
+
 latest_valid_date = valid_dates.max()
 
 print("\n=== DATA CHECK ===")
@@ -62,7 +72,7 @@ print("Train:", train_df_full["Date"].min(), "~", train_df_full["Date"].max())
 print("Test :", test_df_oos["Date"].min(), "~", test_df_oos["Date"].max())
 
 # =========================
-# バックテスト
+# バックテスト関数
 # =========================
 def run_backtest(test_df, train_df, label="BASE"):
 
@@ -89,7 +99,7 @@ def run_backtest(test_df, train_df, label="BASE"):
             continue
 
         # =========================
-        # 月次学習
+        # 月次学習（リーク防止）
         # =========================
         current_month = d.month
 
@@ -98,11 +108,13 @@ def run_backtest(test_df, train_df, label="BASE"):
             train_until = train_df[train_df["Date"] < d]
 
             if len(train_until) > 2000:
+
                 model = LGBMClassifier(
                     n_estimators=300,
                     learning_rate=0.05,
                     random_state=42
                 )
+
                 model.fit(train_until[FEATURES], train_until[TARGET])
 
             prev_month = current_month
@@ -112,17 +124,17 @@ def run_backtest(test_df, train_df, label="BASE"):
             continue
 
         # =========================
-        # 予測（確率）
+        # 予測
         # =========================
         today_pred = today.copy()
         today_pred["pred"] = model.predict_proba(today_pred[FEATURES])[:, 1]
-        # 🔥 デバッグ（最初の数回だけでOK）
+
         if j < 3:
             print("\n=== PRED CHECK ===", d)
             print(today_pred["pred"].describe())
 
         # =========================
-        # フィルター
+        # フィルター（軽量化）
         # =========================
         if "limit_up_flag" in today_pred.columns:
             today_pred = today_pred[today_pred["limit_up_flag"] == 0]
@@ -130,40 +142,46 @@ def run_backtest(test_df, train_df, label="BASE"):
         if "Volume" in today_pred.columns:
             today_pred = today_pred[today_pred["Volume"].fillna(0) > 10000]
 
+        today_pred = today_pred.dropna(subset=["pred"])
+
         if today_pred.empty:
             equity_curve.append(equity)
             continue
 
         # =========================
-        # 🔥 Top N
+        # Top N選定
         # =========================
         picks = today_pred.sort_values("pred", ascending=False).head(TOP_N)
 
         # =========================
         # エントリー
         # =========================
-        if len(positions) < MAX_POSITIONS:
+        for _, row in picks.iterrows():
 
-            for _, row in picks.iterrows():
+            if len(positions) >= MAX_POSITIONS:
+                break
 
-                if len(positions) >= MAX_POSITIONS:
-                    break
+            if any(p["ticker"] == row["Ticker"] for p in positions):
+                continue
 
-                if any(p["ticker"] == row["Ticker"] for p in positions):
-                    continue
+            tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
 
-                tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
-                if tmr.empty:
-                    continue
+            if tmr.empty:
+                continue
 
-                positions.append({
-                    "ticker": row["Ticker"],
-                    "entry_price": tmr["Open"].iloc[0],
-                    "entry_day": j,
-                    "weight": 1.0 / MAX_POSITIONS
-                })
+            entry_price = tmr["Open"].iloc[0]
 
-                trade_count += 1
+            if entry_price <= 0:
+                continue
+
+            positions.append({
+                "ticker": row["Ticker"],
+                "entry_price": entry_price,
+                "entry_day": j,
+                "weight": 1.0 / MAX_POSITIONS
+            })
+
+            trade_count += 1
 
         # =========================
         # ポジション管理
@@ -213,13 +231,13 @@ def run_backtest(test_df, train_df, label="BASE"):
 base_result = run_backtest(test_df_oos, train_df_full, "BASE")
 
 tickers = test_df_oos["Ticker"].unique()
-reduced = np.random.choice(tickers, int(len(tickers)*0.7), replace=False)
+reduced = np.random.choice(tickers, int(len(tickers) * 0.7), replace=False)
 test_reduced = test_df_oos[test_df_oos["Ticker"].isin(reduced)]
 
 robust_1 = run_backtest(test_reduced, train_df_full, "Ticker70%")
 
 dates = sorted(test_df_oos["Date"].unique())
-cut = int(len(dates)*0.8)
+cut = int(len(dates) * 0.8)
 test_short = test_df_oos[test_df_oos["Date"].isin(dates[:cut])]
 
 robust_2 = run_backtest(test_short, train_df_full, "Time80%")
