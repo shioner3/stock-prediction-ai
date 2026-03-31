@@ -153,7 +153,9 @@ if "is_earnings" in today.columns:
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
 
-
+# 出来高フィルター（追加）
+if "Volume" in today_pred.columns:
+    today_pred = today_pred[today_pred["Volume"] > 10000]
 
 # =========================
 # スコアフィルター
