@@ -10,6 +10,9 @@ import time
 CSV_FILE = "data_j.csv"
 PARQUET_FILE = "stock_data/prices.parquet"
 
+# 🔥 追加（不足してた）
+EARNINGS_FILE = "stock_data/earnings.parquet"
+EARNINGS_META = "stock_data/earnings_meta.pkl"
 
 RECENT_DAYS = 10
 MIN_COUNT = 3000
@@ -22,7 +25,6 @@ SAFE_BUFFER_DAYS = 7
 
 os.makedirs("stock_data", exist_ok=True)
 
-
 # =========================
 # 正規化
 # =========================
@@ -31,7 +33,6 @@ def normalize_ticker(t):
     if not t.endswith(".T"):
         t += ".T"
     return t
-
 
 # =========================
 # 銘柄マスタ
@@ -52,7 +53,6 @@ print("銘柄数:", len(tickers))
 
 today = pd.Timestamp.now().normalize()
 
-
 # =========================
 # 株価データ読み込み
 # =========================
@@ -70,7 +70,6 @@ else:
         columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Name"]
     )
 
-
 # =========================
 # 最終取得日
 # =========================
@@ -79,6 +78,22 @@ last_dates = {}
 if not df_existing.empty:
     last_dates = df_existing.groupby("Ticker")["Date"].max().to_dict()
 
+# =========================
+# 🔥 更新対象銘柄（ここ追加）
+# =========================
+update_tickers = []
+
+for t in tickers:
+    if t not in last_dates:
+        update_tickers.append(t)
+    else:
+        last = last_dates[t]
+
+        # 🔥 1日以上ズレてたら更新
+        if (today - last).days >= 1:
+            update_tickers.append(t)
+
+print("更新対象銘柄数:", len(update_tickers))
 
 # =========================
 # yfinance取得
@@ -100,30 +115,23 @@ def fetch_batch(batch, start=None):
             time.sleep(2)
     return None
 
-
 # =========================
-# 🔥 株価差分取得
+# 🔥 差分取得（修正済み）
 # =========================
-targets = {}
-
-for t in tickers:
-    if t in last_dates:
-        start = last_dates[t] - pd.Timedelta(days=SAFE_BUFFER_DAYS)
-    else:
-        start = pd.Timestamp("2018-01-01")
-
-    targets[t] = start
-
-
 print("\n=== 差分取得 ===")
 
 dfs_new = []
 
-for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
+for i in tqdm(range(0, len(update_tickers), BATCH_SIZE)):
 
-    batch = tickers[i:i+BATCH_SIZE]
+    batch = update_tickers[i:i+BATCH_SIZE]
 
-    start = min([targets[t] for t in batch])
+    # 🔥 start最適化（安全）
+    start = min([
+        last_dates.get(t, pd.Timestamp("2018-01-01"))
+        for t in batch
+    ]) - pd.Timedelta(days=SAFE_BUFFER_DAYS)
+
     start_str = pd.to_datetime(start).strftime("%Y-%m-%d")
 
     data = fetch_batch(batch, start=start_str)
@@ -157,16 +165,13 @@ for i in tqdm(range(0, len(tickers), BATCH_SIZE)):
 
     time.sleep(SLEEP_TIME)
 
-
 # =========================
 # 結合
 # =========================
 df_new = pd.concat(dfs_new, ignore_index=True) if dfs_new else pd.DataFrame()
 
 df_all = pd.concat([df_existing, df_new], ignore_index=True)
-
 df_all = df_all.drop_duplicates(subset=["Date", "Ticker"], keep="last")
-
 
 # =========================
 # 完全性チェック
@@ -177,7 +182,6 @@ print("\n=== 最新付近チェック ===")
 print(counts.sort_index().tail(10))
 
 valid_dates = counts[counts >= MIN_COUNT].index
-
 latest_valid = max(valid_dates) if len(valid_dates) > 0 else None
 
 print("\n=== 判定 ===")
@@ -185,15 +189,13 @@ print("最新日:", df_all["Date"].max())
 print("有効最新日:", latest_valid)
 print("銘柄数:", counts.get(latest_valid, 0))
 
-
 # =========================
 # 保存（株価）
 # =========================
 df_all.to_parquet(PARQUET_FILE, index=False)
 
-
 # =========================================================
-# 🔥 決算データ（月1キャッシュ）
+# 決算データ（月1キャッシュ）
 # =========================================================
 def fetch_earnings(ticker):
     try:
@@ -209,11 +211,9 @@ def fetch_earnings(ticker):
     except:
         return None
 
-
 def load_or_update_earnings():
     today_month = pd.Timestamp.now().strftime("%Y-%m")
 
-    # 既存あり
     if os.path.exists(EARNINGS_FILE) and os.path.exists(EARNINGS_META):
         meta = pd.read_pickle(EARNINGS_META)
 
@@ -221,28 +221,23 @@ def load_or_update_earnings():
             print("\n⚡ earnings: キャッシュ使用")
             return pd.read_parquet(EARNINGS_FILE)
 
-    # 更新
     print("\n🔄 earnings: 月次フル更新")
 
     dfs = []
 
-    for t in tqdm(tickers[:]):  
+    for t in tqdm(tickers[:]):
         df = fetch_earnings(t)
         if df is not None:
             dfs.append(df)
 
         time.sleep(0.2)
 
-    if dfs:
-        result = pd.concat(dfs, ignore_index=True)
-    else:
-        result = pd.DataFrame()
+    result = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
     result.to_parquet(EARNINGS_FILE, index=False)
     pd.to_pickle({"month": today_month}, EARNINGS_META)
 
     return result
-
 
 # =========================
 # 実行（決算更新）
@@ -250,7 +245,6 @@ def load_or_update_earnings():
 earnings_df = load_or_update_earnings()
 
 print("\n決算データ件数:", len(earnings_df))
-
 
 # =========================
 # 完了
