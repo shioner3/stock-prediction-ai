@@ -24,9 +24,9 @@ TARGET = "Target"
 INITIAL_CAPITAL = 1.0
 MIN_TICKERS = 3000
 
-TOP_N = 5
+TOP_N = 3
 MAX_POSITIONS = 5
-HOLD_DAYS = 5
+HOLD_DAYS = 3
 
 # =========================
 # データ
