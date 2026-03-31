@@ -1,117 +1,12 @@
 import pandas as pd
 import numpy as np
-import duckdb
-import os
+from lightgbm import LGBMClassifier
 
 # =========================
 # 設定
 # =========================
-PARQUET_FILE = "stock_data/prices.parquet"
+DATA_PATH = "ml_dataset.parquet"
 
-TRAIN_SAVE_PATH = "ml_dataset.parquet"
-PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
-
-HOLD_DAYS = 5   # 🔥 3 → 5 に変更
-MIN_COUNT = 3000
-
-# =========================
-# データ読み込み
-# =========================
-con = duckdb.connect()
-
-df = con.execute(f"""
-SELECT 
-    Date,
-    Ticker,
-    Name,
-    Open,
-    High,
-    Low,
-    Close,
-    Volume
-FROM '{PARQUET_FILE}'
-""").df()
-
-print("元データサイズ:", df.shape)
-
-df["Date"] = pd.to_datetime(df["Date"])
-
-# =========================
-# ソート
-# =========================
-df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
-
-# =========================
-# 日付完全性フィルター
-# =========================
-counts = df["Date"].value_counts()
-valid_dates = counts[counts >= MIN_COUNT].index
-df = df[df["Date"].isin(valid_dates)].copy()
-
-print("フィルタ後サイズ:", df.shape)
-
-# =========================
-# 基本特徴量（rank削除）
-# =========================
-df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
-df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3)
-
-df["MA3"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(3).mean())
-df["MA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean())
-df["MA10"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(10).mean())
-
-df["MA3_ratio"] = df["Close"] / df["MA3"]
-df["MA5_ratio"] = df["Close"] / df["MA5"]
-df["MA10_ratio"] = df["Close"] / df["MA10"]
-
-df["Volatility"] = df.groupby("Ticker")["Return_1"].transform(lambda x: x.rolling(10).std())
-
-df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change()
-df["Volume_ma5"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(5).mean())
-df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
-
-df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
-
-# =========================
-# RSI
-# =========================
-delta = df.groupby("Ticker")["Close"].diff()
-gain = delta.clip(lower=0)
-loss = -delta.clip(upper=0)
-
-avg_gain = gain.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
-avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
-
-rs = avg_gain / avg_loss
-df["RSI"] = 100 - (100 / (1 + rs))
-
-# =========================
-# ストップ高
-# =========================
-df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
-df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
-
-# =========================
-# 🔥 Target（分類に変更）
-# =========================
-df["FutureReturn"] = (
-    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
-)
-
-# 🔥 上がるかどうか（分類）
-df["Target"] = (df["FutureReturn"] > 0).astype(int)
-
-# 未来ない行削除
-df = df.dropna(subset=["FutureReturn"])
-
-# =========================
-# 無限値処理
-# =========================
-df = df.replace([np.inf, -np.inf], np.nan)
-
-# =========================
-# 学習データ
-# =========================
 FEATURES = [
     "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
@@ -120,34 +15,209 @@ FEATURES = [
     "HL_range","RSI"
 ]
 
-train_df = df.dropna(subset=FEATURES + ["Target"]).copy()
-train_df = train_df.reset_index(drop=True)
+TARGET = "Target"
+
+INITIAL_CAPITAL = 1.0
+MIN_TICKERS = 3000
+
+TOP_N = 5
+MAX_POSITIONS = 5
+HOLD_DAYS = 5  # 🔥 feature側と完全一致
 
 # =========================
-# 予測データ（最新日）
+# データ
 # =========================
-latest_date = df["Date"].max()
+df = pd.read_parquet(DATA_PATH)
+df["Date"] = pd.to_datetime(df["Date"])
+df = df.sort_values(["Date", "Ticker"])
 
-predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).copy()
-predict_df = predict_df.reset_index(drop=True)
-
-# =========================
-# デバッグ
-# =========================
-print("\n=== TRAIN DEBUG ===")
-print("rows:", len(train_df))
-print("latest:", train_df["Date"].max())
-
-print("\n=== PREDICT DEBUG ===")
-print("rows:", len(predict_df))
-print("latest:", predict_df["Date"].max())
+df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# 保存
+# 完全性チェック
 # =========================
-train_df.to_parquet(TRAIN_SAVE_PATH)
-predict_df.to_parquet(PREDICT_SAVE_PATH)
+counts = df["Date"].value_counts()
+valid_dates = counts[counts >= MIN_TICKERS].index
+latest_valid_date = valid_dates.max()
 
-print("\n保存完了")
-print("train rows:", len(train_df))
-print("predict rows:", len(predict_df))
+print("\n=== DATA CHECK ===")
+print("最新日:", df["Date"].max())
+print("有効最新日:", latest_valid_date)
+
+df = df[df["Date"] <= latest_valid_date]
+
+# =========================
+# OOS分割
+# =========================
+OOS_START = 2024
+
+train_df_full = df[df["Date"].dt.year < OOS_START]
+test_df_oos = df[df["Date"].dt.year >= OOS_START]
+
+print("\n=== OOS TEST ===")
+print("Train:", train_df_full["Date"].min(), "~", train_df_full["Date"].max())
+print("Test :", test_df_oos["Date"].min(), "~", test_df_oos["Date"].max())
+
+# =========================
+# バックテスト
+# =========================
+def run_backtest(test_df, train_df, label="BASE"):
+
+    equity = INITIAL_CAPITAL
+    equity_curve = []
+
+    model = None
+    positions = []
+    trade_count = 0
+
+    dates = sorted(test_df["Date"].unique())
+    prev_month = None
+
+    for j in range(len(dates) - 1):
+
+        d = dates[j]
+        next_d = dates[j + 1]
+
+        today = test_df[test_df["Date"] == d].copy()
+        tomorrow = test_df[test_df["Date"] == next_d].copy()
+
+        if today.empty:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 月次学習
+        # =========================
+        current_month = d.month
+
+        if model is None or current_month != prev_month:
+
+            train_until = train_df[train_df["Date"] < d]
+
+            if len(train_until) > 2000:
+                model = LGBMClassifier(
+                    n_estimators=300,
+                    learning_rate=0.05,
+                    random_state=42
+                )
+                model.fit(train_until[FEATURES], train_until[TARGET])
+
+            prev_month = current_month
+
+        if model is None:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 予測（確率）
+        # =========================
+        today_pred = today.copy()
+        today_pred["pred"] = model.predict_proba(today_pred[FEATURES])[:, 1]
+
+        # =========================
+        # フィルター
+        # =========================
+        if "limit_up_flag" in today_pred.columns:
+            today_pred = today_pred[today_pred["limit_up_flag"] == 0]
+
+        if "Volume" in today_pred.columns:
+            today_pred = today_pred[today_pred["Volume"].fillna(0) > 10000]
+
+        if today_pred.empty:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 🔥 Top N
+        # =========================
+        picks = today_pred.sort_values("pred", ascending=False).head(TOP_N)
+
+        # =========================
+        # エントリー
+        # =========================
+        if len(positions) < MAX_POSITIONS:
+
+            for _, row in picks.iterrows():
+
+                if len(positions) >= MAX_POSITIONS:
+                    break
+
+                if any(p["ticker"] == row["Ticker"] for p in positions):
+                    continue
+
+                tmr = tomorrow[tomorrow["Ticker"] == row["Ticker"]]
+                if tmr.empty:
+                    continue
+
+                positions.append({
+                    "ticker": row["Ticker"],
+                    "entry_price": tmr["Open"].iloc[0],
+                    "entry_day": j,
+                    "weight": 1.0 / MAX_POSITIONS
+                })
+
+                trade_count += 1
+
+        # =========================
+        # ポジション管理
+        # =========================
+        new_positions = []
+
+        for pos in positions:
+
+            cur = today[today["Ticker"] == pos["ticker"]]
+
+            if cur.empty:
+                new_positions.append(pos)
+                continue
+
+            price = cur["Close"].iloc[0]
+            ret = (price - pos["entry_price"]) / pos["entry_price"]
+
+            hold_days_now = j - pos["entry_day"] + 1
+
+            if hold_days_now >= HOLD_DAYS:
+                equity *= (1 + ret * pos["weight"])
+                continue
+
+            new_positions.append(pos)
+
+        positions = new_positions
+        equity_curve.append(equity)
+
+    equity_curve = pd.Series(equity_curve)
+
+    if len(equity_curve) < 2:
+        return None
+
+    returns = equity_curve.pct_change().dropna()
+
+    return {
+        "label": label,
+        "CAGR": equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1,
+        "Sharpe": returns.mean() / (returns.std() + 1e-9) * np.sqrt(252),
+        "MaxDD": (equity_curve / equity_curve.cummax() - 1).min(),
+        "Trades": trade_count
+    }
+
+# =========================
+# 実行
+# =========================
+base_result = run_backtest(test_df_oos, train_df_full, "BASE")
+
+tickers = test_df_oos["Ticker"].unique()
+reduced = np.random.choice(tickers, int(len(tickers)*0.7), replace=False)
+test_reduced = test_df_oos[test_df_oos["Ticker"].isin(reduced)]
+
+robust_1 = run_backtest(test_reduced, train_df_full, "Ticker70%")
+
+dates = sorted(test_df_oos["Date"].unique())
+cut = int(len(dates)*0.8)
+test_short = test_df_oos[test_df_oos["Date"].isin(dates[:cut])]
+
+robust_2 = run_backtest(test_short, train_df_full, "Time80%")
+
+results = pd.DataFrame([base_result, robust_1, robust_2])
+
+print("\n=== ROBUST TEST ===")
+print(results)
