@@ -23,13 +23,12 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.28
 HOLD_DAYS = 7
-
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-TOP_N_LIST = [1, 2, 3, 5]
+# 🔥 探索
+THRESHOLD_LIST = [0.24, 0.26, 0.28, 0.30, 0.32]
 
 # =========================
 # データ
@@ -80,7 +79,7 @@ def make_hybrid_score(df):
 # =========================
 # バックテスト関数
 # =========================
-def run_backtest(top_n):
+def run_backtest(threshold):
 
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
@@ -131,7 +130,7 @@ def run_backtest(top_n):
         # エントリー
         # =========================
         today_f = today.copy()
-        today_f = today_f[today_f["pred"] > THRESHOLD]
+        today_f = today_f[today_f["pred"] > threshold]
         today_f = today_f[today_f["EMA_gap"] > 0]
 
         if not today_f.empty:
@@ -139,19 +138,17 @@ def run_backtest(top_n):
             market = today_f["Return_1"].mean()
             market_pred_mean = today_f["pred"].mean()
 
-            # レジーム
+            # 🔥 レジーム（TOP1固定）
             if market < -0.02:
                 weight_cap = 0.2
-                n = 1
             elif market < -0.01 or market_pred_mean < 0.30:
                 weight_cap = 0.3
-                n = 1
             else:
-                weight_cap = 0.4
-                n = top_n  # ←ここだけ変化
+                weight_cap = 0.5   # ←ここ強化（TOP1専用）
 
+            # TOP1固定
             today_f = make_hybrid_score(today_f)
-            picks = today_f.sort_values("hybrid_score", ascending=False).head(n)
+            picks = today_f.sort_values("hybrid_score", ascending=False).head(1)
 
             total_pred = picks["pred"].sum()
 
@@ -180,7 +177,7 @@ def run_backtest(top_n):
 
                     entry_price = next_row["Open"].iloc[0]
 
-                    weight = min(row["pred"] / total_pred, weight_cap)
+                    weight = min(1.0, weight_cap)  # TOP1だからフル寄せ
                     capital = free_cash * weight
 
                     if capital <= 0:
@@ -214,11 +211,11 @@ def run_backtest(top_n):
 # =========================
 results = []
 
-for tn in TOP_N_LIST:
+for th in THRESHOLD_LIST:
 
-    print(f"Running TOP_N={tn}")
+    print(f"Running THRESHOLD={th}")
 
-    res = run_backtest(tn)
+    res = run_backtest(th)
 
     if res is None:
         continue
@@ -226,7 +223,7 @@ for tn in TOP_N_LIST:
     CAGR, Sharpe, MaxDD = res
 
     results.append({
-        "TOP_N": tn,
+        "THRESHOLD": th,
         "CAGR": CAGR,
         "Sharpe": Sharpe,
         "MaxDD": MaxDD
@@ -237,5 +234,5 @@ for tn in TOP_N_LIST:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== TOP_N OPTIMIZATION ===")
+print("\n=== THRESHOLD OPTIMIZATION (TOP1) ===")
 print(result_df.sort_values("CAGR", ascending=False))
