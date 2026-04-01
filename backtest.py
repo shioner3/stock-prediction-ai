@@ -25,7 +25,7 @@ TARGET = "Target"
 INITIAL_CAPITAL = 1.0
 
 # 🔥 固定
-HOLD_DAYS = 5
+HOLD_DAYS = 3
 
 # 探索範囲
 THRESHOLD_LIST = [0.28, 0.30, 0.32, 0.35]
