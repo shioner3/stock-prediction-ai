@@ -23,12 +23,12 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
+THRESHOLD = 0.26
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
-TAKE_PROFIT = 0.10
 
-# 🔥 探索
-THRESHOLD_LIST = [0.24, 0.26, 0.28, 0.30, 0.32]
+# 🔥 最適化対象
+TAKE_PROFIT_LIST = [0.06, 0.08, 0.10, 0.12, 0.15]
 
 # =========================
 # データ
@@ -79,7 +79,7 @@ def make_hybrid_score(df):
 # =========================
 # バックテスト関数
 # =========================
-def run_backtest(threshold):
+def run_backtest(take_profit):
 
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
@@ -113,7 +113,7 @@ def run_backtest(threshold):
 
             if ret < STOP_LOSS:
                 exit_flag = True
-            elif ret > TAKE_PROFIT:
+            elif ret > take_profit:
                 exit_flag = True
             elif d >= pos["exit_date"]:
                 exit_flag = True
@@ -130,7 +130,7 @@ def run_backtest(threshold):
         # エントリー
         # =========================
         today_f = today.copy()
-        today_f = today_f[today_f["pred"] > threshold]
+        today_f = today_f[today_f["pred"] > THRESHOLD]
         today_f = today_f[today_f["EMA_gap"] > 0]
 
         if not today_f.empty:
@@ -138,17 +138,18 @@ def run_backtest(threshold):
             market = today_f["Return_1"].mean()
             market_pred_mean = today_f["pred"].mean()
 
-            # 🔥 レジーム（TOP1固定）
             if market < -0.02:
                 weight_cap = 0.2
+                top_n = 1
             elif market < -0.01 or market_pred_mean < 0.30:
                 weight_cap = 0.3
+                top_n = 1
             else:
-                weight_cap = 0.5   # ←ここ強化（TOP1専用）
+                weight_cap = 0.4
+                top_n = 3
 
-            # TOP1固定
             today_f = make_hybrid_score(today_f)
-            picks = today_f.sort_values("hybrid_score", ascending=False).head(1)
+            picks = today_f.sort_values("hybrid_score", ascending=False).head(top_n)
 
             total_pred = picks["pred"].sum()
 
@@ -177,7 +178,7 @@ def run_backtest(threshold):
 
                     entry_price = next_row["Open"].iloc[0]
 
-                    weight = min(1.0, weight_cap)  # TOP1だからフル寄せ
+                    weight = min(row["pred"] / total_pred, weight_cap)
                     capital = free_cash * weight
 
                     if capital <= 0:
@@ -211,11 +212,11 @@ def run_backtest(threshold):
 # =========================
 results = []
 
-for th in THRESHOLD_LIST:
+for tp in TAKE_PROFIT_LIST:
 
-    print(f"Running THRESHOLD={th}")
+    print(f"Running TAKE_PROFIT={tp}")
 
-    res = run_backtest(th)
+    res = run_backtest(tp)
 
     if res is None:
         continue
@@ -223,7 +224,7 @@ for th in THRESHOLD_LIST:
     CAGR, Sharpe, MaxDD = res
 
     results.append({
-        "THRESHOLD": th,
+        "TAKE_PROFIT": tp,
         "CAGR": CAGR,
         "Sharpe": Sharpe,
         "MaxDD": MaxDD
@@ -234,5 +235,5 @@ for th in THRESHOLD_LIST:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== THRESHOLD OPTIMIZATION (TOP1) ===")
+print("\n=== TAKE PROFIT OPTIMIZATION ===")
 print(result_df.sort_values("CAGR", ascending=False))
