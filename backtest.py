@@ -38,6 +38,25 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
+# 学習
+# =========================
+train_df = df[df["Date"].dt.year < 2024]
+test_df = df[df["Date"].dt.year >= 2024].copy()
+
+model = LGBMClassifier(
+    n_estimators=200,
+    learning_rate=0.05,
+    random_state=42
+)
+
+model.fit(train_df[FEATURES], train_df[TARGET])
+
+# =========================
+# 予測
+# =========================
+test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
+
+# =========================
 # ハイブリッド
 # =========================
 def make_hybrid_score(df):
@@ -56,156 +75,148 @@ def make_hybrid_score(df):
     return df
 
 # =========================
-# 🔥 バックテスト関数
+# 日付リスト（翌日参照用）
 # =========================
-def run_backtest(train_df, test_df, mode="normal", label="TEST"):
+dates = sorted(test_df["Date"].unique())
+date_index = {d: i for i, d in enumerate(dates)}
 
-    # 学習
-    model = LGBMClassifier(
-        n_estimators=200,
-        learning_rate=0.05,
-        random_state=42
-    )
-    model.fit(train_df[FEATURES], train_df[TARGET])
+# =========================
+# バックテスト
+# =========================
+equity = INITIAL_CAPITAL
+equity_curve = []
 
-    # 予測
-    test_df = test_df.copy()
-    test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
+positions = []
 
-    equity = INITIAL_CAPITAL
-    positions = []
-    equity_curve = []
+for d in dates:
 
-    dates = sorted(test_df["Date"].unique())
+    today = test_df[test_df["Date"] == d]
 
-    for d in dates:
+    daily_pnl = 0
 
-        today = test_df[test_df["Date"] == d]
+    # =========================
+    # 決済
+    # =========================
+    new_positions = []
 
-        # =========================
-        # 決済
-        # =========================
-        new_positions = []
+    for pos in positions:
 
-        for pos in positions:
+        cur = today[today["Ticker"] == pos["ticker"]]
 
-            cur = today[today["Ticker"] == pos["ticker"]]
-
-            if cur.empty:
-                new_positions.append(pos)
-                continue
-
-            price = cur["Close"].iloc[0]
-            ret = (price - pos["entry_price"]) / pos["entry_price"]
-
-            if ret < STOP_LOSS or ret > TAKE_PROFIT or d >= pos["exit_date"]:
-                equity *= (1 + ret * pos["weight"])
-            else:
-                new_positions.append(pos)
-
-        positions = new_positions
-
-        # =========================
-        # エントリー候補
-        # =========================
-        today_f = today.copy()
-        today_f = today_f[today_f["pred"] > THRESHOLD]
-        today_f = today_f[today_f["EMA_gap"] > 0]
-
-        if today_f.empty:
-            equity_curve.append(equity)
+        if cur.empty:
+            new_positions.append(pos)
             continue
 
+        price = cur["Close"].iloc[0]
+        ret = (price - pos["entry_price"]) / pos["entry_price"]
+
+        exit_flag = False
+
+        if ret < STOP_LOSS:
+            exit_flag = True
+        elif ret > TAKE_PROFIT:
+            exit_flag = True
+        elif d >= pos["exit_date"]:
+            exit_flag = True
+
+        if exit_flag:
+            pnl = pos["capital"] * ret
+            daily_pnl += pnl
+        else:
+            new_positions.append(pos)
+
+    positions = new_positions
+
+    # =========================
+    # エントリー候補
+    # =========================
+    today_f = today.copy()
+    today_f = today_f[today_f["pred"] > THRESHOLD]
+    today_f = today_f[today_f["EMA_gap"] > 0]
+
+    if not today_f.empty:
+
         # =========================
-        # 🔥 市場状態
+        # レジーム判定
         # =========================
         market = today_f["Return_1"].mean()
         market_pred_mean = today_f["pred"].mean()
 
-        # =========================
-        # 🔥 モード分岐（ここが比較ポイント）
-        # =========================
         if market < -0.02:
-
-            if mode == "stop":
-                equity_curve.append(equity)
-                continue
-
-            elif mode == "weak":
-                weight_cap = 0.2
-                top_n = 1
-
+            weight_cap = 0.2
+            top_n = 1
+        elif market < -0.01 or market_pred_mean < 0.30:
+            weight_cap = 0.3
+            top_n = 1
         else:
-            if market < -0.01 or market_pred_mean < 0.30:
-                weight_cap = 0.3
-                top_n = 1
-            else:
-                weight_cap = 0.4
-                top_n = 3
+            weight_cap = 0.4
+            top_n = 3
 
         # =========================
-        # ハイブリッド
+        # 銘柄選定
         # =========================
         today_f = make_hybrid_score(today_f)
         picks = today_f.sort_values("hybrid_score", ascending=False).head(top_n)
 
         total_pred = picks["pred"].sum()
-        if total_pred == 0:
-            equity_curve.append(equity)
-            continue
 
-        # =========================
-        # エントリー
-        # =========================
-        for _, row in picks.iterrows():
+        if total_pred > 0:
 
-            if any(p["ticker"] == row["Ticker"] for p in positions):
+            invested = sum([p["capital"] for p in positions])
+            free_cash = equity - invested
+
+            # 🔥 翌日取得
+            if d not in date_index or date_index[d] + 1 >= len(dates):
+                equity += daily_pnl
+                equity_curve.append(equity)
                 continue
 
-            weight = min(row["pred"] / total_pred, weight_cap)
+            next_day = dates[date_index[d] + 1]
+            next_data = test_df[test_df["Date"] == next_day]
 
-            positions.append({
-                "ticker": row["Ticker"],
-                "entry_price": row["Close"],
-                "exit_date": d + pd.Timedelta(days=HOLD_DAYS),
-                "weight": weight
-            })
+            for _, row in picks.iterrows():
 
-        equity_curve.append(equity)
+                if any(p["ticker"] == row["Ticker"] for p in positions):
+                    continue
 
-    equity_curve = pd.Series(equity_curve)
+                next_row = next_data[next_data["Ticker"] == row["Ticker"]]
 
-    if len(equity_curve) < 2:
-        return None
+                if next_row.empty:
+                    continue
 
-    returns = equity_curve.pct_change().dropna()
+                entry_price = next_row["Open"].iloc[0]
 
-    return {
-        "label": label,
-        "CAGR": equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1,
-        "Sharpe": returns.mean() / (returns.std() + 1e-9) * np.sqrt(252),
-        "MaxDD": (equity_curve / equity_curve.cummax() - 1).min()
-    }
+                weight = min(row["pred"] / total_pred, weight_cap)
+                capital = free_cash * weight
 
-# =========================
-# OOS分割
-# =========================
-OOS_START = 2024
+                if capital <= 0:
+                    continue
 
-train_df = df[df["Date"].dt.year < OOS_START]
-test_df = df[df["Date"].dt.year >= OOS_START]
+                positions.append({
+                    "ticker": row["Ticker"],
+                    "entry_price": entry_price,
+                    "entry_date": next_day,
+                    "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
+                    "capital": capital
+                })
 
-# =========================
-# 🔥 3パターン比較
-# =========================
-base = run_backtest(train_df, test_df, mode="normal", label="NORMAL")
-stop = run_backtest(train_df, test_df, mode="stop", label="STOP")
-weak = run_backtest(train_df, test_df, mode="weak", label="WEAK")
+    # =========================
+    # 日次更新
+    # =========================
+    equity += daily_pnl
+    equity_curve.append(equity)
 
 # =========================
 # 結果
 # =========================
-results = pd.DataFrame([base, stop, weak])
+equity_curve = pd.Series(equity_curve)
+returns = equity_curve.pct_change().dropna()
 
-print("\n=== STOP vs WEAK COMPARISON ===")
-print(results)
+CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
+
+print("\n=== FINAL BACKTEST (NEXT OPEN) ===")
+print("CAGR:", CAGR)
+print("Sharpe:", Sharpe)
+print("MaxDD:", MaxDD)
