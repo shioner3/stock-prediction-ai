@@ -56,9 +56,9 @@ def make_hybrid_score(df):
     return df
 
 # =========================
-# 🔥 バックテスト関数（共通）
+# 🔥 バックテスト関数
 # =========================
-def run_backtest(train_df, test_df, label="TEST"):
+def run_backtest(train_df, test_df, mode="normal", label="TEST"):
 
     # 学習
     model = LGBMClassifier(
@@ -106,10 +106,9 @@ def run_backtest(train_df, test_df, label="TEST"):
         positions = new_positions
 
         # =========================
-        # エントリー
+        # エントリー候補
         # =========================
         today_f = today.copy()
-
         today_f = today_f[today_f["pred"] > THRESHOLD]
         today_f = today_f[today_f["EMA_gap"] > 0]
 
@@ -117,18 +116,36 @@ def run_backtest(train_df, test_df, label="TEST"):
             equity_curve.append(equity)
             continue
 
-        # 🔥 レジーム
+        # =========================
+        # 🔥 市場状態
+        # =========================
         market = today_f["Return_1"].mean()
         market_pred_mean = today_f["pred"].mean()
 
-        if market < -0.01 or market_pred_mean < 0.30:
-            weight_cap = 0.3
-            top_n = 1
-        else:
-            weight_cap = 0.4
-            top_n = 3
+        # =========================
+        # 🔥 モード分岐（ここが比較ポイント）
+        # =========================
+        if market < -0.02:
 
+            if mode == "stop":
+                equity_curve.append(equity)
+                continue
+
+            elif mode == "weak":
+                weight_cap = 0.2
+                top_n = 1
+
+        else:
+            if market < -0.01 or market_pred_mean < 0.30:
+                weight_cap = 0.3
+                top_n = 1
+            else:
+                weight_cap = 0.4
+                top_n = 3
+
+        # =========================
         # ハイブリッド
+        # =========================
         today_f = make_hybrid_score(today_f)
         picks = today_f.sort_values("hybrid_score", ascending=False).head(top_n)
 
@@ -137,6 +154,9 @@ def run_backtest(train_df, test_df, label="TEST"):
             equity_curve.append(equity)
             continue
 
+        # =========================
+        # エントリー
+        # =========================
         for _, row in picks.iterrows():
 
             if any(p["ticker"] == row["Ticker"] for p in positions):
@@ -168,39 +188,24 @@ def run_backtest(train_df, test_df, label="TEST"):
     }
 
 # =========================
-# 🔥 OOS
+# OOS分割
 # =========================
 OOS_START = 2024
 
 train_df = df[df["Date"].dt.year < OOS_START]
 test_df = df[df["Date"].dt.year >= OOS_START]
 
-base = run_backtest(train_df, test_df, "BASE")
-
 # =========================
-# 🔥 ロバスト①（銘柄70%）
+# 🔥 3パターン比較
 # =========================
-tickers = test_df["Ticker"].unique()
-sample = np.random.choice(tickers, int(len(tickers) * 0.7), replace=False)
-
-test_70 = test_df[test_df["Ticker"].isin(sample)]
-
-robust_1 = run_backtest(train_df, test_70, "Ticker70%")
-
-# =========================
-# 🔥 ロバスト②（期間80%）
-# =========================
-dates = sorted(test_df["Date"].unique())
-cut = int(len(dates) * 0.8)
-
-test_80 = test_df[test_df["Date"].isin(dates[:cut])]
-
-robust_2 = run_backtest(train_df, test_80, "Time80%")
+base = run_backtest(train_df, test_df, mode="normal", label="NORMAL")
+stop = run_backtest(train_df, test_df, mode="stop", label="STOP")
+weak = run_backtest(train_df, test_df, mode="weak", label="WEAK")
 
 # =========================
 # 結果
 # =========================
-results = pd.DataFrame([base, robust_1, robust_2])
+results = pd.DataFrame([base, stop, weak])
 
-print("\n=== OOS + ROBUST RESULT ===")
+print("\n=== STOP vs WEAK COMPARISON ===")
 print(results)
