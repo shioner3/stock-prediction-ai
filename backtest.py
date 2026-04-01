@@ -25,10 +25,10 @@ INITIAL_CAPITAL = 1.0
 
 THRESHOLD = 0.26
 HOLD_DAYS = 7
-STOP_LOSS = -0.03
+TAKE_PROFIT = 0.08
 
 # 🔥 最適化対象
-TAKE_PROFIT_LIST = [0.06, 0.08, 0.10, 0.12, 0.15]
+STOP_LOSS_LIST = [-0.02, -0.03, -0.04, -0.05]
 
 # =========================
 # データ
@@ -79,7 +79,7 @@ def make_hybrid_score(df):
 # =========================
 # バックテスト関数
 # =========================
-def run_backtest(take_profit):
+def run_backtest(stop_loss):
 
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
@@ -111,9 +111,9 @@ def run_backtest(take_profit):
 
             exit_flag = False
 
-            if ret < STOP_LOSS:
+            if ret < stop_loss:
                 exit_flag = True
-            elif ret > take_profit:
+            elif ret > TAKE_PROFIT:
                 exit_flag = True
             elif d >= pos["exit_date"]:
                 exit_flag = True
@@ -212,11 +212,11 @@ def run_backtest(take_profit):
 # =========================
 results = []
 
-for tp in TAKE_PROFIT_LIST:
+for sl in STOP_LOSS_LIST:
 
-    print(f"Running TAKE_PROFIT={tp}")
+    print(f"Running STOP_LOSS={sl}")
 
-    res = run_backtest(tp)
+    res = run_backtest(sl)
 
     if res is None:
         continue
@@ -224,7 +224,7 @@ for tp in TAKE_PROFIT_LIST:
     CAGR, Sharpe, MaxDD = res
 
     results.append({
-        "TAKE_PROFIT": tp,
+        "STOP_LOSS": sl,
         "CAGR": CAGR,
         "Sharpe": Sharpe,
         "MaxDD": MaxDD
@@ -235,5 +235,5 @@ for tp in TAKE_PROFIT_LIST:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== TAKE PROFIT OPTIMIZATION ===")
+print("\n=== STOP LOSS OPTIMIZATION ===")
 print(result_df.sort_values("CAGR", ascending=False))
