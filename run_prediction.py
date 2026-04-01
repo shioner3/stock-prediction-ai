@@ -8,11 +8,11 @@ from datetime import datetime
 # =========================
 # 設定
 # =========================
-TOP_N = 3
-HOLD_DAYS = 3
+TOP_N = 2
+HOLD_DAYS = 7
 
 CANDIDATES = 20
-THRESHOLD = 0.32
+THRESHOLD = 0.28
 
 BASE_DIR = os.path.dirname(__file__)
 
