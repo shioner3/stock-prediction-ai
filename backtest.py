@@ -1,5 +1,3 @@
-バックテスト(完全版)
-
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
