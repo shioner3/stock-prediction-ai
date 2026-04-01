@@ -125,8 +125,8 @@ def run_backtest(train_df, test_df, label="TEST"):
             weight_cap = 0.3
             top_n = 1
         else:
-            weight_cap = 0.6
-            top_n = 2
+            weight_cap = 0.4
+            top_n = 3
 
         # ハイブリッド
         today_f = make_hybrid_score(today_f)
