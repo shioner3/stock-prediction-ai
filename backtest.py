@@ -206,10 +206,13 @@ def run_backtest(train_df, test_df):
 
         equity += daily_pnl
         equity_curve.append(equity)
-
+        
         # regime記録
+        regime = "SIDE"
         if not today.empty:
-            regime_log.append(today["regime"].iloc[0])
+            regime = today["regime"].iloc[0]
+
+        regime_log.append(regime)
 
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().fillna(0)
