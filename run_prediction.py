@@ -9,7 +9,7 @@ from datetime import datetime
 # 設定
 # =========================
 TOP_N = 3
-HOLD_DAYS = 3
+HOLD_DAYS = 7
 
 CANDIDATES = 20
 THRESHOLD = 0.32
