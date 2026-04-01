@@ -36,15 +36,13 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
-
 df["Year"] = df["Date"].dt.year
 
 # =========================
-# ハイブリッドスコア
+# ハイブリッド
 # =========================
 def make_hybrid_score(df):
     df = df.copy()
-
     df["mom_rank"] = df["Return_5"].rank(pct=True)
     df["trend_rank"] = df["EMA_gap"].rank(pct=True)
     df["vol_rank"] = (-df["Volatility"]).rank(pct=True)
@@ -54,7 +52,6 @@ def make_hybrid_score(df):
         0.3 * df["trend_rank"] +
         0.2 * df["vol_rank"]
     )
-
     return df
 
 # =========================
@@ -82,7 +79,7 @@ def add_regime(df):
     return df
 
 # =========================
-# バックテスト（ローリング1回）
+# バックテスト
 # =========================
 def run_backtest(train_df, test_df):
 
@@ -96,7 +93,6 @@ def run_backtest(train_df, test_df):
 
     test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
-
     test_df = add_regime(test_df)
 
     equity = INITIAL_CAPITAL
@@ -111,6 +107,11 @@ def run_backtest(train_df, test_df):
     for d in dates:
 
         today = test_df[test_df["Date"] == d]
+
+        # 🔥 regime先に確定（これがポイント）
+        regime = "SIDE"
+        if not today.empty:
+            regime = today["regime"].iloc[0]
 
         daily_pnl = 0
 
@@ -150,7 +151,6 @@ def run_backtest(train_df, test_df):
             market = today_f["Return_1"].mean()
             market_pred_mean = today_f["pred"].mean()
 
-            # レジーム制御
             if market < -0.02:
                 weight_cap = 0.2
                 top_n = 1
@@ -171,47 +171,42 @@ def run_backtest(train_df, test_df):
                 invested = sum([p["capital"] for p in positions])
                 free_cash = equity - invested
 
-                if d not in date_index or date_index[d] + 1 >= len(dates):
-                    equity += daily_pnl
-                    equity_curve.append(equity)
-                    continue
+                # 翌日チェック（continueしない）
+                if d in date_index and date_index[d] + 1 < len(dates):
 
-                next_day = dates[date_index[d] + 1]
-                next_data = test_df[test_df["Date"] == next_day]
+                    next_day = dates[date_index[d] + 1]
+                    next_data = test_df[test_df["Date"] == next_day]
 
-                for _, row in picks.iterrows():
+                    for _, row in picks.iterrows():
 
-                    if any(p["ticker"] == row["Ticker"] for p in positions):
-                        continue
+                        if any(p["ticker"] == row["Ticker"] for p in positions):
+                            continue
 
-                    next_row = next_data[next_data["Ticker"] == row["Ticker"]]
+                        next_row = next_data[next_data["Ticker"] == row["Ticker"]]
 
-                    if next_row.empty:
-                        continue
+                        if next_row.empty:
+                            continue
 
-                    entry_price = next_row["Open"].iloc[0]
+                        entry_price = next_row["Open"].iloc[0]
 
-                    weight = min(row["pred"] / total_pred, weight_cap)
-                    capital = free_cash * weight
+                        weight = min(row["pred"] / total_pred, weight_cap)
+                        capital = free_cash * weight
 
-                    if capital <= 0:
-                        continue
+                        if capital <= 0:
+                            continue
 
-                    positions.append({
-                        "ticker": row["Ticker"],
-                        "entry_price": entry_price,
-                        "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                        "capital": capital
-                    })
+                        positions.append({
+                            "ticker": row["Ticker"],
+                            "entry_price": entry_price,
+                            "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
+                            "capital": capital
+                        })
 
+        # =========================
+        # 日次更新（必ず実行）
+        # =========================
         equity += daily_pnl
         equity_curve.append(equity)
-        
-        # regime記録
-        regime = "SIDE"
-        if not today.empty:
-            regime = today["regime"].iloc[0]
-
         regime_log.append(regime)
 
     equity_curve = pd.Series(equity_curve)
@@ -226,7 +221,7 @@ def run_backtest(train_df, test_df):
     return result
 
 # =========================
-# 🔥 ローリング実行
+# ローリング
 # =========================
 results = []
 
@@ -247,13 +242,10 @@ for start in range(min(years), max(years) - 3):
 
     results.append(res)
 
-# =========================
-# 結合
-# =========================
 all_results = pd.concat(results)
 
 # =========================
-# 相場別分析
+# 相場分析
 # =========================
 summary = all_results.groupby("regime")["return"].agg([
     ("mean_return", "mean"),
@@ -267,7 +259,7 @@ print("\n=== REGIME ANALYSIS ===")
 print(summary)
 
 # =========================
-# 全体成績
+# 全体
 # =========================
 equity = (1 + all_results["return"]).cumprod()
 
