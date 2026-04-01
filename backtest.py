@@ -138,31 +138,17 @@ for d in dates:
         continue
 
     # =========================
-    # 🔥 3段階レジーム判定
+    # 🔥 レジーム判定（ここが本質）
     # =========================
     market = today_f["Return_1"].mean()
     market_pred_mean = today_f["pred"].mean()
 
-    if market < -0.01:
-        # 暴落回避（最弱）
-        weight_cap = 0.2
-        top_n = 0   # エントリーしない
-    elif market_pred_mean > 0.33:
-        # 🔥 強気
-        weight_cap = 0.7
-        top_n = 3
-    elif market_pred_mean > 0.30:
-        # 中立
-        weight_cap = 0.6
-        top_n = 2
-    else:
-        # 弱気
+    if market < -0.01 or market_pred_mean < 0.30:
         weight_cap = 0.3
         top_n = 1
-
-    if top_n == 0:
-        equity_curve.append(equity)
-        continue
+    else:
+        weight_cap = 0.6
+        top_n = 2
 
     # =========================
     # ハイブリッド
@@ -200,7 +186,7 @@ for d in dates:
 equity_curve = pd.Series(equity_curve)
 returns = equity_curve.pct_change().dropna()
 
-print("\n=== FINAL BACKTEST (REGIME v3) ===")
+print("\n=== FINAL BACKTEST (REGIME MODEL) ===")
 print("CAGR:", equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1)
 print("Sharpe:", returns.mean() / (returns.std() + 1e-9) * np.sqrt(252))
 print("MaxDD:", (equity_curve / equity_curve.cummax() - 1).min())
