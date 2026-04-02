@@ -82,19 +82,16 @@ df["ATR"] = df.groupby("Ticker")["TR"].transform(lambda x: x.rolling(14).mean())
 df["ATR_ratio"] = df["ATR"] / df["Close"]
 
 # =========================
-# 🔥 市場相対特徴（超重要）
+# 🔥 市場「ランキング」特徴（重要修正）
 # =========================
 
-# 市場平均
-df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean")
-df["Market_Return_5"] = df.groupby("Date")["Return_5"].transform("mean")
-
-# 相対強さ（アルファ）
-df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
-df["Rel_Return_5"] = df["Return_5"] - df["Market_Return_5"]
+# 日次ランキング（ノイズ除去）
+df["Return_5_rank"] = df.groupby("Date")["Return_5"].rank(pct=True)
+df["EMA_gap_rank"] = df.groupby("Date")["EMA_gap"].rank(pct=True)
+df["Volume_ratio_rank"] = df.groupby("Date")["Volume_ratio"].rank(pct=True)
 
 # =========================
-# 🔥 Target（相対）
+# Target（相対ランキング）
 # =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
@@ -120,10 +117,11 @@ FEATURES = [
     "EMA_gap",
     "Momentum_5","Momentum_10",
     "ATR_ratio",
-    
-    # 🔥 追加
-    "Rel_Return_1",
-    "Rel_Return_5"
+
+    # 🔥 ランク特徴（これが本体）
+    "Return_5_rank",
+    "EMA_gap_rank",
+    "Volume_ratio_rank"
 ]
 
 # =========================
