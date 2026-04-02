@@ -27,19 +27,19 @@ if not os.path.exists(PARQUET_FILE):
 run_script("download_prices.py")
 
 # =========================
-# 3️⃣ 特徴量
+# 3️⃣ 特徴量生成
 # =========================
 run_script("feature_engineering.py")
 
 # =========================
-# 4️⃣ 予測
+# 4️⃣ 予測（最重要）
 # =========================
 run_script("run_prediction.py")
 
-print("\n📊 Pipeline finished.")
+print("\n📊 Prediction finished.")
 
 # =========================
-# 5️⃣ サイズチェック
+# 5️⃣ Parquetサイズチェック
 # =========================
 if os.path.exists(PARQUET_FILE):
     size = os.path.getsize(PARQUET_FILE)
@@ -51,8 +51,17 @@ else:
     raise Exception("❌ Parquet消失")
 
 # =========================
-# 6️⃣ パフォーマンス
+# 6️⃣ 実績更新（前日の結果）
 # =========================
 run_script("calc_performance.py")
+
+print("\n📈 Performance updated.")
+
+# =========================
+# 7️⃣ 記事生成（NEW）
+# =========================
+run_script("generate_article.py")
+
+print("\n📝 Article generated.")
 
 print("\n🎯 全処理完了")
