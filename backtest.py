@@ -145,7 +145,7 @@ for d in dates:
             continue
 
         # 🔥 期待値低い日はスキップ
-        if market_pred_mean < 0.32:
+        if market_pred_mean < 0.30:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
