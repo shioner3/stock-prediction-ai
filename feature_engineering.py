@@ -74,7 +74,7 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
 # =========================
-# 🔥 強化特徴量（重要追加）
+# 強化特徴量
 # =========================
 
 # EMA差
@@ -86,35 +86,14 @@ df["EMA_gap"] = (df["EMA5"] - df["EMA20"]) / df["Close"]
 df["Momentum_5"] = df.groupby("Ticker")["Close"].pct_change(5)
 df["Momentum_10"] = df.groupby("Ticker")["Close"].pct_change(10)
 
-# 出来高圧力
+# 出来高
 df["Volume_ma10"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(10).mean())
 df["Volume_accel"] = df["Volume"] / df["Volume_ma10"]
 
-# ボラ拡張
-# TR（True Range簡易版）
+# ボラ
 df["TR"] = df["High"] - df["Low"]
-
-df["ATR"] = df.groupby("Ticker")["TR"].transform(
-    lambda x: x.rolling(14).mean()
-)
-
+df["ATR"] = df.groupby("Ticker")["TR"].transform(lambda x: x.rolling(14).mean())
 df["ATR_ratio"] = df["ATR"] / df["Close"]
-
-# =========================
-# RSI（修正版）
-# =========================
-def rsi(series, period=7):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-df["RSI"] = df.groupby("Ticker")["Close"].transform(rsi)
 
 # =========================
 # ストップ高フラグ
@@ -123,19 +102,21 @@ df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
 df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
 # =========================
-# 🔥 Target（強化版）
+# 🔥 Target（改善版）
 # =========================
-
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# 🔥 上位30%を1（重要改善）
+# 相対＋絶対条件
 threshold = df["FutureReturn"].groupby(df["Date"]).transform(
     lambda x: x.quantile(0.7)
 )
 
-df["Target"] = (df["FutureReturn"] > threshold).astype(int)
+df["Target"] = (
+    (df["FutureReturn"] > threshold) &
+    (df["FutureReturn"] > 0.02)   # 🔥 追加（超重要）
+).astype(int)
 
 # 未来データ削除
 df = df.dropna(subset=["FutureReturn"])
@@ -146,7 +127,7 @@ df = df.dropna(subset=["FutureReturn"])
 df = df.replace([np.inf, -np.inf], np.nan)
 
 # =========================
-# 特徴量
+# 特徴量（RSI削除）
 # =========================
 FEATURES = [
     "Return_1","Return_3","Return_5",
@@ -156,8 +137,7 @@ FEATURES = [
     "HL_range",
     "EMA_gap",
     "Momentum_5","Momentum_10",
-    "ATR_ratio",
-    "RSI"
+    "ATR_ratio"
 ]
 
 # =========================
