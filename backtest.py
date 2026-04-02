@@ -38,19 +38,15 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# ウォークフォワード設定
-# =========================
-years = sorted(df["Date"].dt.year.unique())
-
-results = []
-
-# =========================
 # ウォークフォワード
 # =========================
+years = sorted(df["Date"].dt.year.unique())
+results = []
+
 for test_year in years:
-    
+
     if test_year < 2022:
-        continue  # データ少ないのでスキップ
+        continue
 
     print(f"\n=== WALK FORWARD: {test_year} ===")
 
@@ -81,7 +77,6 @@ for test_year in years:
     # =========================
     def make_hybrid_score(df):
         df = df.copy()
-
         df["mom_rank"] = df["Return_5"].rank(pct=True)
         df["trend_rank"] = df["EMA_gap"].rank(pct=True)
         df["vol_rank"] = (-df["Volatility"]).rank(pct=True)
@@ -91,18 +86,11 @@ for test_year in years:
             0.3 * df["trend_rank"] +
             0.2 * df["vol_rank"]
         )
-
         return df
 
-    # =========================
-    # 日付
-    # =========================
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
-    # =========================
-    # バックテスト
-    # =========================
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
@@ -113,7 +101,9 @@ for test_year in years:
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
 
+        # =========================
         # 決済
+        # =========================
         new_positions = []
 
         for pos in positions:
@@ -126,13 +116,7 @@ for test_year in years:
             price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            exit_flag = (
-                ret < STOP_LOSS or
-                ret > TAKE_PROFIT or
-                d >= pos["exit_date"]
-            )
-
-            if exit_flag:
+            if ret < STOP_LOSS or ret > TAKE_PROFIT or d >= pos["exit_date"]:
                 pnl = pos["capital"] * ret
                 daily_pnl += pnl
             else:
@@ -140,36 +124,43 @@ for test_year in years:
 
         positions = new_positions
 
+        # =========================
         # エントリー候補
+        # =========================
         today_f = today.copy()
         today_f = today_f[today_f["pred"] > THRESHOLD]
-        today_f = today_f[today_f["EMA_gap"] > 0]
+        today_f = today_f[today_f["EMA_gap"] > 0.01]  # 🔥 強化
 
         if not today_f.empty:
 
             market = today_f["Return_1"].mean()
             market_pred_mean = today_f["pred"].mean()
 
-            # 🔥 フィルタ
-            if market < -0.02:
-                equity += daily_pnl
-                equity_curve.append(equity)
-                continue
-
-            if market_pred_mean < 0.30:
-                equity += daily_pnl
-                equity_curve.append(equity)
-                continue
-
-            # ポジション調整
+            # 🔥 下げ相場完全回避
             if market < -0.01:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # 🔥 弱い日回避
+            if market_pred_mean < 0.28:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # =========================
+            # ポジション調整
+            # =========================
+            if market < 0:
                 weight_cap = 0.3
                 top_n = 1
             else:
                 weight_cap = 0.4
-                top_n = 3
+                top_n = 2  # 🔥 減らす
 
+            # =========================
             # 銘柄選定
+            # =========================
             today_f = make_hybrid_score(today_f)
             picks = today_f.sort_values("hybrid_score", ascending=False).head(top_n)
 
