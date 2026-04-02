@@ -154,10 +154,18 @@ paid_text += f"""
 """
 
 # =========================
-# 出力
+# ファイル出力
 # =========================
-print("\n===== 無料版 =====")
-print(free_text)
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-print("\n===== 有料版 =====")
-print(paid_text)
+FREE_PATH = os.path.join(OUTPUT_DIR, "note_free.txt")
+PAID_PATH = os.path.join(OUTPUT_DIR, "note_paid.txt")
+
+with open(FREE_PATH, "w", encoding="utf-8") as f:
+    f.write(free_text)
+
+with open(PAID_PATH, "w", encoding="utf-8") as f:
+    f.write(paid_text)
+
+print("\n💾 記事ファイル保存完了")
