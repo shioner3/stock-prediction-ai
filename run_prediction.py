@@ -6,11 +6,11 @@ from lightgbm import LGBMClassifier
 from datetime import datetime
 
 # =========================
-# 設定（最適化済み）
+# 設定
 # =========================
 TOP_N = 1
 HOLD_DAYS = 7
-THRESHOLD = 0.26
+THRESHOLD = 0.55   # ← Target変更に合わせて上げる
 CANDIDATES = 20
 
 BASE_DIR = os.path.dirname(__file__)
@@ -32,18 +32,14 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "today_picks.csv")
 
 # =========================
-# FEATURES（バックテスト一致）
+# FEATURES（完全一致）
 # =========================
 FEATURES = [
-    "Return_1","Return_3","Return_5",
+    "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
-    "Volume_change","Volume_ratio","Volume_accel",
-    "HL_range",
-    "EMA_gap",
-    "Momentum_5","Momentum_10",
-    "ATR_ratio",
-    "RSI"
+    "Volume_change","Volume_ratio",
+    "HL_range","RSI"
 ]
 
 TARGET = "Target"
@@ -61,11 +57,11 @@ def normalize_columns(df):
 
 
 def get_regime(score):
-    if score > 0.56:
+    if score > 0.60:
         return "strong"
-    elif score > 0.53:
+    elif score > 0.55:
         return "slightly_strong"
-    elif score > 0.51:
+    elif score > 0.50:
         return "neutral"
     else:
         return "weak"
@@ -109,7 +105,8 @@ if retrain:
 
     model = LGBMClassifier(
         n_estimators=300,
-        learning_rate=0.05,
+        learning_rate=0.03,
+        max_depth=6,
         random_state=42
     )
 
@@ -160,24 +157,19 @@ if today.empty:
     exit()
 
 # =========================
-# 🔥 銘柄選定ロジック
+# 銘柄選定
 # =========================
-
-# ① 上位候補
 candidates = today.sort_values("Pred", ascending=False).head(CANDIDATES)
 
-# ② 閾値フィルター
 filtered = candidates[candidates["Pred"] > THRESHOLD]
 
-# ③ fallback
 if len(filtered) < TOP_N:
     filtered = candidates.head(TOP_N)
 
-# ④ 最終
 today = filtered.head(TOP_N).copy()
 
 # =========================
-# ランキング
+# ランク
 # =========================
 today["PredRank"] = range(1, len(today) + 1)
 
@@ -188,7 +180,7 @@ market_score = today["Pred"].mean()
 regime = get_regime(market_score)
 
 # =========================
-# ログ保存
+# ログ
 # =========================
 today["predict_date"] = latest_date
 today["target_date"] = latest_date + pd.Timedelta(days=HOLD_DAYS)
@@ -199,13 +191,10 @@ else:
     today.to_csv(PRED_LOG_PATH, index=False)
 
 # =========================
-# 📤 記事用CSV出力
+# 出力
 # =========================
 today.to_csv(OUTPUT_PATH, index=False)
 
-# =========================
-# 出力
-# =========================
 print("\n=== 今日の銘柄 ===")
 print(today[["コード", "銘柄名", "Pred", "PredRank"]])
 
