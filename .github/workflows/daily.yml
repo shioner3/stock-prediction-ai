@@ -92,12 +92,12 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-
-          # 🔥 コンフリクト防止
-          git pull --rebase origin main
-
+          
           git add today_picks_free.csv note_article.txt logs/ || true
 
           git commit -m "Update daily AI outputs [skip ci]" || echo "no change"
+
+          # 🔥 コンフリクト防止
+          git pull --rebase origin main
 
           git push origin HEAD:main
