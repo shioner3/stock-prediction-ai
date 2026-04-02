@@ -75,7 +75,7 @@ def make_hybrid_score(df):
     return df
 
 # =========================
-# 日付リスト（翌日参照用）
+# 日付リスト
 # =========================
 dates = sorted(test_df["Date"].unique())
 date_index = {d: i for i, d in enumerate(dates)}
@@ -85,13 +85,11 @@ date_index = {d: i for i, d in enumerate(dates)}
 # =========================
 equity = INITIAL_CAPITAL
 equity_curve = []
-
 positions = []
 
 for d in dates:
 
     today = test_df[test_df["Date"] == d]
-
     daily_pnl = 0
 
     # =========================
@@ -100,7 +98,6 @@ for d in dates:
     new_positions = []
 
     for pos in positions:
-
         cur = today[today["Ticker"] == pos["ticker"]]
 
         if cur.empty:
@@ -134,17 +131,20 @@ for d in dates:
     today_f = today_f[today_f["pred"] > THRESHOLD]
     today_f = today_f[today_f["EMA_gap"] > 0]
 
+    # =========================
+    # 🔥 レジーム判定（ノートレ追加）
+    # =========================
     if not today_f.empty:
 
-        # =========================
-        # レジーム判定
-        # =========================
         market = today_f["Return_1"].mean()
         market_pred_mean = today_f["pred"].mean()
 
+        # 🔥 完全スキップ
         if market < -0.02:
-            weight_cap = 0.2
-            top_n = 1
+            equity += daily_pnl
+            equity_curve.append(equity)
+            continue
+
         elif market < -0.01 or market_pred_mean < 0.30:
             weight_cap = 0.3
             top_n = 1
@@ -165,7 +165,7 @@ for d in dates:
             invested = sum([p["capital"] for p in positions])
             free_cash = equity - invested
 
-            # 🔥 翌日取得
+            # 翌日
             if d not in date_index or date_index[d] + 1 >= len(dates):
                 equity += daily_pnl
                 equity_curve.append(equity)
@@ -180,7 +180,6 @@ for d in dates:
                     continue
 
                 next_row = next_data[next_data["Ticker"] == row["Ticker"]]
-
                 if next_row.empty:
                     continue
 
