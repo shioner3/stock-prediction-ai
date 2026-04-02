@@ -129,21 +129,28 @@ for test_year in years:
         # =========================
         today_f = today.copy()
         today_f = today_f[today_f["pred"] > THRESHOLD]
-        today_f = today_f[today_f["EMA_gap"] > 0.01]  # 🔥 強化
+        today_f = today_f[today_f["EMA_gap"] > 0.01]
 
         if not today_f.empty:
 
-            market = today_f["Return_1"].mean()
+            # 🔥 改善ポイント①（5日平均）
+            market = today_f["Return_5"].mean()
+
+            # 🔥 改善ポイント②（トレンド）
+            market_trend = today_f["EMA_gap"].mean()
+
+            # 🔥 改善ポイント③（予測強さ）
             market_pred_mean = today_f["pred"].mean()
 
-            # 🔥 下げ相場完全回避
-            if market < -0.01:
+            # =========================
+            # 🔥 フィルタ（最重要）
+            # =========================
+            if market < -0.01 or market_trend < 0:
                 equity += daily_pnl
                 equity_curve.append(equity)
                 continue
 
-            # 🔥 弱い日回避
-            if market_pred_mean < 0.28:
+            if market_pred_mean < 0.30:
                 equity += daily_pnl
                 equity_curve.append(equity)
                 continue
@@ -156,7 +163,7 @@ for test_year in years:
                 top_n = 1
             else:
                 weight_cap = 0.4
-                top_n = 2  # 🔥 減らす
+                top_n = 2
 
             # =========================
             # 銘柄選定
