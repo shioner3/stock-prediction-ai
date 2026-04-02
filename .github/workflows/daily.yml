@@ -72,18 +72,21 @@ jobs:
           key: price-cache-v1
 
       # =========================
-      # ⑧ デバッグ（追加）
+      # ⑧ デバッグ（修正版）
       # =========================
       - name: Check outputs
         run: |
           echo "===== FILES ====="
-          ls -l
+          ls -R
 
           echo "===== TODAY PICKS ====="
-          cat today_picks_free.csv || echo "no picks"
+          cat outputs/today_picks.csv || echo "no picks"
 
-          echo "===== ARTICLE ====="
-          cat note_article.txt || echo "no article"
+          echo "===== FREE ARTICLE ====="
+          cat outputs/note_free.txt || echo "no free article"
+
+          echo "===== PAID ARTICLE ====="
+          cat outputs/note_paid.txt || echo "no paid article"
 
       # =========================
       # ⑨ push（安全版）
