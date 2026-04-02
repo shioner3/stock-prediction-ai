@@ -6,13 +6,12 @@ from lightgbm import LGBMClassifier
 from datetime import datetime
 
 # =========================
-# 設定
+# 設定（最適化済み）
 # =========================
 TOP_N = 1
 HOLD_DAYS = 7
-
-CANDIDATES = 20
 THRESHOLD = 0.26
+CANDIDATES = 20
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -23,13 +22,17 @@ MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 MODEL_META_PATH = os.path.join(BASE_DIR, "model_meta.pkl")
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 month_str = datetime.now().strftime("%Y-%m")
 PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "today_picks.csv")
 
 # =========================
-# FEATURES（backtestと完全一致）
+# FEATURES（バックテスト一致）
 # =========================
 FEATURES = [
     "Return_1","Return_3","Return_5",
@@ -82,11 +85,7 @@ predict_df["Date"] = pd.to_datetime(predict_df["Date"])
 latest_date = predict_df["Date"].max()
 current_month = latest_date.strftime("%Y-%m")
 
-# =========================
-# TARGETチェック
-# =========================
-print("\n=== TARGET CHECK ===")
-print("Target mean:", train_df["Target"].mean())
+print(f"\n📅 予測日: {latest_date}")
 
 # =========================
 # モデル再学習判定
@@ -124,7 +123,7 @@ else:
     model = pickle.load(open(MODEL_PATH, "rb"))
 
 # =========================
-# 予測データ
+# 今日データ
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
@@ -142,14 +141,11 @@ if len(missing_cols) > 0:
 # =========================
 today["Pred"] = model.predict_proba(today[FEATURES])[:, 1]
 
-# =========================
-# 予測分布チェック
-# =========================
 print("\n=== PRED CHECK ===")
 print(today["Pred"].describe())
 
 # =========================
-# 基本フィルター
+# フィルター
 # =========================
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
@@ -164,13 +160,13 @@ if today.empty:
     exit()
 
 # =========================
-# 🔥 ハイブリッド選定（最重要）
+# 🔥 銘柄選定ロジック
 # =========================
 
-# ① 候補（rank）
+# ① 上位候補
 candidates = today.sort_values("Pred", ascending=False).head(CANDIDATES)
 
-# ② 生値フィルター
+# ② 閾値フィルター
 filtered = candidates[candidates["Pred"] > THRESHOLD]
 
 # ③ fallback
@@ -203,6 +199,11 @@ else:
     today.to_csv(PRED_LOG_PATH, index=False)
 
 # =========================
+# 📤 記事用CSV出力
+# =========================
+today.to_csv(OUTPUT_PATH, index=False)
+
+# =========================
 # 出力
 # =========================
 print("\n=== 今日の銘柄 ===")
@@ -210,3 +211,5 @@ print(today[["コード", "銘柄名", "Pred", "PredRank"]])
 
 print("\n市場状態:", regime)
 print("銘柄数:", len(today))
+
+print(f"\n📤 出力完了: {OUTPUT_PATH}")
