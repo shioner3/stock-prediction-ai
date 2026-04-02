@@ -19,10 +19,13 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.55   # ←重要（Target変わったので上げる）
+THRESHOLD = 0.62   # 🔥 引き上げ（重要）
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
+
+# 🔥 相場フィルタ閾値
+MARKET_FILTER = -0.01   # これより悪い日は取引しない
 
 # =========================
 # データ
@@ -105,13 +108,23 @@ for test_year in years:
         positions = new_positions
 
         # =========================
+        # 🔥 相場フィルタ
+        # =========================
+        market = today["Return_1"].mean()
+
+        if market < MARKET_FILTER:
+            equity += daily_pnl
+            equity_curve.append(equity)
+            continue
+
+        # =========================
         # エントリー
         # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            # 上位だけ使う（シンプル）
+            # 上位3銘柄
             picks = today_f.sort_values("pred", ascending=False).head(3)
 
             total_pred = picks["pred"].sum()
