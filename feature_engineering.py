@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import duckdb
+import os
 
 # =========================
 # 設定
@@ -31,22 +32,29 @@ SELECT
 FROM '{PARQUET_FILE}'
 """).df()
 
+print("元データサイズ:", df.shape)
+
 df["Date"] = pd.to_datetime(df["Date"])
+
+# =========================
+# ソート
+# =========================
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
 # =========================
-# 日付フィルター
+# 日付完全性フィルター
 # =========================
 counts = df["Date"].value_counts()
 valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
 
+print("フィルタ後サイズ:", df.shape)
+
 # =========================
-# 基本特徴量
+# 基本特徴量（rank削除）
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3)
-df["Return_5"] = df.groupby("Ticker")["Close"].pct_change(5)
 
 df["MA3"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(3).mean())
 df["MA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean())
@@ -65,74 +73,81 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
 # =========================
-# 強化特徴量
+# RSI
 # =========================
-df["EMA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.ewm(span=5).mean())
-df["EMA20"] = df.groupby("Ticker")["Close"].transform(lambda x: x.ewm(span=20).mean())
-df["EMA_gap"] = (df["EMA5"] - df["EMA20"]) / df["Close"]
+delta = df.groupby("Ticker")["Close"].diff()
+gain = delta.clip(lower=0)
+loss = -delta.clip(upper=0)
 
-df["Momentum_5"] = df.groupby("Ticker")["Close"].pct_change(5)
-df["Momentum_10"] = df.groupby("Ticker")["Close"].pct_change(10)
+avg_gain = gain.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
+avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
 
-df["Volume_ma10"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(10).mean())
-df["Volume_accel"] = df["Volume"] / df["Volume_ma10"]
-
-df["TR"] = df["High"] - df["Low"]
-df["ATR"] = df.groupby("Ticker")["TR"].transform(lambda x: x.rolling(14).mean())
-df["ATR_ratio"] = df["ATR"] / df["Close"]
+rs = avg_gain / avg_loss
+df["RSI"] = 100 - (100 / (1 + rs))
 
 # =========================
-# 🔥 市場「ランキング」特徴（重要修正）
+# ストップ高
 # =========================
-
-# 日次ランキング（ノイズ除去）
-df["Return_5_rank"] = df.groupby("Date")["Return_5"].rank(pct=True)
-df["EMA_gap_rank"] = df.groupby("Date")["EMA_gap"].rank(pct=True)
-df["Volume_ratio_rank"] = df.groupby("Date")["Volume_ratio"].rank(pct=True)
+df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
+df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
 # =========================
-# Target（相対ランキング）
+# 🔥 Target（分類に変更）
 # =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-threshold = df["FutureReturn"].groupby(df["Date"]).transform(
-    lambda x: x.quantile(0.7)
-)
+# 🔥 上がるかどうか（分類）
+df["Target"] = (df["FutureReturn"] > 0).astype(int)
 
-df["Target"] = (df["FutureReturn"] > threshold).astype(int)
-
+# 未来ない行削除
 df = df.dropna(subset=["FutureReturn"])
 
 # =========================
-# 特徴量
+# 無限値処理
+# =========================
+df = df.replace([np.inf, -np.inf], np.nan)
+
+# =========================
+# 学習データ
 # =========================
 FEATURES = [
-    "Return_1","Return_3","Return_5",
+    "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
-    "Volume_change","Volume_ratio","Volume_accel",
-    "HL_range",
-    "EMA_gap",
-    "Momentum_5","Momentum_10",
-    "ATR_ratio",
-
-    # 🔥 ランク特徴（これが本体）
-    "Return_5_rank",
-    "EMA_gap_rank",
-    "Volume_ratio_rank"
+    "Volume_change","Volume_ratio",
+    "HL_range","RSI"
 ]
+
+train_df = df.dropna(subset=FEATURES + ["Target"]).copy()
+train_df = train_df.reset_index(drop=True)
+
+# =========================
+# 予測データ（最新日）
+# =========================
+latest_date = df["Date"].max()
+
+predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).copy()
+predict_df = predict_df.reset_index(drop=True)
+
+# =========================
+# デバッグ
+# =========================
+print("\n=== TRAIN DEBUG ===")
+print("rows:", len(train_df))
+print("latest:", train_df["Date"].max())
+
+print("\n=== PREDICT DEBUG ===")
+print("rows:", len(predict_df))
+print("latest:", predict_df["Date"].max())
 
 # =========================
 # 保存
 # =========================
-train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
-
-latest_date = df["Date"].max()
-predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
-
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("保存完了")
+print("\n保存完了")
+print("train rows:", len(train_df))
+print("predict rows:", len(predict_df))
