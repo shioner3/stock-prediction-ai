@@ -3,13 +3,15 @@ import os
 import glob
 
 # =========================
-# 設定
+# 設定（バックテストと統一）
 # =========================
 PRED_LOG_PATTERN = "logs/predictions_*.csv"
 PERF_LOG = "logs/performance.csv"
 PRICE_FILE = "stock_data/prices.parquet"
 
-HOLD_DAYS = 3  # ★重要
+HOLD_DAYS = 7
+STOP_LOSS = -0.02
+TAKE_PROFIT = 0.08
 
 # =========================
 # 初期チェック
@@ -44,21 +46,18 @@ df_pred = pd.concat(df_list, ignore_index=True)
 df_price = pd.read_parquet(PRICE_FILE)
 
 # =========================
-# 列名吸収
+# 列名調整
 # =========================
 if "コード" in df_pred.columns:
     df_pred = df_pred.rename(columns={"コード": "Ticker"})
 
-# =========================
-# 日付処理
-# =========================
 df_price["Date"] = pd.to_datetime(df_price["Date"])
 df_pred["predict_date"] = pd.to_datetime(df_pred["predict_date"])
 
 today = pd.Timestamp.today().normalize()
 
 # =========================
-# 既存パフォーマンス
+# 既存データ
 # =========================
 if os.path.exists(PERF_LOG):
     df_perf_existing = pd.read_csv(PERF_LOG)
@@ -83,28 +82,56 @@ for _, row in df_pred.iterrows():
     predict_date = row["predict_date"]
 
     key = f"{ticker}_{predict_date.strftime('%Y-%m-%d')}"
-
     if key in existing_keys:
         continue
 
-    # 🔥 target_dateを再計算（安全）
-    target_date = predict_date + pd.tseries.offsets.BDay(HOLD_DAYS)
-
-    if target_date > today:
-        continue
-
-    df_t = df_price[df_price["Ticker"] == ticker]
-
-    start_price = df_t[df_t["Date"] >= predict_date]["Close"].head(1)
-    end_price = df_t[df_t["Date"] >= target_date]["Close"].head(1)
-
-    if start_price.empty or end_price.empty:
-        continue
-
-    ret = (end_price.values[0] / start_price.values[0]) - 1
+    df_t = df_price[df_price["Ticker"] == ticker].sort_values("Date")
 
     # =========================
-    # 🔥 3日用レジーム
+    # エントリー（翌日Open）
+    # =========================
+    entry_row = df_t[df_t["Date"] > predict_date].head(1)
+    if entry_row.empty:
+        continue
+
+    entry_date = entry_row["Date"].iloc[0]
+    entry_price = entry_row["Open"].iloc[0]
+
+    # =========================
+    # 保有期間
+    # =========================
+    future = df_t[df_t["Date"] >= entry_date].head(HOLD_DAYS)
+
+    if len(future) < HOLD_DAYS:
+        continue
+
+    exit_price = None
+    exit_date = None
+
+    # =========================
+    # 利確・損切りチェック
+    # =========================
+    for _, r in future.iterrows():
+
+        price = r["Close"]
+        ret = (price - entry_price) / entry_price
+
+        if ret <= STOP_LOSS or ret >= TAKE_PROFIT:
+            exit_price = price
+            exit_date = r["Date"]
+            break
+
+    # =========================
+    # 期限到達
+    # =========================
+    if exit_price is None:
+        exit_price = future["Close"].iloc[-1]
+        exit_date = future["Date"].iloc[-1]
+
+    ret = (exit_price / entry_price) - 1
+
+    # =========================
+    # レジーム
     # =========================
     market_score = row.get("Pred", 0)
 
@@ -120,7 +147,8 @@ for _, row in df_pred.iterrows():
     results.append({
         "ticker": ticker,
         "predict_date": predict_date.strftime("%Y-%m-%d"),
-        "target_date": target_date.strftime("%Y-%m-%d"),
+        "entry_date": entry_date.strftime("%Y-%m-%d"),
+        "exit_date": exit_date.strftime("%Y-%m-%d"),
         "return": ret,
         "win": int(ret > 0),
         "regime": regime
@@ -138,7 +166,6 @@ if results:
         df_all = df_new
 
     df_all.to_csv(PERF_LOG, index=False)
-
     print("✅ 実績追加:", len(df_new))
 else:
     print("追加データなし")
@@ -147,6 +174,7 @@ else:
 # 指標
 # =========================
 if os.path.exists(PERF_LOG):
+
     df = pd.read_csv(PERF_LOG)
 
     print("\n📊 全体実績")
