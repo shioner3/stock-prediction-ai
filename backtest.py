@@ -37,6 +37,9 @@ df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
+# 🔥 市場データ作成（疑似TOPIX）
+market_df = df.groupby("Date")["Return_1"].mean().rolling(5).mean()
+
 # =========================
 # ウォークフォワード
 # =========================
@@ -133,24 +136,36 @@ for test_year in years:
 
         if not today_f.empty:
 
-            # 🔥 改善ポイント①（5日平均）
-            market = today_f["Return_5"].mean()
-
-            # 🔥 改善ポイント②（トレンド）
-            market_trend = today_f["EMA_gap"].mean()
-
-            # 🔥 改善ポイント③（予測強さ）
-            market_pred_mean = today_f["pred"].mean()
-
-            # =========================
-            # 🔥 フィルタ（最重要）
-            # =========================
-            if market < -0.01 or market_trend < 0:
+            # 🔥 市場（改善）
+            if d not in market_df.index:
                 equity += daily_pnl
                 equity_curve.append(equity)
                 continue
 
+            market = market_df.loc[d]
+
+            # 🔥 銘柄側補助指標
+            market_trend = today_f["EMA_gap"].mean()
+            market_pred_mean = today_f["pred"].mean()
+
+            # =========================
+            # 🔥 フィルタ（超重要）
+            # =========================
+
+            # 完全回避（下げ相場）
+            if market < 0:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # 弱い日回避
             if market_pred_mean < 0.30:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # トレンド弱い
+            if market_trend < 0:
                 equity += daily_pnl
                 equity_curve.append(equity)
                 continue
@@ -158,7 +173,7 @@ for test_year in years:
             # =========================
             # ポジション調整
             # =========================
-            if market < 0:
+            if market < 0.005:
                 weight_cap = 0.3
                 top_n = 1
             else:
@@ -178,74 +193,4 @@ for test_year in years:
                 invested = sum([p["capital"] for p in positions])
                 free_cash = equity - invested
 
-                if d not in date_index or date_index[d] + 1 >= len(dates):
-                    equity += daily_pnl
-                    equity_curve.append(equity)
-                    continue
-
-                next_day = dates[date_index[d] + 1]
-                next_data = test_df[test_df["Date"] == next_day]
-
-                for _, row in picks.iterrows():
-
-                    if any(p["ticker"] == row["Ticker"] for p in positions):
-                        continue
-
-                    next_row = next_data[next_data["Ticker"] == row["Ticker"]]
-                    if next_row.empty:
-                        continue
-
-                    entry_price = next_row["Open"].iloc[0]
-
-                    weight = min(row["pred"] / total_pred, weight_cap)
-                    capital = free_cash * weight
-
-                    if capital <= 0:
-                        continue
-
-                    positions.append({
-                        "ticker": row["Ticker"],
-                        "entry_price": entry_price,
-                        "entry_date": next_day,
-                        "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                        "capital": capital
-                    })
-
-                    trade_count += 1
-
-        equity += daily_pnl
-        equity_curve.append(equity)
-
-    # =========================
-    # 評価
-    # =========================
-    equity_curve = pd.Series(equity_curve)
-    returns = equity_curve.pct_change().dropna()
-
-    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
-    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
-    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
-
-    print(f"CAGR: {CAGR:.3f}")
-    print(f"Sharpe: {Sharpe:.3f}")
-    print(f"MaxDD: {MaxDD:.3f}")
-    print(f"Trades: {trade_count}")
-
-    results.append({
-        "year": test_year,
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD,
-        "Trades": trade_count
-    })
-
-# =========================
-# 集計
-# =========================
-df_res = pd.DataFrame(results)
-
-print("\n=== SUMMARY ===")
-print(df_res)
-
-print("\n平均")
-print(df_res.mean(numeric_only=True))
+                if d
