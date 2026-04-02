@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import duckdb
-import os
 
 # =========================
 # 設定
@@ -32,13 +31,7 @@ SELECT
 FROM '{PARQUET_FILE}'
 """).df()
 
-print("元データサイズ:", df.shape)
-
 df["Date"] = pd.to_datetime(df["Date"])
-
-# =========================
-# ソート
-# =========================
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
 # =========================
@@ -47,8 +40,6 @@ df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 counts = df["Date"].value_counts()
 valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
-
-print("フィルタ後サイズ:", df.shape)
 
 # =========================
 # 基本特徴量
@@ -76,58 +67,38 @@ df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 # =========================
 # 強化特徴量
 # =========================
-
-# EMA差
 df["EMA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.ewm(span=5).mean())
 df["EMA20"] = df.groupby("Ticker")["Close"].transform(lambda x: x.ewm(span=20).mean())
 df["EMA_gap"] = (df["EMA5"] - df["EMA20"]) / df["Close"]
 
-# モメンタム
 df["Momentum_5"] = df.groupby("Ticker")["Close"].pct_change(5)
 df["Momentum_10"] = df.groupby("Ticker")["Close"].pct_change(10)
 
-# 出来高
 df["Volume_ma10"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(10).mean())
 df["Volume_accel"] = df["Volume"] / df["Volume_ma10"]
 
-# ボラ
 df["TR"] = df["High"] - df["Low"]
 df["ATR"] = df.groupby("Ticker")["TR"].transform(lambda x: x.rolling(14).mean())
 df["ATR_ratio"] = df["ATR"] / df["Close"]
 
 # =========================
-# ストップ高フラグ
-# =========================
-df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
-df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
-
-# =========================
-# 🔥 Target（改善版）
+# 🔥 Target（元に戻す）
 # =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# 相対＋絶対条件
 threshold = df["FutureReturn"].groupby(df["Date"]).transform(
     lambda x: x.quantile(0.7)
 )
 
-df["Target"] = (
-    (df["FutureReturn"] > threshold) &
-    (df["FutureReturn"] > 0.02)   # 🔥 追加（超重要）
-).astype(int)
+# ✅ 相対だけに戻す
+df["Target"] = (df["FutureReturn"] > threshold).astype(int)
 
-# 未来データ削除
 df = df.dropna(subset=["FutureReturn"])
 
 # =========================
-# 無限値処理
-# =========================
-df = df.replace([np.inf, -np.inf], np.nan)
-
-# =========================
-# 特徴量（RSI削除）
+# 特徴量
 # =========================
 FEATURES = [
     "Return_1","Return_3","Return_5",
@@ -141,37 +112,14 @@ FEATURES = [
 ]
 
 # =========================
-# 学習データ
-# =========================
-train_df = df.dropna(subset=FEATURES + ["Target"]).copy()
-train_df = train_df.reset_index(drop=True)
-
-# =========================
-# 予測データ
-# =========================
-latest_date = df["Date"].max()
-
-predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).copy()
-predict_df = predict_df.reset_index(drop=True)
-
-# =========================
-# デバッグ
-# =========================
-print("\n=== TRAIN DEBUG ===")
-print("rows:", len(train_df))
-print("Target mean:", train_df["Target"].mean())
-print("latest:", train_df["Date"].max())
-
-print("\n=== PREDICT DEBUG ===")
-print("rows:", len(predict_df))
-print("latest:", predict_df["Date"].max())
-
-# =========================
 # 保存
 # =========================
+train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
+
+latest_date = df["Date"].max()
+predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
+
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了")
-print("train rows:", len(train_df))
-print("predict rows:", len(predict_df))
+print("保存完了")
