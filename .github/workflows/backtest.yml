@@ -1,4 +1,4 @@
-name: Backtest
+name: Backtest Pipeline
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
           python-version: "3.10"
 
       # =========================
-      # 3️⃣ キャッシュ復元（最重要）
+      # 3️⃣ キャッシュ復元（価格データ）
       # =========================
       - name: Restore price cache
         uses: actions/cache@v3
@@ -41,15 +41,28 @@ jobs:
           pip install -r requirements_ai.txt
 
       # =========================
-      # 5️⃣ データ準備
+      # 5️⃣ データ取得
       # =========================
-      - name: Prepare data
+      - name: Download prices
         run: |
           python download_prices.py
+
+      # =========================
+      # 6️⃣ 特徴量作成
+      # =========================
+      - name: Feature Engineering
+        run: |
           python feature_engineering.py
 
       # =========================
-      # 6️⃣ キャッシュ保存（超重要）
+      # 8️⃣ モデル学習・予測生成（🔥追加・超重要）
+      # =========================
+      - name: Run Prediction
+        run: |
+          python run_prediction.py
+
+      # =========================
+      # 9️⃣ キャッシュ保存
       # =========================
       - name: Save price cache
         uses: actions/cache@v3
@@ -58,13 +71,14 @@ jobs:
           key: price-cache-v1
 
       # =========================
-      # 7️⃣ バックテスト
+      # 🔟 バックテスト
       # =========================
       - name: Run Backtest
-        run: python backtest.py
+        run: |
+          python backtest.py
 
       # =========================
-      # 8️⃣ デバッグ
+      # 11️⃣ デバッグ
       # =========================
       - name: Check outputs
         run: |
@@ -75,7 +89,7 @@ jobs:
           cat backtest_summary.csv || echo "no result file"
 
       # =========================
-      # 9️⃣ 結果保存
+      # 12️⃣ 結果保存
       # =========================
       - name: Commit backtest results
         run: |
@@ -83,7 +97,8 @@ jobs:
           git config user.email "github-actions@github.com"
 
           git add rolling_backtest_realistic_v2.csv || true
+          git add backtest_summary.csv || true
+          git add predictions.csv || true
 
-          git commit -m "update backtest result [skip ci]" || echo "no change"
-
+          git commit -m "update full pipeline results [skip ci]" || echo "no change"
           git push origin HEAD:main
