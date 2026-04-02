@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
 
+# =========================
+# 設定
+# =========================
 DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
@@ -12,7 +15,8 @@ FEATURES = [
     "HL_range",
     "EMA_gap",
     "Momentum_5","Momentum_10",
-    "ATR_ratio"
+    "ATR_ratio",
+    "RSI"
 ]
 
 TARGET = "Target"
@@ -24,25 +28,41 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.02
 TAKE_PROFIT = 0.08
 
+# =========================
+# データ
+# =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
+# =========================
+# ウォークフォワード設定
+# =========================
 years = sorted(df["Date"].dt.year.unique())
+
 results = []
 
+# =========================
+# ウォークフォワード
+# =========================
 for test_year in years:
-
+    
     if test_year < 2022:
-        continue
+        continue  # データ少ないのでスキップ
 
     print(f"\n=== WALK FORWARD: {test_year} ===")
 
     train_df = df[df["Date"].dt.year < test_year]
     test_df = df[df["Date"].dt.year == test_year].copy()
 
+    if len(test_df) == 0:
+        continue
+
+    # =========================
+    # 学習
+    # =========================
     model = LGBMClassifier(
         n_estimators=200,
         learning_rate=0.05,
@@ -51,27 +71,41 @@ for test_year in years:
 
     model.fit(train_df[FEATURES], train_df[TARGET])
 
+    # =========================
+    # 予測
+    # =========================
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
+    # =========================
+    # ハイブリッド
+    # =========================
     def make_hybrid_score(df):
         df = df.copy()
-        df["pred_rank"] = df["pred"].rank(pct=True)
+
         df["mom_rank"] = df["Return_5"].rank(pct=True)
         df["trend_rank"] = df["EMA_gap"].rank(pct=True)
+        df["vol_rank"] = (-df["Volatility"]).rank(pct=True)
 
         df["hybrid_score"] = (
-            0.5 * df["pred_rank"] +
-            0.3 * df["mom_rank"] +
-            0.2 * df["trend_rank"]
+            0.5 * df["mom_rank"] +
+            0.3 * df["trend_rank"] +
+            0.2 * df["vol_rank"]
         )
+
         return df
 
+    # =========================
+    # 日付
+    # =========================
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
-    equity = 1.0
-    positions = []
+    # =========================
+    # バックテスト
+    # =========================
+    equity = INITIAL_CAPITAL
     equity_curve = []
+    positions = []
     trade_count = 0
 
     for d in dates:
@@ -79,7 +113,9 @@ for test_year in years:
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
 
+        # 決済
         new_positions = []
+
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
 
@@ -90,26 +126,59 @@ for test_year in years:
             price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            if ret < STOP_LOSS or ret > TAKE_PROFIT or d >= pos["exit_date"]:
-                daily_pnl += pos["capital"] * ret
+            exit_flag = (
+                ret < STOP_LOSS or
+                ret > TAKE_PROFIT or
+                d >= pos["exit_date"]
+            )
+
+            if exit_flag:
+                pnl = pos["capital"] * ret
+                daily_pnl += pnl
             else:
                 new_positions.append(pos)
 
         positions = new_positions
 
-        today_f = today[today["pred"] > THRESHOLD]
+        # エントリー候補
+        today_f = today.copy()
+        today_f = today_f[today_f["pred"] > THRESHOLD]
         today_f = today_f[today_f["EMA_gap"] > 0]
 
         if not today_f.empty:
 
+            market = today_f["Return_1"].mean()
+            market_pred_mean = today_f["pred"].mean()
+
+            # 🔥 フィルタ
+            if market < -0.02:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            if market_pred_mean < 0.30:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # ポジション調整
+            if market < -0.01:
+                weight_cap = 0.3
+                top_n = 1
+            else:
+                weight_cap = 0.4
+                top_n = 3
+
+            # 銘柄選定
             today_f = make_hybrid_score(today_f)
-            picks = today_f.sort_values("hybrid_score", ascending=False).head(2)
+            picks = today_f.sort_values("hybrid_score", ascending=False).head(top_n)
 
             total_pred = picks["pred"].sum()
 
             if total_pred > 0:
 
-                free_cash = equity - sum([p["capital"] for p in positions])
+                invested = sum([p["capital"] for p in positions])
+                free_cash = equity - invested
 
                 if d not in date_index or date_index[d] + 1 >= len(dates):
                     equity += daily_pnl
@@ -121,13 +190,16 @@ for test_year in years:
 
                 for _, row in picks.iterrows():
 
+                    if any(p["ticker"] == row["Ticker"] for p in positions):
+                        continue
+
                     next_row = next_data[next_data["Ticker"] == row["Ticker"]]
                     if next_row.empty:
                         continue
 
                     entry_price = next_row["Open"].iloc[0]
 
-                    weight = row["pred"] / total_pred
+                    weight = min(row["pred"] / total_pred, weight_cap)
                     capital = free_cash * weight
 
                     if capital <= 0:
@@ -136,6 +208,7 @@ for test_year in years:
                     positions.append({
                         "ticker": row["Ticker"],
                         "entry_price": entry_price,
+                        "entry_date": next_day,
                         "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
                         "capital": capital
                     })
@@ -145,6 +218,9 @@ for test_year in years:
         equity += daily_pnl
         equity_curve.append(equity)
 
+    # =========================
+    # 評価
+    # =========================
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
@@ -165,6 +241,9 @@ for test_year in years:
         "Trades": trade_count
     })
 
+# =========================
+# 集計
+# =========================
 df_res = pd.DataFrame(results)
 
 print("\n=== SUMMARY ===")
