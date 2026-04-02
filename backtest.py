@@ -193,4 +193,74 @@ for test_year in years:
                 invested = sum([p["capital"] for p in positions])
                 free_cash = equity - invested
 
-                if d
+                if d not in date_index or date_index[d] + 1 >= len(dates):
+                    equity += daily_pnl
+                    equity_curve.append(equity)
+                    continue
+
+                next_day = dates[date_index[d] + 1]
+                next_data = test_df[test_df["Date"] == next_day]
+
+                for _, row in picks.iterrows():
+
+                    if any(p["ticker"] == row["Ticker"] for p in positions):
+                        continue
+
+                    next_row = next_data[next_data["Ticker"] == row["Ticker"]]
+                    if next_row.empty:
+                        continue
+
+                    entry_price = next_row["Open"].iloc[0]
+
+                    weight = min(row["pred"] / total_pred, weight_cap)
+                    capital = free_cash * weight
+
+                    if capital <= 0:
+                        continue
+
+                    positions.append({
+                        "ticker": row["Ticker"],
+                        "entry_price": entry_price,
+                        "entry_date": next_day,
+                        "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
+                        "capital": capital
+                    })
+
+                    trade_count += 1
+
+        equity += daily_pnl
+        equity_curve.append(equity)
+
+    # =========================
+    # 評価
+    # =========================
+    equity_curve = pd.Series(equity_curve)
+    returns = equity_curve.pct_change().dropna()
+
+    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
+
+    print(f"CAGR: {CAGR:.3f}")
+    print(f"Sharpe: {Sharpe:.3f}")
+    print(f"MaxDD: {MaxDD:.3f}")
+    print(f"Trades: {trade_count}")
+
+    results.append({
+        "year": test_year,
+        "CAGR": CAGR,
+        "Sharpe": Sharpe,
+        "MaxDD": MaxDD,
+        "Trades": trade_count
+    })
+
+# =========================
+# 集計
+# =========================
+df_res = pd.DataFrame(results)
+
+print("\n=== SUMMARY ===")
+print(df_res)
+
+print("\n平均")
+print(df_res.mean(numeric_only=True))
