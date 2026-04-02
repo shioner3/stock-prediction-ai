@@ -6,12 +6,19 @@ import glob
 # 設定（バックテストと統一）
 # =========================
 PRED_LOG_PATTERN = "logs/predictions_*.csv"
-PERF_LOG = "logs/performance.csv"
 PRICE_FILE = "stock_data/prices.parquet"
 
 HOLD_DAYS = 7
 STOP_LOSS = -0.02
 TAKE_PROFIT = 0.08
+
+# =========================
+# 月別ログ
+# =========================
+today = pd.Timestamp.today().normalize()
+month_str = today.strftime("%Y-%m")
+
+PERF_LOG_MONTH = f"logs/performance_{month_str}.csv"
 
 # =========================
 # 初期チェック
@@ -54,13 +61,11 @@ if "コード" in df_pred.columns:
 df_price["Date"] = pd.to_datetime(df_price["Date"])
 df_pred["predict_date"] = pd.to_datetime(df_pred["predict_date"])
 
-today = pd.Timestamp.today().normalize()
-
 # =========================
-# 既存データ
+# 既存データ（月別）
 # =========================
-if os.path.exists(PERF_LOG):
-    df_perf_existing = pd.read_csv(PERF_LOG)
+if os.path.exists(PERF_LOG_MONTH):
+    df_perf_existing = pd.read_csv(PERF_LOG_MONTH)
 else:
     df_perf_existing = pd.DataFrame()
 
@@ -109,7 +114,7 @@ for _, row in df_pred.iterrows():
     exit_date = None
 
     # =========================
-    # 利確・損切りチェック
+    # 利確・損切り
     # =========================
     for _, r in future.iterrows():
 
@@ -122,7 +127,7 @@ for _, row in df_pred.iterrows():
             break
 
     # =========================
-    # 期限到達
+    # 期限決済
     # =========================
     if exit_price is None:
         exit_price = future["Close"].iloc[-1]
@@ -155,29 +160,30 @@ for _, row in df_pred.iterrows():
     })
 
 # =========================
-# 保存
+# 保存（月別のみ）
 # =========================
 if results:
     df_new = pd.DataFrame(results)
 
-    if os.path.exists(PERF_LOG):
-        df_all = pd.concat([df_perf_existing, df_new], ignore_index=True)
+    if os.path.exists(PERF_LOG_MONTH):
+        df_month = pd.concat([df_perf_existing, df_new], ignore_index=True)
     else:
-        df_all = df_new
+        df_month = df_new
 
-    df_all.to_csv(PERF_LOG, index=False)
+    df_month.to_csv(PERF_LOG_MONTH, index=False)
+
     print("✅ 実績追加:", len(df_new))
 else:
     print("追加データなし")
 
 # =========================
-# 指標
+# 指標（月別のみ）
 # =========================
-if os.path.exists(PERF_LOG):
+if os.path.exists(PERF_LOG_MONTH):
 
-    df = pd.read_csv(PERF_LOG)
+    df = pd.read_csv(PERF_LOG_MONTH)
 
-    print("\n📊 全体実績")
+    print(f"\n📊 今月実績 ({month_str})")
 
     win_rate = df["win"].mean()
     avg_return = df["return"].mean()
@@ -188,13 +194,14 @@ if os.path.exists(PERF_LOG):
     print("平均リターン:", round(avg_return, 4))
     print("Sharpe:", round(sharpe, 3))
 
+    # 市場別
     print("\n📊 市場別実績")
 
     for regime in ["strong", "slightly_strong", "neutral", "weak"]:
 
         df_r = df[df["regime"] == regime]
 
-        if len(df_r) < 10:
+        if len(df_r) < 5:
             print(f"{regime}: データ不足")
             continue
 
