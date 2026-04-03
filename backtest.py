@@ -114,12 +114,14 @@ def run_backtest(train_df, test_df):
             # =========================
             market_score = today_f["pred"].mean()
 
-            if market_score > 0.60:
+            if market_score > 0.62:
                 top_n = 4
-            elif market_score > 0.55:
+            elif market_score > 0.58:
                 top_n = 3
-            else:
+            elif market_score > 0.54:
                 top_n = 2
+            else:
+                top_n = 1   # ←これ追加
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
