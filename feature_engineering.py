@@ -73,17 +73,20 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
 # =========================
-# 🔥 市場相対特徴
+# 市場相対特徴
 # =========================
 df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean")
 df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
 
 # =========================
-# 🔥 追加（今回）
+# 🔥 Trend（前計算化）
 # =========================
-df["Trend_5"] = df.groupby("Ticker")["Close"].pct_change(5)
-df["Trend_10"] = df.groupby("Ticker")["Close"].pct_change(10)
+df["Trend_5"] = df["Close"] / df.groupby("Ticker")["Close"].shift(5) - 1
+df["Trend_10"] = df["Close"] / df.groupby("Ticker")["Close"].shift(10) - 1
 
+# =========================
+# Vol系
+# =========================
 df["Market_Vol"] = df.groupby("Date")["Volatility"].transform("mean")
 df["Vol_Ratio"] = df["Volatility"] / df["Market_Vol"]
 
