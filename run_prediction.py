@@ -49,26 +49,33 @@ FEATURES = [
 TARGET = "Target"
 
 # =========================
-# ユーティリティ
+# 安全ユーティリティ（ここが重要）
 # =========================
 def normalize_columns(df):
-    rename_map = {}
-    if "コード" not in df.columns and "Ticker" in df.columns:
-        rename_map["Ticker"] = "コード"
-    if "銘柄名" not in df.columns and "Name" in df.columns:
-        rename_map["Name"] = "銘柄名"
-    return df.rename(columns=rename_map) if rename_map else df
+    if "Ticker" not in df.columns and "コード" in df.columns:
+        df = df.rename(columns={"コード": "Ticker"})
+    if "Name" not in df.columns and "銘柄名" in df.columns:
+        df = df.rename(columns={"銘柄名": "Name"})
+    return df
 
+def safe_add_features(df):
 
-def get_regime(score):
-    if score > 0.60:
-        return "strong"
-    elif score > 0.55:
-        return "slightly_strong"
-    elif score > 0.50:
-        return "neutral"
-    else:
-        return "weak"
+    # 念のためTickerがない場合は終了回避
+    if "Ticker" not in df.columns:
+        df["Ticker"] = "UNKNOWN"
+
+    # Trend系（同日データだと意味薄いがエラー防止）
+    df["Trend_5"] = 0
+    df["Trend_10"] = 0
+
+    # Vol系
+    if "Volatility" not in df.columns:
+        df["Volatility"] = 0
+
+    df["Market_Vol"] = df["Volatility"].mean()
+    df["Vol_Ratio"] = df["Volatility"] / (df["Market_Vol"] + 1e-9)
+
+    return df
 
 # =========================
 # データ読み込み
@@ -88,24 +95,19 @@ current_month = latest_date.strftime("%Y-%m")
 print(f"\n📅 予測日: {latest_date}")
 
 # =========================
-# モデル再学習判定
+# モデル
 # =========================
 retrain = True
 
 if os.path.exists(MODEL_PATH) and os.path.exists(MODEL_META_PATH):
     meta = pickle.load(open(MODEL_META_PATH, "rb"))
-    last_train_month = meta.get("train_month")
-
-    if last_train_month == current_month:
+    if meta.get("train_month") == current_month:
         retrain = False
 
-# =========================
-# 学習
-# =========================
 if retrain:
     print("🔄 モデル再学習")
 
-    train_df[FEATURES] = train_df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    train_df = train_df.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     model = LGBMClassifier(
         n_estimators=300,
@@ -129,22 +131,18 @@ else:
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
 # =========================
-# 🔥 追加特徴量（ここ重要）
+# 🔥 安全特徴量追加
 # =========================
-today["Trend_5"] = today.groupby("Ticker")["Close"].pct_change(5)
-today["Trend_10"] = today.groupby("Ticker")["Close"].pct_change(10)
-
-today["Market_Vol"] = today.groupby("Date")["Volatility"].transform("mean")
-today["Vol_Ratio"] = today["Volatility"] / today["Market_Vol"]
+today = safe_add_features(today)
 
 # =========================
-# feature安全化
+# featureチェック（ここが重要）
 # =========================
-today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
-
 missing_cols = [c for c in FEATURES if c not in today.columns]
-if len(missing_cols) > 0:
+if missing_cols:
     raise ValueError(f"Missing features: {missing_cols}")
+
+today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
 # 予測
@@ -155,15 +153,13 @@ print("\n=== PRED CHECK ===")
 print(today["Pred"].describe())
 
 # =========================
-# フィルター
+# フィルター（安全化）
 # =========================
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
 
 if "Volume" in today.columns:
     today = today[today["Volume"].fillna(0) > 10000]
-
-today = today.dropna(subset=["Pred"])
 
 if today.empty:
     print("⚠️ 銘柄なし")
@@ -182,36 +178,16 @@ if len(filtered) < TOP_N:
 today = filtered.head(TOP_N).copy()
 
 # =========================
-# ランク
+# 出力
 # =========================
 today["PredRank"] = range(1, len(today) + 1)
 
-# =========================
-# レジーム
-# =========================
-market_score = today["Pred"].mean()
-regime = get_regime(market_score)
-
-# =========================
-# ログ
-# =========================
 today["predict_date"] = latest_date
 today["target_date"] = latest_date + pd.Timedelta(days=HOLD_DAYS)
 
-if os.path.exists(PRED_LOG_PATH):
-    today.to_csv(PRED_LOG_PATH, mode="a", header=False, index=False)
-else:
-    today.to_csv(PRED_LOG_PATH, index=False)
-
-# =========================
-# 出力
-# =========================
 today.to_csv(OUTPUT_PATH, index=False)
 
 print("\n=== 今日の銘柄 ===")
-print(today[["コード", "銘柄名", "Pred", "PredRank"]])
-
-print("\n市場状態:", regime)
-print("銘柄数:", len(today))
+print(today[["Ticker", "Name", "Pred", "PredRank"]])
 
 print(f"\n📤 出力完了: {OUTPUT_PATH}")
