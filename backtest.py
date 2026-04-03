@@ -13,19 +13,20 @@ FEATURES = [
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
-    "Rel_Return_1"   # ←追加
+    "Rel_Return_1"
 ]
 
 TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.60
+# 🔥 修正ポイント
+THRESHOLD = 0.65
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-MARKET_FILTER = -0.01
+MARKET_FILTER = -0.005
 
 # =========================
 # データ
@@ -75,7 +76,9 @@ for test_year in years:
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
 
+        # =========================
         # 決済
+        # =========================
         new_positions = []
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
@@ -94,19 +97,26 @@ for test_year in years:
 
         positions = new_positions
 
-        # 🔥 相場フィルタ
+        # =========================
+        # 🔥 相場フィルタ（強化）
+        # =========================
         market = today["Return_1"].mean()
+
         if market < MARKET_FILTER:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
+        # =========================
         # エントリー
+        # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            picks = today_f.sort_values("pred", ascending=False).head(3)
+            # 🔥 ここ修正（1銘柄のみ）
+            picks = today_f.sort_values("pred", ascending=False).head(1)
+
             total_pred = picks["pred"].sum()
 
             invested = sum([p["capital"] for p in positions])
@@ -130,7 +140,8 @@ for test_year in years:
                     continue
 
                 entry_price = next_row["Open"].iloc[0]
-                weight = row["pred"] / total_pred
+
+                weight = 1.0  # 🔥 フルベット（1銘柄なので）
                 capital = free_cash * weight
 
                 if capital <= 0:
@@ -149,6 +160,9 @@ for test_year in years:
         equity += daily_pnl
         equity_curve.append(equity)
 
+    # =========================
+    # 評価
+    # =========================
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
@@ -169,9 +183,13 @@ for test_year in years:
         "Trades": trade_count
     })
 
+# =========================
+# 集計
+# =========================
 df_res = pd.DataFrame(results)
 
 print("\n=== SUMMARY ===")
 print(df_res)
+
 print("\n平均")
 print(df_res.mean(numeric_only=True))
