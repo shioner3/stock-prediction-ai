@@ -23,8 +23,7 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.55   # ★固定
-TOP_N_GRID = [1, 2, 3, 5]  # ★最適化対象
+THRESHOLD = 0.55
 
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
@@ -43,9 +42,9 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# 評価関数
+# バックテスト
 # =========================
-def run_backtest(train_df, test_df, top_n):
+def run_backtest(train_df, test_df):
 
     model = LGBMClassifier(
         n_estimators=300,
@@ -104,11 +103,23 @@ def run_backtest(train_df, test_df, top_n):
             continue
 
         # =========================
-        # エントリー
+        # エントリー候補
         # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
+
+            # =========================
+            # 🔥 動的TOP_N
+            # =========================
+            market_score = today_f["pred"].mean()
+
+            if market_score > 0.60:
+                top_n = 5
+            elif market_score > 0.55:
+                top_n = 3
+            else:
+                top_n = 2
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
@@ -136,7 +147,7 @@ def run_backtest(train_df, test_df, top_n):
 
                 entry_price = next_row["Open"].iloc[0]
 
-                # ★ 重み（通常版）
+                # ★ 通常ウェイト
                 weight = row["pred"] / total_pred
                 capital = free_cash * weight
 
@@ -167,7 +178,7 @@ def run_backtest(train_df, test_df, top_n):
 
 
 # =========================
-# メイン最適化
+# 実行
 # =========================
 results = []
 
@@ -181,44 +192,28 @@ for test_year in years:
     train_df = df[df["Date"].dt.year < test_year]
     test_df = df[df["Date"].dt.year == test_year]
 
-    best = None
+    CAGR, Sharpe, MaxDD, trades = run_backtest(train_df, test_df)
 
-    for top_n in TOP_N_GRID:
+    print(f"CAGR: {CAGR:.3f}")
+    print(f"Sharpe: {Sharpe:.3f}")
+    print(f"MaxDD: {MaxDD:.3f}")
+    print(f"Trades: {trades}")
 
-        CAGR, Sharpe, MaxDD, trades = run_backtest(
-            train_df, test_df, top_n
-        )
-
-        score = Sharpe  # ★評価軸
-
-        results.append({
-            "year": test_year,
-            "TOP_N": top_n,
-            "CAGR": CAGR,
-            "Sharpe": Sharpe,
-            "MaxDD": MaxDD,
-            "Trades": trades,
-            "Score": score
-        })
-
-        if best is None or score > best["Score"]:
-            best = results[-1]
-
-    print("\nBEST:")
-    print(best)
+    results.append({
+        "year": test_year,
+        "CAGR": CAGR,
+        "Sharpe": Sharpe,
+        "MaxDD": MaxDD,
+        "Trades": trades
+    })
 
 # =========================
 # 集計
 # =========================
 df_res = pd.DataFrame(results)
 
-print("\n=== FULL RESULT ===")
+print("\n=== SUMMARY ===")
 print(df_res)
 
-print("\n=== BEST PER YEAR ===")
-print(
-    df_res
-    .sort_values(["year", "Score"], ascending=[True, False])
-    .groupby("year")
-    .head(1)
-)
+print("\n平均")
+print(df_res.mean(numeric_only=True))
