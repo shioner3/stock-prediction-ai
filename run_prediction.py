@@ -39,7 +39,8 @@ FEATURES = [
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
-    "HL_range","RSI"
+    "HL_range",
+    "Rel_Return_1"
 ]
 
 TARGET = "Target"
