@@ -112,7 +112,7 @@ def run_backtest(train_df, test_df):
             # =========================
             # 🔥 動的TOP_N（修正版）
             # =========================
-            market_score = today["pred"].mean()
+            market_score = today_f["pred"].mean()
 
             if market_score > 0.60:
                 top_n = 4
