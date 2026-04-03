@@ -10,7 +10,7 @@ from datetime import datetime
 # =========================
 TOP_N = 1
 HOLD_DAYS = 7
-THRESHOLD = 0.55   # ← Target変更に合わせて上げる
+THRESHOLD = 0.55
 CANDIDATES = 20
 
 BASE_DIR = os.path.dirname(__file__)
@@ -32,7 +32,7 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "today_picks.csv")
 
 # =========================
-# FEATURES（完全一致）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -40,7 +40,10 @@ FEATURES = [
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
-    "Rel_Return_1"
+    "Rel_Return_1",
+    "Trend_5",
+    "Trend_10",
+    "Vol_Ratio"
 ]
 
 TARGET = "Target"
@@ -124,6 +127,15 @@ else:
 # 今日データ
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
+
+# =========================
+# 🔥 追加特徴量（ここ重要）
+# =========================
+today["Trend_5"] = today.groupby("Ticker")["Close"].pct_change(5)
+today["Trend_10"] = today.groupby("Ticker")["Close"].pct_change(10)
+
+today["Market_Vol"] = today.groupby("Date")["Volatility"].transform("mean")
+today["Vol_Ratio"] = today["Volatility"] / today["Market_Vol"]
 
 # =========================
 # feature安全化
