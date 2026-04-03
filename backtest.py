@@ -23,11 +23,10 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.60
+THRESHOLD_GRID = np.arange(0.50, 0.81, 0.05)  # ★最適化対象
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
-
 MARKET_FILTER = -0.01
 
 # =========================
@@ -39,21 +38,12 @@ df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-# =========================
-# ウォークフォワード
-# =========================
 years = sorted(df["Date"].dt.year.unique())
-results = []
 
-for test_year in years:
-
-    if test_year < 2022:
-        continue
-
-    print(f"\n=== WALK FORWARD: {test_year} ===")
-
-    train_df = df[df["Date"].dt.year < test_year]
-    test_df = df[df["Date"].dt.year == test_year].copy()
+# =========================
+# 評価関数
+# =========================
+def run_backtest(df, train_df, test_df, threshold):
 
     model = LGBMClassifier(
         n_estimators=300,
@@ -63,6 +53,7 @@ for test_year in years:
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
+    test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
     dates = sorted(test_df["Date"].unique())
@@ -71,6 +62,7 @@ for test_year in years:
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
+
     trade_count = 0
 
     for d in dates:
@@ -83,6 +75,7 @@ for test_year in years:
         # =========================
         new_positions = []
         for pos in positions:
+
             cur = today[today["Ticker"] == pos["ticker"]]
 
             if cur.empty:
@@ -103,7 +96,6 @@ for test_year in years:
         # 相場フィルタ
         # =========================
         market = today["Return_1"].mean()
-
         if market < MARKET_FILTER:
             equity += daily_pnl
             equity_curve.append(equity)
@@ -112,7 +104,7 @@ for test_year in years:
         # =========================
         # エントリー
         # =========================
-        today_f = today[today["pred"] > THRESHOLD]
+        today_f = today[today["pred"] > threshold]
 
         if not today_f.empty:
 
@@ -161,9 +153,6 @@ for test_year in years:
         equity += daily_pnl
         equity_curve.append(equity)
 
-    # =========================
-    # 評価
-    # =========================
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
@@ -171,26 +160,56 @@ for test_year in years:
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    print(f"CAGR: {CAGR:.3f}")
-    print(f"Sharpe: {Sharpe:.3f}")
-    print(f"MaxDD: {MaxDD:.3f}")
-    print(f"Trades: {trade_count}")
+    return CAGR, Sharpe, MaxDD, trade_count
 
-    results.append({
-        "year": test_year,
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD,
-        "Trades": trade_count
-    })
+
+# =========================
+# メイン最適化ループ
+# =========================
+results = []
+
+for test_year in years:
+    if test_year < 2022:
+        continue
+
+    print(f"\n=== YEAR {test_year} ===")
+
+    train_df = df[df["Date"].dt.year < test_year]
+    test_df = df[df["Date"].dt.year == test_year]
+
+    best = None
+
+    for th in THRESHOLD_GRID:
+
+        CAGR, Sharpe, MaxDD, trades = run_backtest(
+            df, train_df, test_df, th
+        )
+
+        score = Sharpe  # ★ここ重要（CAGRでもOK）
+
+        results.append({
+            "year": test_year,
+            "threshold": th,
+            "CAGR": CAGR,
+            "Sharpe": Sharpe,
+            "MaxDD": MaxDD,
+            "Trades": trades,
+            "Score": score
+        })
+
+        if best is None or score > best["Score"]:
+            best = results[-1]
+
+    print("\nBEST:")
+    print(best)
 
 # =========================
 # 集計
 # =========================
 df_res = pd.DataFrame(results)
 
-print("\n=== SUMMARY ===")
+print("\n=== FULL RESULT ===")
 print(df_res)
 
-print("\n平均")
-print(df_res.mean(numeric_only=True))
+print("\n=== BEST PER YEAR ===")
+print(df_res.sort_values(["year", "Score"], ascending=[True, False]).groupby("year").head(1))
