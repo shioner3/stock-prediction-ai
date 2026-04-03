@@ -110,20 +110,24 @@ def run_backtest(train_df, test_df):
         if not today_f.empty:
 
             # =========================
-            # 🔥 動的TOP_N
+            # 🔥 動的TOP_N（修正版）
             # =========================
             market_score = today_f["pred"].mean()
 
-            if market_score > 0.62:
+            if market_score > 0.60:
+                top_n = 4
+            elif market_score > 0.55:
                 top_n = 3
-            elif market_score > 0.57:
-                top_n = 2
             else:
-                top_n = 1
+                top_n = 2
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
-            total_pred = picks["pred"].sum()
+            # =========================
+            # 🔥 weight = pred^2
+            # =========================
+            weights = picks["pred"] ** 2
+            total_weight = weights.sum()
 
             invested = sum([p["capital"] for p in positions])
             free_cash = equity - invested
@@ -136,7 +140,7 @@ def run_backtest(train_df, test_df):
             next_day = dates[date_index[d] + 1]
             next_data = test_df[test_df["Date"] == next_day]
 
-            for _, row in picks.iterrows():
+            for i, (_, row) in enumerate(picks.iterrows()):
 
                 if any(p["ticker"] == row["Ticker"] for p in positions):
                     continue
@@ -147,8 +151,7 @@ def run_backtest(train_df, test_df):
 
                 entry_price = next_row["Open"].iloc[0]
 
-                # ★ 通常ウェイト
-                weight = row["pred"] / total_pred
+                weight = weights.iloc[i] / total_weight
                 capital = free_cash * weight
 
                 if capital <= 0:
