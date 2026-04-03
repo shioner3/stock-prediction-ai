@@ -21,12 +21,12 @@ TARGET = "Target"
 INITIAL_CAPITAL = 1.0
 
 # 🔥 修正ポイント
-THRESHOLD = 0.65
+THRESHOLD = 0.60
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-MARKET_FILTER = -0.005
+MARKET_FILTER = -0.01
 
 # =========================
 # データ
@@ -98,7 +98,7 @@ for test_year in years:
         positions = new_positions
 
         # =========================
-        # 🔥 相場フィルタ（強化）
+        # 🔥 相場フィルタ
         # =========================
         market = today["Return_1"].mean()
 
@@ -114,8 +114,8 @@ for test_year in years:
 
         if not today_f.empty:
 
-            # 🔥 ここ修正（1銘柄のみ）
-            picks = today_f.sort_values("pred", ascending=False).head(1)
+            # 🔥 修正：2銘柄選択
+            picks = today_f.sort_values("pred", ascending=False).head(2)
 
             total_pred = picks["pred"].sum()
 
@@ -141,7 +141,7 @@ for test_year in years:
 
                 entry_price = next_row["Open"].iloc[0]
 
-                weight = 1.0  # 🔥 フルベット（1銘柄なので）
+                weight = row["pred"] / total_pred  # 2銘柄で按分
                 capital = free_cash * weight
 
                 if capital <= 0:
