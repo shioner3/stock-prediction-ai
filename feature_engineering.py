@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import duckdb
-import os
 
 # =========================
 # 設定
@@ -13,6 +12,8 @@ PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
 HOLD_DAYS = 7
 MIN_COUNT = 3000
+
+Z_WINDOW = 20  # ★Z-scoreの基準期間
 
 # =========================
 # データ読み込み
@@ -73,22 +74,52 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
 # =========================
-# 市場相対特徴
+# 市場特徴
 # =========================
 df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean")
+
 df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
 
+df["Market_Vol"] = df.groupby("Date")["Volatility"].transform("mean")
+df["Vol_Ratio"] = df["Volatility"] / df["Market_Vol"]
+
 # =========================
-# 🔥 Trend（前計算化）
+# Trend（生値）
 # =========================
 df["Trend_5"] = df["Close"] / df.groupby("Ticker")["Close"].shift(5) - 1
 df["Trend_10"] = df["Close"] / df.groupby("Ticker")["Close"].shift(10) - 1
 
 # =========================
-# Vol系
+# 🔥 Z-score化（核心）
 # =========================
-df["Market_Vol"] = df.groupby("Date")["Volatility"].transform("mean")
-df["Vol_Ratio"] = df["Volatility"] / df["Market_Vol"]
+def zscore(group, col, window):
+    mean = group[col].rolling(window).mean()
+    std = group[col].rolling(window).std()
+    return (group[col] - mean) / (std + 1e-9)
+
+# Trend系
+df["Trend_5_z"] = df.groupby("Ticker", group_keys=False).apply(
+    lambda x: zscore(x, "Trend_5", Z_WINDOW)
+)
+
+df["Trend_10_z"] = df.groupby("Ticker", group_keys=False).apply(
+    lambda x: zscore(x, "Trend_10", Z_WINDOW)
+)
+
+# Volatility
+df["Volatility_z"] = df.groupby("Ticker", group_keys=False).apply(
+    lambda x: zscore(x, "Volatility", Z_WINDOW)
+)
+
+# Volume
+df["Volume_ratio_z"] = df.groupby("Ticker", group_keys=False).apply(
+    lambda x: zscore(x, "Volume_ratio", Z_WINDOW)
+)
+
+# Market系（重要）
+df["Market_Return_z"] = df.groupby("Date")["Market_Return_1"].transform(
+    lambda x: (x - x.rolling(20).mean()) / (x.rolling(20).std() + 1e-9)
+)
 
 # =========================
 # RSI
@@ -100,7 +131,7 @@ loss = -delta.clip(upper=0)
 avg_gain = gain.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
 avg_loss = loss.groupby(df["Ticker"]).transform(lambda x: x.rolling(7).mean())
 
-rs = avg_gain / avg_loss
+rs = avg_gain / (avg_loss + 1e-9)
 df["RSI"] = 100 - (100 / (1 + rs))
 
 # =========================
@@ -126,7 +157,7 @@ df = df.dropna(subset=["FutureReturn"])
 df = df.replace([np.inf, -np.inf], np.nan)
 
 # =========================
-# FEATURES
+# FEATURES（Z-score追加）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -136,9 +167,11 @@ FEATURES = [
     "HL_range",
     "RSI",
     "Rel_Return_1",
-    "Trend_5",
-    "Trend_10",
-    "Vol_Ratio"
+    "Trend_5_z",
+    "Trend_10_z",
+    "Volatility_z",
+    "Volume_ratio_z",
+    "Market_Return_z"
 ]
 
 # =========================
