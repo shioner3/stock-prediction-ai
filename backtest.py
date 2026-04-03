@@ -28,7 +28,7 @@ THRESHOLD = 0.58
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
-MARKET_FILTER = -0.01
+MARKET_FILTER = -0.005
 
 # =========================
 # データ
@@ -128,7 +128,7 @@ def run_backtest(train_df, test_df):
             # =========================
             # 🔥 weight = pred^2
             # =========================
-            weights = picks["pred"] ** 3
+            weights = picks["pred"] ** 2
             total_weight = weights.sum()
 
             invested = sum([p["capital"] for p in positions])
