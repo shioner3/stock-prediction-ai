@@ -12,20 +12,20 @@ FEATURES = [
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
-    "HL_range","RSI"
+    "HL_range",
+    "Rel_Return_1"   # ←追加
 ]
 
 TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.62   # 🔥 引き上げ（重要）
+THRESHOLD = 0.60
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-# 🔥 相場フィルタ閾値
-MARKET_FILTER = -0.01   # これより悪い日は取引しない
+MARKET_FILTER = -0.01
 
 # =========================
 # データ
@@ -52,12 +52,6 @@ for test_year in years:
     train_df = df[df["Date"].dt.year < test_year]
     test_df = df[df["Date"].dt.year == test_year].copy()
 
-    if len(test_df) == 0:
-        continue
-
-    # =========================
-    # 学習
-    # =========================
     model = LGBMClassifier(
         n_estimators=300,
         learning_rate=0.03,
@@ -66,12 +60,8 @@ for test_year in years:
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
-
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
-    # =========================
-    # 日付
-    # =========================
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
@@ -85,11 +75,8 @@ for test_year in years:
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
 
-        # =========================
         # 決済
-        # =========================
         new_positions = []
-
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
 
@@ -107,26 +94,19 @@ for test_year in years:
 
         positions = new_positions
 
-        # =========================
         # 🔥 相場フィルタ
-        # =========================
         market = today["Return_1"].mean()
-
         if market < MARKET_FILTER:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
-        # =========================
         # エントリー
-        # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            # 上位3銘柄
             picks = today_f.sort_values("pred", ascending=False).head(3)
-
             total_pred = picks["pred"].sum()
 
             invested = sum([p["capital"] for p in positions])
@@ -150,7 +130,6 @@ for test_year in years:
                     continue
 
                 entry_price = next_row["Open"].iloc[0]
-
                 weight = row["pred"] / total_pred
                 capital = free_cash * weight
 
@@ -170,9 +149,6 @@ for test_year in years:
         equity += daily_pnl
         equity_curve.append(equity)
 
-    # =========================
-    # 評価
-    # =========================
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
@@ -193,13 +169,9 @@ for test_year in years:
         "Trades": trade_count
     })
 
-# =========================
-# 集計
-# =========================
 df_res = pd.DataFrame(results)
 
 print("\n=== SUMMARY ===")
 print(df_res)
-
 print("\n平均")
 print(df_res.mean(numeric_only=True))
