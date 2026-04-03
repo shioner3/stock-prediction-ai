@@ -23,7 +23,9 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD_GRID = np.arange(0.50, 0.81, 0.05)  # ★最適化対象
+THRESHOLD = 0.55   # ★固定
+TOP_N_GRID = [1, 2, 3, 5]  # ★最適化対象
+
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
@@ -43,7 +45,7 @@ years = sorted(df["Date"].dt.year.unique())
 # =========================
 # 評価関数
 # =========================
-def run_backtest(df, train_df, test_df, threshold):
+def run_backtest(train_df, test_df, top_n):
 
     model = LGBMClassifier(
         n_estimators=300,
@@ -104,11 +106,11 @@ def run_backtest(df, train_df, test_df, threshold):
         # =========================
         # エントリー
         # =========================
-        today_f = today[today["pred"] > threshold]
+        today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            picks = today_f.sort_values("pred", ascending=False).head(2)
+            picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
             total_pred = picks["pred"].sum()
 
@@ -134,6 +136,7 @@ def run_backtest(df, train_df, test_df, threshold):
 
                 entry_price = next_row["Open"].iloc[0]
 
+                # ★ 重み（通常版）
                 weight = row["pred"] / total_pred
                 capital = free_cash * weight
 
@@ -164,11 +167,12 @@ def run_backtest(df, train_df, test_df, threshold):
 
 
 # =========================
-# メイン最適化ループ
+# メイン最適化
 # =========================
 results = []
 
 for test_year in years:
+
     if test_year < 2022:
         continue
 
@@ -179,17 +183,17 @@ for test_year in years:
 
     best = None
 
-    for th in THRESHOLD_GRID:
+    for top_n in TOP_N_GRID:
 
         CAGR, Sharpe, MaxDD, trades = run_backtest(
-            df, train_df, test_df, th
+            train_df, test_df, top_n
         )
 
-        score = Sharpe  # ★ここ重要（CAGRでもOK）
+        score = Sharpe  # ★評価軸
 
         results.append({
             "year": test_year,
-            "threshold": th,
+            "TOP_N": top_n,
             "CAGR": CAGR,
             "Sharpe": Sharpe,
             "MaxDD": MaxDD,
@@ -212,4 +216,9 @@ print("\n=== FULL RESULT ===")
 print(df_res)
 
 print("\n=== BEST PER YEAR ===")
-print(df_res.sort_values(["year", "Score"], ascending=[True, False]).groupby("year").head(1))
+print(
+    df_res
+    .sort_values(["year", "Score"], ascending=[True, False])
+    .groupby("year")
+    .head(1)
+)
