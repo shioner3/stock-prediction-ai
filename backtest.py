@@ -13,14 +13,16 @@ FEATURES = [
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
-    "Rel_Return_1"
+    "Rel_Return_1",
+    "Trend_5",
+    "Trend_10",
+    "Vol_Ratio"
 ]
 
 TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-# 🔥 修正ポイント
 THRESHOLD = 0.60
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
@@ -98,7 +100,7 @@ for test_year in years:
         positions = new_positions
 
         # =========================
-        # 🔥 相場フィルタ
+        # 相場フィルタ
         # =========================
         market = today["Return_1"].mean()
 
@@ -114,7 +116,6 @@ for test_year in years:
 
         if not today_f.empty:
 
-            # 🔥 修正：2銘柄選択
             picks = today_f.sort_values("pred", ascending=False).head(2)
 
             total_pred = picks["pred"].sum()
@@ -141,7 +142,7 @@ for test_year in years:
 
                 entry_price = next_row["Open"].iloc[0]
 
-                weight = row["pred"] / total_pred  # 2銘柄で按分
+                weight = row["pred"] / total_pred
                 capital = free_cash * weight
 
                 if capital <= 0:
