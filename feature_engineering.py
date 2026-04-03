@@ -42,7 +42,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
 # =========================
-# 日付完全性フィルター
+# 日付フィルター
 # =========================
 counts = df["Date"].value_counts()
 valid_dates = counts[counts >= MIN_COUNT].index
@@ -51,7 +51,7 @@ df = df[df["Date"].isin(valid_dates)].copy()
 print("フィルタ後サイズ:", df.shape)
 
 # =========================
-# 基本特徴量（rank削除）
+# 基本特徴量
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change()
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3)
@@ -73,6 +73,12 @@ df["Volume_ratio"] = df["Volume"] / df["Volume_ma5"]
 df["HL_range"] = (df["High"] - df["Low"]) / df["Close"]
 
 # =========================
+# 🔥 市場相対特徴（追加）
+# =========================
+df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean")
+df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
+
+# =========================
 # RSI
 # =========================
 delta = df.groupby("Ticker")["Close"].diff()
@@ -92,16 +98,14 @@ df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
 df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
 # =========================
-# 🔥 Target（分類に変更）
+# Target
 # =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# 🔥 上がるかどうか（分類）
 df["Target"] = (df["FutureReturn"] > 0).astype(int)
 
-# 未来ない行削除
 df = df.dropna(subset=["FutureReturn"])
 
 # =========================
@@ -110,37 +114,39 @@ df = df.dropna(subset=["FutureReturn"])
 df = df.replace([np.inf, -np.inf], np.nan)
 
 # =========================
-# 学習データ
+# FEATURES（ここ超重要）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
-    "HL_range","RSI"
+    "HL_range",
+    "RSI",
+    "Rel_Return_1"   # ←追加
 ]
 
-train_df = df.dropna(subset=FEATURES + ["Target"]).copy()
-train_df = train_df.reset_index(drop=True)
+# =========================
+# 学習データ
+# =========================
+train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
 
 # =========================
-# 予測データ（最新日）
+# 予測データ
 # =========================
 latest_date = df["Date"].max()
 
-predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).copy()
-predict_df = predict_df.reset_index(drop=True)
+predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
 
 # =========================
 # デバッグ
 # =========================
 print("\n=== TRAIN DEBUG ===")
 print("rows:", len(train_df))
-print("latest:", train_df["Date"].max())
+print("Target mean:", train_df["Target"].mean())
 
 print("\n=== PREDICT DEBUG ===")
 print("rows:", len(predict_df))
-print("latest:", predict_df["Date"].max())
 
 # =========================
 # 保存
@@ -149,5 +155,3 @@ train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
 print("\n保存完了")
-print("train rows:", len(train_df))
-print("predict rows:", len(predict_df))
