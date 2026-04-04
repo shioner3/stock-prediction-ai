@@ -3,6 +3,7 @@ import numpy as np
 import os
 import pickle
 from lightgbm import LGBMClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from datetime import datetime
 
 # =========================
@@ -32,7 +33,7 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "today_picks.csv")
 
 # =========================
-# 🔥 FEATURES（完全一致）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -89,16 +90,25 @@ if os.path.exists(MODEL_PATH) and os.path.exists(MODEL_META_PATH):
     if meta.get("train_month") == current_month:
         retrain = False
 
+# =========================
+# 🔥 キャリブレーションモデル
+# =========================
 if retrain:
-    print("🔄 モデル再学習")
+    print("🔄 モデル再学習（Calibrated）")
 
     train_df = train_df.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    model = LGBMClassifier(
+    base_model = LGBMClassifier(
         n_estimators=300,
         learning_rate=0.03,
         max_depth=6,
         random_state=42
+    )
+
+    model = CalibratedClassifierCV(
+        estimator=base_model,
+        method="isotonic",   # ←重要（精度重視）
+        cv=3
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
@@ -111,13 +121,10 @@ else:
     model = pickle.load(open(MODEL_PATH, "rb"))
 
 # =========================
-# 今日データ抽出
+# 今日データ
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
-# =========================
-# featureチェック（最重要）
-# =========================
 missing_cols = [c for c in FEATURES if c not in today.columns]
 if missing_cols:
     raise ValueError(f"❌ Missing features: {missing_cols}")
@@ -125,7 +132,7 @@ if missing_cols:
 today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# 予測
+# 予測（ここが重要）
 # =========================
 today["Pred"] = model.predict_proba(today[FEATURES])[:, 1]
 
