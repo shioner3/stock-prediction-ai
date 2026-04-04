@@ -169,6 +169,9 @@ latest_date = df["Date"].max()
 
 predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
 
+print(train_df["Date"].min(), train_df["Date"].max())
+print(predict_df["Date"].unique())
+
 # =========================
 # 保存
 # =========================
