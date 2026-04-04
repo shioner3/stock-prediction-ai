@@ -32,11 +32,16 @@ STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
 # =========================
-# 固定パラメータ（ここが検証対象）
+# 固定パラメータ
 # =========================
 THRESHOLD = 0.52
 TOP_N = 1
+
+# =========================
+# 🌍 市場レジーム設定（追加）
+# =========================
 MARKET_FILTER = -0.003
+MARKET_MA_WINDOW = 20   # ←追加
 
 # =========================
 # データ読み込み
@@ -50,7 +55,7 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# 学習（固定）
+# 学習
 # =========================
 train_cutoff_year = 2021
 train_df = df[df["Date"].dt.year <= train_cutoff_year]
@@ -81,7 +86,7 @@ def run_backtest(test_df):
     equity_curve = []
     positions = []
 
-    for d in dates:
+    for i, d in enumerate(dates):
 
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
@@ -109,16 +114,29 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # Market Filter
+        # 🌍 レジーム判定（ここが追加）
         # =========================
-        market = today["Return_1"].mean()
-        if market < MARKET_FILTER:
+
+        market_series = df[df["Date"] == d]
+
+        market_ret = today["Return_1"].mean()
+
+        # MAレジーム（追加）
+        if i >= MARKET_MA_WINDOW:
+            past_dates = dates[i-MARKET_MA_WINDOW:i]
+            past_market = df[df["Date"].isin(past_dates)]
+            market_ma = past_market["Return_1"].mean()
+        else:
+            market_ma = 0
+
+        # 🚨 レジームフィルター
+        if (market_ret < MARKET_FILTER) or (market_ma < 0):
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
         # =========================
-        # エントリー条件
+        # エントリー
         # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
@@ -129,7 +147,6 @@ def run_backtest(test_df):
 
         picks = today_f.sort_values("pred", ascending=False).head(TOP_N)
 
-        # TOP_N=1なので実質単一
         invested = sum([p["capital"] for p in positions])
         free_cash = equity - invested
 
@@ -151,8 +168,7 @@ def run_backtest(test_df):
                 continue
 
             entry_price = next_row["Open"].iloc[0]
-
-            capital = free_cash  # TOP_N=1なので全額投入
+            capital = free_cash
 
             positions.append({
                 "ticker": row["Ticker"],
@@ -180,9 +196,9 @@ def run_backtest(test_df):
 
 
 # =========================
-# 年別再現性テスト
+# 年別テスト
 # =========================
-print("\n=== REPRODUCIBILITY TEST ===")
+print("\n=== REPRODUCIBILITY TEST (REGIME FILTERED) ===")
 
 results = []
 
