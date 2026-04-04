@@ -32,27 +32,34 @@ STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
 # =========================
-# 固定パラメータ
+# モデル閾値
 # =========================
 THRESHOLD = 0.52
-TOP_N_NORMAL = 1
-TOP_N_RANGE = 1
-
-# レンジ時の調整
-RANGE_THRESHOLD_MULTIPLIER = 1.05   # 閾値を少し上げる
-RANGE_CAPITAL_RATIO = 0.5          # 資金半分
 
 # =========================
-# レジーム設定
-# =========================
-MARKET_FILTER = -0.003
-MARKET_MA_WINDOW = 20
-
-# =========================
-# レンジ検出
+# レンジ設定
 # =========================
 RANGE_WINDOW = 20
 RANGE_STD_THRESHOLD = 0.006
+
+# =========================
+# 下落判定
+# =========================
+DOWN_TREND_RET = -0.001
+DOWN_MA_WINDOW = 20
+
+# =========================
+# レンジ運用調整
+# =========================
+RANGE_TOP_N = 1
+RANGE_THRESHOLD_MULT = 1.05
+RANGE_CAPITAL_RATIO = 0.5
+
+# =========================
+# 通常運用
+# =========================
+NORMAL_TOP_N = 1
+NORMAL_CAPITAL_RATIO = 1.0
 
 # =========================
 # データ
@@ -68,8 +75,7 @@ years = sorted(df["Date"].dt.year.unique())
 # =========================
 # 学習
 # =========================
-train_cutoff_year = 2021
-train_df = df[df["Date"].dt.year <= train_cutoff_year]
+train_df = df[df["Date"].dt.year <= 2021]
 
 model = LGBMClassifier(
     n_estimators=300,
@@ -127,12 +133,12 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # レジーム判定
+        # 市場指標
         # =========================
         market_ret = today["Return_1"].mean()
 
-        if i >= MARKET_MA_WINDOW:
-            past_dates = dates[i-MARKET_MA_WINDOW:i]
+        if i >= DOWN_MA_WINDOW:
+            past_dates = dates[i-DOWN_MA_WINDOW:i]
             past_market = df[df["Date"].isin(past_dates)]
             market_ma = past_market["Return_1"].mean()
         else:
@@ -155,24 +161,37 @@ def run_backtest(test_df):
         is_range = market_std < RANGE_STD_THRESHOLD
 
         # =========================
-        # モード決定
+        # 下落判定（最優先）
         # =========================
-        if is_range:
-            top_n = TOP_N_RANGE
-            threshold = THRESHOLD * RANGE_THRESHOLD_MULTIPLIER
-            capital_ratio = RANGE_CAPITAL_RATIO
-        else:
-            top_n = TOP_N_NORMAL
-            threshold = THRESHOLD
-            capital_ratio = 1.0
+        is_down = (market_ret < DOWN_TREND_RET) or (market_ma < 0)
 
         # =========================
-        # レジームフィルター（弱）
+        # レジーム決定
         # =========================
-        if market_ret < MARKET_FILTER or market_ma < 0:
+        if is_down:
+            regime = "DOWN"
+        elif is_range:
+            regime = "RANGE"
+        else:
+            regime = "TREND"
+
+        # =========================
+        # 運用ルール
+        # =========================
+        if regime == "DOWN":
             equity += daily_pnl
             equity_curve.append(equity)
             continue
+
+        elif regime == "RANGE":
+            top_n = RANGE_TOP_N
+            threshold = THRESHOLD * RANGE_THRESHOLD_MULT
+            capital_ratio = RANGE_CAPITAL_RATIO
+
+        else:  # TREND
+            top_n = NORMAL_TOP_N
+            threshold = THRESHOLD
+            capital_ratio = NORMAL_CAPITAL_RATIO
 
         # =========================
         # エントリー
@@ -234,9 +253,9 @@ def run_backtest(test_df):
 
 
 # =========================
-# 年別テスト
+# テスト
 # =========================
-print("\n=== REPRODUCIBILITY TEST (REGIME + RANGE SCALED) ===")
+print("\n=== REPRODUCIBILITY TEST (3-REGIME MODEL) ===")
 
 results = []
 
@@ -265,9 +284,6 @@ for year in years:
 
     print(f"CAGR={CAGR:.3f}, Sharpe={Sharpe:.3f}, MaxDD={MaxDD:.3f}")
 
-# =========================
-# 集計
-# =========================
 df_res = pd.DataFrame(results)
 
 print("\n=== SUMMARY ===")
