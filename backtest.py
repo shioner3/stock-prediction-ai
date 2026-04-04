@@ -27,7 +27,7 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.59
+THRESHOLD = 0.53
 
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
@@ -116,12 +116,7 @@ def run_backtest(train_df, test_df):
             # =========================
             # 🔥 ノートレ条件（追加）
             # =========================
-            market_score = today_f["pred"].mean()
 
-            if market_score < 0.595:
-                equity += daily_pnl
-                equity_curve.append(equity)
-                continue
 
             # =========================
             # 🔥 動的TOP_N
