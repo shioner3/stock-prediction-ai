@@ -27,10 +27,8 @@ FEATURES = [
 
 TARGET = "Target"
 
-TOP_K = 3
 HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
-
 
 # =========================
 # データ読み込み
@@ -58,7 +56,7 @@ def train_model(train_df):
 
     calibrated = CalibratedClassifierCV(
         base_model,
-        method="isotonic",   # ←重要（ランキング安定）
+        method="isotonic",
         cv=3
     )
 
@@ -73,10 +71,9 @@ def train_model(train_df):
 def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
-
     test_df = test_df.copy()
 
-    # ===== キャリブレーション済み確率 =====
+    # ===== スコア（キャリブレーション済み確率）=====
     test_df["score"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
     dates = sorted(test_df["Date"].unique())
@@ -124,14 +121,31 @@ def run_backtest(train_df, test_df):
             next_day = dates[date_index[d] + 1]
             next_data = test_df[test_df["Date"] == next_day]
 
-            # ===== TOP-Kランキング =====
-            picks = today.sort_values("score", ascending=False).head(TOP_K)
+            # =========================
+            # トレンドフィルタ（重要）
+            # =========================
+            today = today[today["Trend_5_z"] > 0]
+
+            if len(today) == 0:
+                continue
+
+            # =========================
+            # TOP_K動的化
+            # =========================
+            TOP_K = max(1, int(len(today) * 0.02))
+
+            # =========================
+            # ランキング + スコアフィルタ
+            # =========================
+            picks = today.sort_values("score", ascending=False)
+            picks = picks[picks["score"] > 0.55]   # 軽いフィルタ
+            picks = picks.head(TOP_K)
 
             free_cash = equity - sum([p["capital"] for p in positions])
 
             if free_cash > 0:
 
-                capital_per_trade = free_cash / TOP_K
+                capital_per_trade = free_cash / max(len(picks), 1)
 
                 for _, row in picks.iterrows():
 
