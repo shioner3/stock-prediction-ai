@@ -124,7 +124,8 @@ def run_backtest(train_df, test_df):
             # =========================
             # トレンドフィルタ（重要）
             # =========================
-            today = today[today["Trend_5_z"] > 0]
+            today = today[today["Trend_5_z"] > -0.5]
+            
 
             if len(today) == 0:
                 continue
@@ -132,13 +133,13 @@ def run_backtest(train_df, test_df):
             # =========================
             # TOP_K動的化
             # =========================
-            TOP_K = max(1, int(len(today) * 0.02))
+            TOP_K = max(2, int(len(today) * 0.05))
 
             # =========================
             # ランキング + スコアフィルタ
             # =========================
             picks = today.sort_values("score", ascending=False)
-            picks = picks[picks["score"] > 0.55]   # 軽いフィルタ
+            # スコアフィルタ(一旦削除)
             picks = picks.head(TOP_K)
 
             free_cash = equity - sum([p["capital"] for p in positions])
