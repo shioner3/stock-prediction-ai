@@ -32,7 +32,7 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-THRESHOLD = 0.55   # ←変更
+THRESHOLD = 0.52   # ←変更
 
 # =========================
 # 手作りレジーム
@@ -44,13 +44,13 @@ MARKET_MA_WINDOW = 20
 # HMM設定（早期化）
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
-HMM_SKIP = 0.6   # ←変更
-HMM_WEAK = 0.4   # ←変更
+HMM_SKIP = 0.75   # ←変更
+HMM_WEAK = 0.55   # ←変更
 
 # =========================
 # DD STOP
 # =========================
-MAX_DRAWDOWN = -0.10   # -10%
+MAX_DRAWDOWN = -0.20   # -10%
 
 # =========================
 # データ
