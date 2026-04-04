@@ -38,10 +38,14 @@ THRESHOLD = 0.52
 TOP_N = 1
 
 # =========================
-# 🌍 市場レジーム設定（追加）
+# 🌍 レジーム設定
 # =========================
 MARKET_FILTER = -0.003
-MARKET_MA_WINDOW = 20   # ←追加
+MARKET_MA_WINDOW = 20
+
+# 🆕 レンジ判定パラメータ
+RANGE_VOL_WINDOW = 20
+RANGE_VOL_THRESHOLD = 0.008  # 小さいほどレンジ判定厳しくなる
 
 # =========================
 # データ読み込み
@@ -114,14 +118,10 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # 🌍 レジーム判定（ここが追加）
+        # 🌍 レジーム判定（トレンド）
         # =========================
-
-        market_series = df[df["Date"] == d]
-
         market_ret = today["Return_1"].mean()
 
-        # MAレジーム（追加）
         if i >= MARKET_MA_WINDOW:
             past_dates = dates[i-MARKET_MA_WINDOW:i]
             past_market = df[df["Date"].isin(past_dates)]
@@ -129,8 +129,21 @@ def run_backtest(test_df):
         else:
             market_ma = 0
 
-        # 🚨 レジームフィルター
-        if (market_ret < MARKET_FILTER) or (market_ma < 0):
+        # =========================
+        # 🆕 レンジ判定（ボラティリティ）
+        # =========================
+        if i >= RANGE_VOL_WINDOW:
+            past_dates = dates[i-RANGE_VOL_WINDOW:i]
+            past_vol = df[df["Date"].isin(past_dates)]["Return_1"].std()
+        else:
+            past_vol = 0
+
+        is_range_market = past_vol < RANGE_VOL_THRESHOLD
+
+        # =========================
+        # 🚨 レジームフィルター（強化版）
+        # =========================
+        if (market_ret < MARKET_FILTER) or (market_ma < 0) or is_range_market:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
@@ -198,7 +211,7 @@ def run_backtest(test_df):
 # =========================
 # 年別テスト
 # =========================
-print("\n=== REPRODUCIBILITY TEST (REGIME FILTERED) ===")
+print("\n=== REPRODUCIBILITY TEST (REGIME + RANGE FILTERED) ===")
 
 results = []
 
