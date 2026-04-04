@@ -32,7 +32,7 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-THRESHOLD = 0.52
+THRESHOLD = 0.55   # ←変更
 
 # =========================
 # 手作りレジーム
@@ -41,11 +41,16 @@ MARKET_FILTER = -0.003
 MARKET_MA_WINDOW = 20
 
 # =========================
-# HMM設定
+# HMM設定（早期化）
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
-HMM_SKIP = 0.7
-HMM_WEAK = 0.5
+HMM_SKIP = 0.6   # ←変更
+HMM_WEAK = 0.4   # ←変更
+
+# =========================
+# DD STOP
+# =========================
+MAX_DRAWDOWN = -0.10   # -10%
 
 # =========================
 # データ
@@ -72,7 +77,7 @@ hmm.fit(market[HMM_FEATURES])
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
 # =========================
-# 状態の意味付け（重要）
+# 状態意味付け
 # =========================
 state_ret = {}
 
@@ -86,7 +91,6 @@ for i in range(3):
 sorted_states = sorted(state_ret.items(), key=lambda x: x[1])
 
 DOWN_STATE = sorted_states[0][0]
-TREND_STATE = sorted_states[-1][0]
 
 market["down_p"] = proba[:, DOWN_STATE]
 
@@ -125,6 +129,9 @@ def run_backtest(test_df):
     equity_curve = []
     positions = []
 
+    peak_equity = INITIAL_CAPITAL
+    trading_stopped = False
+
     for i, d in enumerate(dates):
 
         today = test_df[test_df["Date"] == d]
@@ -152,6 +159,26 @@ def run_backtest(test_df):
 
         positions = new_positions
 
+        equity += daily_pnl
+
+        # =========================
+        # DD更新
+        # =========================
+        peak_equity = max(peak_equity, equity)
+        dd = (equity / peak_equity) - 1
+
+        # DD STOP発動
+        if dd < MAX_DRAWDOWN:
+            trading_stopped = True
+
+        # 回復で解除
+        if trading_stopped and dd > -0.05:
+            trading_stopped = False
+
+        if trading_stopped:
+            equity_curve.append(equity)
+            continue
+
         # =========================
         # 手作りレジーム
         # =========================
@@ -172,20 +199,15 @@ def run_backtest(test_df):
         down_p = today["down_p"].iloc[0] if not today.empty else 0
 
         # =========================
-        # 🚨 統合レジーム（最重要）
+        # レジーム統合
         # =========================
         if manual_down or down_p > HMM_SKIP:
-            # 完全停止
-            equity += daily_pnl
             equity_curve.append(equity)
             continue
 
         elif down_p > HMM_WEAK:
-            # 弱気 → 半分
             capital_ratio = 0.5
-
         else:
-            # 通常
             capital_ratio = 1.0
 
         # =========================
@@ -194,7 +216,6 @@ def run_backtest(test_df):
         today_f = today[today["pred"] > THRESHOLD]
 
         if today_f.empty:
-            equity += daily_pnl
             equity_curve.append(equity)
             continue
 
@@ -204,7 +225,6 @@ def run_backtest(test_df):
         free_cash = (equity - invested) * capital_ratio
 
         if d not in date_index or date_index[d] + 1 >= len(dates):
-            equity += daily_pnl
             equity_curve.append(equity)
             continue
 
@@ -230,7 +250,6 @@ def run_backtest(test_df):
                 "capital": free_cash
             })
 
-        equity += daily_pnl
         equity_curve.append(equity)
 
     equity_curve = pd.Series(equity_curve)
@@ -247,7 +266,7 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== FINAL HYBRID REGIME BACKTEST ===")
+print("\n=== FINAL HYBRID + DD STOP ===")
 
 results = []
 
