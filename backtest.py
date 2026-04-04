@@ -27,7 +27,7 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.58
+THRESHOLD = 0.52
 TOP_N = 1   # ★固定
 
 HOLD_DAYS = 7
