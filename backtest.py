@@ -136,7 +136,7 @@ def run_backtest(train_df, test_df):
             # =========================
             # 🔥 weight = pred^2
             # =========================
-            weights = picks["pred"] ** 2
+            weights = picks["pred"] ** 2.2
             total_weight = weights.sum()
 
             invested = sum([p["capital"] for p in positions])
