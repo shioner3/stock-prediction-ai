@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
-from itertools import product
 
+# =========================
+# 設定
+# =========================
 DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
@@ -20,50 +22,40 @@ FEATURES = [
 TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
+
+THRESHOLD = 0.59
+
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
+MARKET_FILTER = -0.005
 
-THRESHOLD_LIST = [0.57, 0.58, 0.59, 0.60]
-MARKET_FILTER_LIST = [-0.01, -0.005, 0.0]
-POWER_LIST = [2.0, 2.2, 2.5]
-
+# =========================
+# データ
+# =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
+
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# 🔥 predを事前計算
+# バックテスト
 # =========================
-pred_cache = {}
-
-for test_year in years:
-    if test_year < 2022:
-        continue
-
-    train_df = df[df["Date"].dt.year < test_year]
-    test_df = df[df["Date"].dt.year == test_year].copy()
+def run_backtest(train_df, test_df):
 
     model = LGBMClassifier(
         n_estimators=300,
         learning_rate=0.03,
         max_depth=6,
-        random_state=42,
-        force_col_wise=True
+        random_state=42
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
+    test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
-
-    pred_cache[test_year] = test_df
-
-# =========================
-# バックテスト（pred前提）
-# =========================
-def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
 
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
@@ -71,6 +63,7 @@ def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
+
     trade_count = 0
 
     for d in dates:
@@ -78,10 +71,14 @@ def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
 
+        # =========================
         # 決済
+        # =========================
         new_positions = []
         for pos in positions:
+
             cur = today[today["Ticker"] == pos["ticker"]]
+
             if cur.empty:
                 new_positions.append(pos)
                 continue
@@ -96,17 +93,25 @@ def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
 
         positions = new_positions
 
+        # =========================
         # 相場フィルタ
+        # =========================
         market = today["Return_1"].mean()
         if market < MARKET_FILTER:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
+        # =========================
+        # エントリー候補
+        # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
+            # =========================
+            # 🔥 ノートレ条件（追加）
+            # =========================
             market_score = today_f["pred"].mean()
 
             if market_score < 0.595:
@@ -114,6 +119,9 @@ def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
                 equity_curve.append(equity)
                 continue
 
+            # =========================
+            # 🔥 動的TOP_N
+            # =========================
             if market_score > 0.62:
                 top_n = 4
             elif market_score > 0.58:
@@ -125,7 +133,10 @@ def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
-            weights = picks["pred"] ** POWER
+            # =========================
+            # 🔥 weight = pred^2
+            # =========================
+            weights = picks["pred"] ** 2.2
             total_weight = weights.sum()
 
             invested = sum([p["capital"] for p in positions])
@@ -176,27 +187,46 @@ def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    return Sharpe
+    return CAGR, Sharpe, MaxDD, trade_count
+
 
 # =========================
-# ロバスト実行
+# 実行
 # =========================
 results = []
 
-for th, mf, pw in product(THRESHOLD_LIST, MARKET_FILTER_LIST, POWER_LIST):
+for test_year in years:
 
-    yearly = []
+    if test_year < 2022:
+        continue
 
-    for year, test_df in pred_cache.items():
-        sharpe = run_backtest(test_df, th, mf, pw)
-        yearly.append(sharpe)
+    print(f"\n=== YEAR {test_year} ===")
+
+    train_df = df[df["Date"].dt.year < test_year]
+    test_df = df[df["Date"].dt.year == test_year]
+
+    CAGR, Sharpe, MaxDD, trades = run_backtest(train_df, test_df)
+
+    print(f"CAGR: {CAGR:.3f}")
+    print(f"Sharpe: {Sharpe:.3f}")
+    print(f"MaxDD: {MaxDD:.3f}")
+    print(f"Trades: {trades}")
 
     results.append({
-        "TH": th,
-        "MF": mf,
-        "PW": pw,
-        "AvgSharpe": np.mean(yearly)
+        "year": test_year,
+        "CAGR": CAGR,
+        "Sharpe": Sharpe,
+        "MaxDD": MaxDD,
+        "Trades": trades
     })
 
+# =========================
+# 集計
+# =========================
 df_res = pd.DataFrame(results)
-print(df_res.sort_values("AvgSharpe", ascending=False))
+
+print("\n=== SUMMARY ===")
+print(df_res)
+
+print("\n平均")
+print(df_res.mean(numeric_only=True))
