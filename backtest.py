@@ -32,7 +32,11 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-THRESHOLD = 0.52   # ←変更
+THRESHOLD = 0.52
+
+# 🆕 追加
+CRASH_FILTER = -0.02
+TOP_N = 2
 
 # =========================
 # 手作りレジーム
@@ -41,16 +45,16 @@ MARKET_FILTER = -0.003
 MARKET_MA_WINDOW = 20
 
 # =========================
-# HMM設定（早期化）
+# HMM設定
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
-HMM_SKIP = 0.75   # ←変更
-HMM_WEAK = 0.55   # ←変更
+HMM_SKIP = 0.75
+HMM_WEAK = 0.55
 
 # =========================
 # DD STOP
 # =========================
-MAX_DRAWDOWN = -0.20   # -10%
+MAX_DRAWDOWN = -0.20
 
 # =========================
 # データ
@@ -76,20 +80,13 @@ hmm = GaussianHMM(
 hmm.fit(market[HMM_FEATURES])
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
-# =========================
 # 状態意味付け
-# =========================
 state_ret = {}
-
 for i in range(3):
     mask = proba[:, i] > 0.5
-    if mask.sum() == 0:
-        state_ret[i] = 0
-    else:
-        state_ret[i] = market["Return_1"][mask].mean()
+    state_ret[i] = market["Return_1"][mask].mean() if mask.sum() > 0 else 0
 
 sorted_states = sorted(state_ret.items(), key=lambda x: x[1])
-
 DOWN_STATE = sorted_states[0][0]
 
 market["down_p"] = proba[:, DOWN_STATE]
@@ -121,7 +118,6 @@ def run_backtest(test_df):
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
-    # HMMマージ
     market_map = market.set_index("Date")[["down_p"]]
     test_df = test_df.merge(market_map, left_on="Date", right_index=True, how="left")
 
@@ -158,20 +154,17 @@ def run_backtest(test_df):
                 new_positions.append(pos)
 
         positions = new_positions
-
         equity += daily_pnl
 
         # =========================
-        # DD更新
+        # DD管理
         # =========================
         peak_equity = max(peak_equity, equity)
         dd = (equity / peak_equity) - 1
 
-        # DD STOP発動
         if dd < MAX_DRAWDOWN:
             trading_stopped = True
 
-        # 回復で解除
         if trading_stopped and dd > -0.05:
             trading_stopped = False
 
@@ -180,119 +173,16 @@ def run_backtest(test_df):
             continue
 
         # =========================
-        # 手作りレジーム
+        # 🚨 クラッシュフィルタ（最強）
         # =========================
         market_ret = today["Return_1"].mean()
 
+        if market_ret < CRASH_FILTER:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 手作りレジーム
+        # =========================
         if i >= MARKET_MA_WINDOW:
-            past_dates = dates[i-MARKET_MA_WINDOW:i]
-            past_market = df[df["Date"].isin(past_dates)]
-            market_ma = past_market["Return_1"].mean()
-        else:
-            market_ma = 0
-
-        manual_down = (market_ret < MARKET_FILTER) or (market_ma < 0)
-
-        # =========================
-        # HMM判定
-        # =========================
-        down_p = today["down_p"].iloc[0] if not today.empty else 0
-
-        # =========================
-        # レジーム統合
-        # =========================
-        if manual_down or down_p > HMM_SKIP:
-            equity_curve.append(equity)
-            continue
-
-        elif down_p > HMM_WEAK:
-            capital_ratio = 0.5
-        else:
-            capital_ratio = 1.0
-
-        # =========================
-        # エントリー
-        # =========================
-        today_f = today[today["pred"] > THRESHOLD]
-
-        if today_f.empty:
-            equity_curve.append(equity)
-            continue
-
-        picks = today_f.sort_values("pred", ascending=False).head(1)
-
-        invested = sum([p["capital"] for p in positions])
-        free_cash = (equity - invested) * capital_ratio
-
-        if d not in date_index or date_index[d] + 1 >= len(dates):
-            equity_curve.append(equity)
-            continue
-
-        next_day = dates[date_index[d] + 1]
-        next_data = test_df[test_df["Date"] == next_day]
-
-        for _, row in picks.iterrows():
-
-            if any(p["ticker"] == row["Ticker"] for p in positions):
-                continue
-
-            next_row = next_data[next_data["Ticker"] == row["Ticker"]]
-            if next_row.empty:
-                continue
-
-            entry_price = next_row["Open"].iloc[0]
-
-            positions.append({
-                "ticker": row["Ticker"],
-                "entry_price": entry_price,
-                "entry_date": next_day,
-                "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                "capital": free_cash
-            })
-
-        equity_curve.append(equity)
-
-    equity_curve = pd.Series(equity_curve)
-
-    returns = equity_curve.pct_change().dropna()
-
-    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
-    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
-    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
-
-    return CAGR, Sharpe, MaxDD
-
-
-# =========================
-# テスト
-# =========================
-print("\n=== FINAL HYBRID + DD STOP ===")
-
-results = []
-
-for year in sorted(df["Date"].dt.year.unique()):
-    if year < 2022:
-        continue
-
-    print(f"\n--- Year {year} ---")
-
-    test_df = df[df["Date"].dt.year == year]
-
-    CAGR, Sharpe, MaxDD = run_backtest(test_df)
-
-    results.append({
-        "Year": year,
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD
-    })
-
-    print(f"CAGR={CAGR:.3f}, Sharpe={Sharpe:.3f}, MaxDD={MaxDD:.3f}")
-
-df_res = pd.DataFrame(results)
-
-print("\n=== SUMMARY ===")
-print(df_res)
-
-print("\n=== AVERAGE ===")
-print(df_res.mean(numeric_only=True))
+            past_dates = dates
