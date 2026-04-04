@@ -35,6 +35,11 @@ TAKE_PROFIT = 0.10
 THRESHOLD = 0.52
 
 # =========================
+# 🆕 HMMフィルター設定
+# =========================
+DOWN_PROB_THRESHOLD = 0.6   # ←ここが超重要
+
+# =========================
 # HMM特徴
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
@@ -65,7 +70,7 @@ hmm = GaussianHMM(
 
 hmm.fit(market[HMM_FEATURES])
 
-# ★ ここが重要（確率を使う）
+# 確率取得
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
 market["down_p"] = proba[:, 0]
@@ -102,7 +107,7 @@ def run_backtest(test_df):
     # =========================
     # HMMマージ
     # =========================
-    market_map = market.set_index("Date")[["down_p","mid_p","trend_p"]]
+    market_map = market.set_index("Date")[["down_p"]]
 
     test_df = test_df.merge(
         market_map,
@@ -110,17 +115,6 @@ def run_backtest(test_df):
         right_index=True,
         how="left"
     )
-
-    # =========================
-    # スコア調整（ここが本体）
-    # =========================
-    test_df["regime_score"] = (
-        test_df["trend_p"] * 1.0 +
-        test_df["mid_p"] * 0.0 +
-        test_df["down_p"] * (-1.0)
-    )
-
-    test_df["adj_pred"] = test_df["pred"] * (1 + 0.5 * test_df["regime_score"])
 
     equity = INITIAL_CAPITAL
     equity_curve = []
@@ -155,16 +149,26 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
+        # 🧠 HMMフィルター（ここが本体）
+        # =========================
+        down_p = today["down_p"].iloc[0] if not today.empty else 0
+
+        if down_p > DOWN_PROB_THRESHOLD:
+            equity += daily_pnl
+            equity_curve.append(equity)
+            continue
+
+        # =========================
         # エントリー
         # =========================
-        today_f = today[today["adj_pred"] > THRESHOLD]
+        today_f = today[today["pred"] > THRESHOLD]
 
         if today_f.empty:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
-        picks = today_f.sort_values("adj_pred", ascending=False).head(1)
+        picks = today_f.sort_values("pred", ascending=False).head(1)
 
         invested = sum([p["capital"] for p in positions])
         free_cash = equity - invested
@@ -213,7 +217,7 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== HMM SCORE-ADJUSTED BACKTEST ===")
+print("\n=== HMM FILTER BACKTEST ===")
 
 results = []
 
