@@ -32,9 +32,6 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-# =========================
-# ベース設定
-# =========================
 CRASH_FILTER = -0.02
 
 HIGH_VOL = 2.0
@@ -54,7 +51,7 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf]).fillna(0)
 
 # =========================
-# 市場HMM
+# HMM
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
 
@@ -70,13 +67,9 @@ hmm = GaussianHMM(
 hmm.fit(market[HMM_FEATURES])
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
-# =========================
-# state決定（argmax）
-# =========================
 state = np.argmax(proba, axis=1)
 market["state"] = state
 
-# 各stateの平均リターンで意味付け
 state_ret = {}
 for s in range(3):
     state_ret[s] = market.loc[market["state"] == s, "Return_1"].mean()
@@ -87,7 +80,6 @@ CRASH_STATE = sorted_states[0][0]
 TREND_STATE = sorted_states[-1][0]
 RANGE_STATE = sorted_states[1][0]
 
-market["state"] = state
 market_map = market.set_index("Date")[["state"]]
 
 # =========================
@@ -126,10 +118,19 @@ def run_backtest(test_df):
     peak_equity = INITIAL_CAPITAL
     trading_stopped = False
 
+    # =========================
+    # 状態別PnL
+    # =========================
+    state_pnl = {
+        "TREND": [],
+        "RANGE": [],
+        "CRASH": [],
+        "SKIP": []
+    }
+
     for i, d in enumerate(dates):
 
         today = test_df[test_df["Date"] == d]
-        daily_pnl = 0
 
         # =========================
         # 決済
@@ -146,16 +147,19 @@ def run_backtest(test_df):
             price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
+            st = pos["state"]
+            if st in state_pnl:
+                state_pnl[st].append(pos["capital"] * ret)
+
             if ret < STOP_LOSS or ret > TAKE_PROFIT or d >= pos["exit_date"]:
-                daily_pnl += pos["capital"] * ret
+                equity += pos["capital"] * ret
             else:
                 new_positions.append(pos)
 
         positions = new_positions
-        equity += daily_pnl
 
         # =========================
-        # DD制御
+        # DD
         # =========================
         peak_equity = max(peak_equity, equity)
         dd = (equity / peak_equity) - 1
@@ -171,72 +175,53 @@ def run_backtest(test_df):
             continue
 
         # =========================
-        # クラッシュフィルタ
+        # クラッシュ
         # =========================
         market_ret = today["Return_1"].mean()
 
         if market_ret < CRASH_FILTER:
+            state_pnl["CRASH"].append(0)
             equity_curve.append(equity)
             continue
 
         # =========================
-        # 手動レジーム
-        # =========================
-        if i >= MARKET_MA_WINDOW:
-            past_dates = dates[i-MARKET_MA_WINDOW:i]
-            past_market = df[df["Date"].isin(past_dates)]
-            market_ma = past_market["Return_1"].mean()
-        else:
-            market_ma = 0
-
-        manual_down = (market_ret < MARKET_FILTER) or (market_ma < 0)
-
-        # =========================
-        # HMM state
+        # state
         # =========================
         s = today["state"].iloc[0]
 
         if s == CRASH_STATE:
+            state_pnl["CRASH"].append(0)
             equity_curve.append(equity)
             continue
 
-        # =========================
-        # レジーム分岐
-        # =========================
         if s == TREND_STATE:
             THRESHOLD = 0.50
             TOP_N = 3
-            capital_ratio_base = 1.0
+            capital_base = 1.0
 
         elif s == RANGE_STATE:
             THRESHOLD = 0.58
             TOP_N = 1
-            capital_ratio_base = 0.7
+            capital_base = 0.7
 
         else:
+            state_pnl["SKIP"].append(0)
             equity_curve.append(equity)
             continue
 
         # =========================
-        # 追加ダウントレンド制御
+        # ボラ
         # =========================
-        if manual_down:
-            equity_curve.append(equity)
-            continue
+        vol = today["Volatility"].mean()
 
-        # =========================
-        # ボラ調整
-        # =========================
-        volatility = today["Volatility"].mean()
-
-        if volatility > HIGH_VOL:
+        if vol > HIGH_VOL:
             vol_ratio = 0.3
-        elif volatility > MID_VOL:
+        elif vol > MID_VOL:
             vol_ratio = 0.6
         else:
             vol_ratio = 1.0
 
-        capital_ratio = capital_ratio_base * vol_ratio
+        capital_ratio = capital_base * vol_ratio
 
         # =========================
         # エントリー
@@ -252,11 +237,11 @@ def run_backtest(test_df):
         invested = sum([p["capital"] for p in positions])
         free_cash = (equity - invested) * capital_ratio
 
-        if d not in date_index or date_index[d] + 1 >= len(dates):
+        if i + 1 >= len(dates):
             equity_curve.append(equity)
             continue
 
-        next_day = dates[date_index[d] + 1]
+        next_day = dates[i + 1]
         next_data = test_df[test_df["Date"] == next_day]
 
         for _, row in picks.iterrows():
@@ -270,12 +255,18 @@ def run_backtest(test_df):
 
             entry_price = next_row["Open"].iloc[0]
 
+            st_name = (
+                "TREND" if s == TREND_STATE else
+                "RANGE"
+            )
+
             positions.append({
                 "ticker": row["Ticker"],
                 "entry_price": entry_price,
                 "entry_date": next_day,
                 "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                "capital": free_cash / TOP_N
+                "capital": free_cash / TOP_N,
+                "state": st_name
             })
 
         equity_curve.append(equity)
@@ -287,6 +278,24 @@ def run_backtest(test_df):
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
+
+    # =========================
+    # STATE PnL出力
+    # =========================
+    print("\n=== STATE PnL BREAKDOWN ===")
+
+    for k, v in state_pnl.items():
+        arr = np.array(v)
+        total = arr.sum()
+        trades = len(arr)
+        avg = total / (trades + 1e-9)
+        win_rate = (arr > 0).mean() if trades > 0 else 0
+
+        print(f"\n{k}")
+        print(f"  Total PnL : {total:.4f}")
+        print(f"  Trades    : {trades}")
+        print(f"  Avg PnL   : {avg:.6f}")
+        print(f"  Win Rate  : {win_rate:.3f}")
 
     return CAGR, Sharpe, MaxDD
 
@@ -314,8 +323,6 @@ for year in sorted(df["Date"].dt.year.unique()):
         "Sharpe": Sharpe,
         "MaxDD": MaxDD
     })
-
-    print(f"CAGR={CAGR:.3f}, Sharpe={Sharpe:.3f}, MaxDD={MaxDD:.3f}")
 
 df_res = pd.DataFrame(results)
 
