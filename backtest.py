@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
-import itertools
 
 # =========================
 # 設定
@@ -33,14 +32,14 @@ STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
 # =========================
-# 探索パラメータ
+# 固定パラメータ（ここが検証対象）
 # =========================
-THRESHOLDS = [0.50, 0.52, 0.54, 0.56, 0.58]
-TOP_N_LIST = [1, 2, 3]
-MARKET_FILTERS = [-0.01, -0.005, -0.003, 0]
+THRESHOLD = 0.52
+TOP_N = 1
+MARKET_FILTER = -0.003
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
@@ -51,7 +50,7 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# 🔥 年1回だけ学習（ここが重要）
+# 学習（固定）
 # =========================
 train_cutoff_year = 2021
 train_df = df[df["Date"].dt.year <= train_cutoff_year]
@@ -63,14 +62,14 @@ model = LGBMClassifier(
     random_state=42
 )
 
-print("Training model once...")
+print("Training model...")
 model.fit(train_df[FEATURES], train_df[TARGET])
 print("Done.")
 
 # =========================
-# バックテスト関数（学習なし）
+# バックテスト
 # =========================
-def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
+def run_backtest(test_df):
 
     test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
@@ -88,7 +87,7 @@ def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
         daily_pnl = 0
 
         # =========================
-        # 決済
+        # 決済処理
         # =========================
         new_positions = []
         for pos in positions:
@@ -119,7 +118,7 @@ def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
             continue
 
         # =========================
-        # エントリー
+        # エントリー条件
         # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
@@ -130,9 +129,7 @@ def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
 
         picks = today_f.sort_values("pred", ascending=False).head(TOP_N)
 
-        weights = picks["pred"] ** 2.2
-        total_weight = weights.sum()
-
+        # TOP_N=1なので実質単一
         invested = sum([p["capital"] for p in positions])
         free_cash = equity - invested
 
@@ -144,7 +141,7 @@ def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
         next_day = dates[date_index[d] + 1]
         next_data = test_df[test_df["Date"] == next_day]
 
-        for i, (_, row) in enumerate(picks.iterrows()):
+        for _, row in picks.iterrows():
 
             if any(p["ticker"] == row["Ticker"] for p in positions):
                 continue
@@ -155,11 +152,7 @@ def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
 
             entry_price = next_row["Open"].iloc[0]
 
-            weight = weights.iloc[i] / total_weight
-            capital = free_cash * weight
-
-            if capital <= 0:
-                continue
+            capital = free_cash  # TOP_N=1なので全額投入
 
             positions.append({
                 "ticker": row["Ticker"],
@@ -185,52 +178,46 @@ def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
 
     return CAGR, Sharpe, MaxDD
 
+
 # =========================
-# 🔥 最適化
+# 年別再現性テスト
 # =========================
+print("\n=== REPRODUCIBILITY TEST ===")
+
 results = []
 
-for TH, TN, MF in itertools.product(THRESHOLDS, TOP_N_LIST, MARKET_FILTERS):
-
-    print(f"\n=== TH={TH}, TOP_N={TN}, MF={MF} ===")
-
-    yearly = []
-
-    for test_year in years:
-        if test_year < 2022:
-            continue
-
-        test_df = df[df["Date"].dt.year == test_year]
-
-        res = run_backtest(test_df, TH, TN, MF)
-
-        if res is None:
-            continue
-
-        yearly.append(res)
-
-    if len(yearly) == 0:
+for year in years:
+    if year < 2022:
         continue
 
-    CAGR = np.mean([x[0] for x in yearly])
-    Sharpe = np.mean([x[1] for x in yearly])
-    MaxDD = np.mean([x[2] for x in yearly])
+    print(f"\n--- Year {year} ---")
+
+    test_df = df[df["Date"].dt.year == year]
+
+    res = run_backtest(test_df)
+
+    if res is None:
+        print("Skipped")
+        continue
+
+    CAGR, Sharpe, MaxDD = res
 
     results.append({
-        "THRESHOLD": TH,
-        "TOP_N": TN,
-        "MARKET_FILTER": MF,
+        "Year": year,
         "CAGR": CAGR,
         "Sharpe": Sharpe,
         "MaxDD": MaxDD
     })
 
+    print(f"CAGR={CAGR:.3f}, Sharpe={Sharpe:.3f}, MaxDD={MaxDD:.3f}")
+
 # =========================
-# 結果
+# 集計
 # =========================
 df_res = pd.DataFrame(results)
 
-df_res = df_res.sort_values("Sharpe", ascending=False)
+print("\n=== SUMMARY ===")
+print(df_res)
 
-print("\n=== BEST PARAMS ===")
-print(df_res.head(10))
+print("\n=== AVERAGE ===")
+print(df_res.mean(numeric_only=True))
