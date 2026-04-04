@@ -32,49 +32,34 @@ PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "today_picks.csv")
 
 # =========================
-# FEATURES
+# 🔥 FEATURES（完全一致）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
+    "Rank_Return_1",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
+    "RSI",
     "Rel_Return_1",
-    "Trend_5",
-    "Trend_10",
-    "Vol_Ratio"
+    "Trend_5_z",
+    "Trend_10_z",
+    "Volatility_z",
+    "Volume_ratio_z",
+    "Market_Return_z"
 ]
 
 TARGET = "Target"
 
 # =========================
-# 安全ユーティリティ（ここが重要）
+# カラム正規化
 # =========================
 def normalize_columns(df):
     if "Ticker" not in df.columns and "コード" in df.columns:
         df = df.rename(columns={"コード": "Ticker"})
     if "Name" not in df.columns and "銘柄名" in df.columns:
         df = df.rename(columns={"銘柄名": "Name"})
-    return df
-
-def safe_add_features(df):
-
-    # 念のためTickerがない場合は終了回避
-    if "Ticker" not in df.columns:
-        df["Ticker"] = "UNKNOWN"
-
-    # Trend系（同日データだと意味薄いがエラー防止）
-    df["Trend_5"] = 0
-    df["Trend_10"] = 0
-
-    # Vol系
-    if "Volatility" not in df.columns:
-        df["Volatility"] = 0
-
-    df["Market_Vol"] = df["Volatility"].mean()
-    df["Vol_Ratio"] = df["Volatility"] / (df["Market_Vol"] + 1e-9)
-
     return df
 
 # =========================
@@ -95,7 +80,7 @@ current_month = latest_date.strftime("%Y-%m")
 print(f"\n📅 予測日: {latest_date}")
 
 # =========================
-# モデル
+# モデル管理
 # =========================
 retrain = True
 
@@ -126,21 +111,16 @@ else:
     model = pickle.load(open(MODEL_PATH, "rb"))
 
 # =========================
-# 今日データ
+# 今日データ抽出
 # =========================
 today = predict_df[predict_df["Date"] == latest_date].copy()
 
 # =========================
-# 🔥 安全特徴量追加
-# =========================
-today = safe_add_features(today)
-
-# =========================
-# featureチェック（ここが重要）
+# featureチェック（最重要）
 # =========================
 missing_cols = [c for c in FEATURES if c not in today.columns]
 if missing_cols:
-    raise ValueError(f"Missing features: {missing_cols}")
+    raise ValueError(f"❌ Missing features: {missing_cols}")
 
 today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -153,7 +133,7 @@ print("\n=== PRED CHECK ===")
 print(today["Pred"].describe())
 
 # =========================
-# フィルター（安全化）
+# フィルター
 # =========================
 if "limit_up_flag" in today.columns:
     today = today[today["limit_up_flag"] == 0]
