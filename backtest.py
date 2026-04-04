@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
+from hmmlearn.hmm import GaussianHMM
 
 # =========================
 # 設定
@@ -31,35 +32,12 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-# =========================
-# モデル閾値
-# =========================
 THRESHOLD = 0.52
 
 # =========================
-# レンジ設定
+# HMM用特徴（市場状態）
 # =========================
-RANGE_WINDOW = 20
-RANGE_STD_THRESHOLD = 0.006
-
-# =========================
-# 下落判定
-# =========================
-DOWN_TREND_RET = -0.001
-DOWN_MA_WINDOW = 20
-
-# =========================
-# レンジ運用調整
-# =========================
-RANGE_TOP_N = 1
-RANGE_THRESHOLD_MULT = 1.05
-RANGE_CAPITAL_RATIO = 0.5
-
-# =========================
-# 通常運用
-# =========================
-NORMAL_TOP_N = 1
-NORMAL_CAPITAL_RATIO = 1.0
+HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
 
 # =========================
 # データ
@@ -70,7 +48,55 @@ df = df.sort_values(["Date", "Ticker"])
 
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-years = sorted(df["Date"].dt.year.unique())
+# =========================
+# 市場データ作成（HMM用）
+# =========================
+market = df.groupby("Date")[HMM_FEATURES].mean().reset_index()
+
+# =========================
+# HMM学習（市場レジーム）
+# =========================
+hmm = GaussianHMM(
+    n_components=3,
+    covariance_type="full",
+    n_iter=200,
+    random_state=42
+)
+
+hmm.fit(market[HMM_FEATURES])
+
+market["regime_raw"] = hmm.predict(market[HMM_FEATURES])
+
+# =========================
+# レジームを意味づけ（重要）
+# =========================
+regime_map = {}
+
+for r in range(3):
+    subset = market[market["regime_raw"] == r]
+
+    avg_ret = subset["Return_1"].mean()
+    avg_vol = subset["Volatility"].mean()
+
+    regime_map[r] = (avg_ret, avg_vol)
+
+# ソートして分類
+sorted_states = sorted(
+    regime_map.items(),
+    key=lambda x: x[1][0]  # returnでソート
+)
+
+DOWN_STATE = sorted_states[0][0]
+MID_STATE = sorted_states[1][0]
+TREND_STATE = sorted_states[2][0]
+
+market["regime"] = market["regime_raw"].map({
+    DOWN_STATE: "DOWN",
+    MID_STATE: "RANGE",
+    TREND_STATE: "TREND"
+})
+
+market = market[["Date", "regime"]]
 
 # =========================
 # 学習
@@ -103,7 +129,7 @@ def run_backtest(test_df):
     equity_curve = []
     positions = []
 
-    market_daily = df.groupby("Date")["Return_1"].mean()
+    market_regime_map = dict(zip(market["Date"], market["regime"]))
 
     for i, d in enumerate(dates):
 
@@ -133,50 +159,12 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # 市場指標
+        # HMMレジーム取得
         # =========================
-        market_ret = today["Return_1"].mean()
-
-        if i >= DOWN_MA_WINDOW:
-            past_dates = dates[i-DOWN_MA_WINDOW:i]
-            past_market = df[df["Date"].isin(past_dates)]
-            market_ma = past_market["Return_1"].mean()
-        else:
-            market_ma = 0
+        regime = market_regime_map.get(d, "RANGE")
 
         # =========================
-        # レンジ検出
-        # =========================
-        if d in market_daily.index:
-            idx = market_daily.index.get_loc(d)
-
-            if idx >= RANGE_WINDOW:
-                past_vals = market_daily.iloc[idx-RANGE_WINDOW:idx]
-                market_std = past_vals.std()
-            else:
-                market_std = 1.0
-        else:
-            market_std = 1.0
-
-        is_range = market_std < RANGE_STD_THRESHOLD
-
-        # =========================
-        # 下落判定（最優先）
-        # =========================
-        is_down = (market_ret < DOWN_TREND_RET) or (market_ma < 0)
-
-        # =========================
-        # レジーム決定
-        # =========================
-        if is_down:
-            regime = "DOWN"
-        elif is_range:
-            regime = "RANGE"
-        else:
-            regime = "TREND"
-
-        # =========================
-        # 運用ルール
+        # レジーム別制御
         # =========================
         if regime == "DOWN":
             equity += daily_pnl
@@ -184,14 +172,14 @@ def run_backtest(test_df):
             continue
 
         elif regime == "RANGE":
-            top_n = RANGE_TOP_N
-            threshold = THRESHOLD * RANGE_THRESHOLD_MULT
-            capital_ratio = RANGE_CAPITAL_RATIO
+            top_n = 1
+            threshold = THRESHOLD * 1.05
+            capital_ratio = 0.5
 
         else:  # TREND
-            top_n = NORMAL_TOP_N
+            top_n = 1
             threshold = THRESHOLD
-            capital_ratio = NORMAL_CAPITAL_RATIO
+            capital_ratio = 1.0
 
         # =========================
         # エントリー
@@ -240,9 +228,6 @@ def run_backtest(test_df):
 
     equity_curve = pd.Series(equity_curve)
 
-    if len(equity_curve) < 10:
-        return None
-
     returns = equity_curve.pct_change().dropna()
 
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
@@ -255,11 +240,11 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== REPRODUCIBILITY TEST (3-REGIME MODEL) ===")
+print("\n=== HMM REGIME BACKTEST ===")
 
 results = []
 
-for year in years:
+for year in sorted(df["Date"].dt.year.unique()):
     if year < 2022:
         continue
 
@@ -268,10 +253,6 @@ for year in years:
     test_df = df[df["Date"].dt.year == year]
 
     res = run_backtest(test_df)
-
-    if res is None:
-        print("Skipped")
-        continue
 
     CAGR, Sharpe, MaxDD = res
 
