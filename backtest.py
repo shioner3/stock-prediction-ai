@@ -34,9 +34,17 @@ TAKE_PROFIT = 0.10
 
 THRESHOLD = 0.52
 
-# 🆕 追加
+# =========================
+# 🆕 追加（クラッシュ＋TOP）
+# =========================
 CRASH_FILTER = -0.02
 TOP_N = 2
+
+# =========================
+# 🆕 ボラティリティ閾値
+# =========================
+HIGH_VOL = 2.0
+MID_VOL = 1.0
 
 # =========================
 # 手作りレジーム
@@ -63,7 +71,7 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
-df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf]).fillna(0)
 
 # =========================
 # 市場データ（HMM）
@@ -80,7 +88,6 @@ hmm = GaussianHMM(
 hmm.fit(market[HMM_FEATURES])
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
-# 状態意味付け
 state_ret = {}
 for i in range(3):
     mask = proba[:, i] > 0.5
@@ -173,7 +180,7 @@ def run_backtest(test_df):
             continue
 
         # =========================
-        # 🚨 クラッシュフィルタ（最強）
+        # クラッシュフィルタ
         # =========================
         market_ret = today["Return_1"].mean()
 
@@ -202,8 +209,15 @@ def run_backtest(test_df):
             equity_curve.append(equity)
             continue
 
-        elif down_p > HMM_WEAK:
-            capital_ratio = 0.5
+        # =========================
+        # 🆕 ボラティリティベース資金管理
+        # =========================
+        volatility = today["Volatility"].mean()
+
+        if volatility > HIGH_VOL:
+            capital_ratio = 0.3
+        elif volatility > MID_VOL:
+            capital_ratio = 0.6
         else:
             capital_ratio = 1.0
 
@@ -244,7 +258,7 @@ def run_backtest(test_df):
                 "entry_price": entry_price,
                 "entry_date": next_day,
                 "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                "capital": free_cash / TOP_N  # ←分散
+                "capital": free_cash / TOP_N
             })
 
         equity_curve.append(equity)
@@ -263,7 +277,7 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== FINAL HYBRID + CRASH FILTER ===")
+print("\n=== FINAL HYBRID + VOL CONTROL ===")
 
 results = []
 
