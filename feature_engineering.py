@@ -44,15 +44,20 @@ valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
 
 # =========================
-# 基本特徴量（全部shift）
+# 基本特徴量（全て過去のみ）
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change().shift(1)
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3).shift(1)
 
-# 🔥 Rank追加（超重要）
+# =========================
+# 🔥 Rank系（横断情報）
+# =========================
 df["Rank_Return_1"] = df.groupby("Date")["Return_1"].rank(pct=True)
+df["Rank_Volume"] = df.groupby("Date")["Volume"].rank(pct=True)
 
+# =========================
 # MA
+# =========================
 df["MA3"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(3).mean()).shift(1)
 df["MA5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean()).shift(1)
 df["MA10"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(10).mean()).shift(1)
@@ -61,22 +66,27 @@ df["MA3_ratio"] = df["Close"].shift(1) / df["MA3"]
 df["MA5_ratio"] = df["Close"].shift(1) / df["MA5"]
 df["MA10_ratio"] = df["Close"].shift(1) / df["MA10"]
 
+# =========================
 # Volatility
+# =========================
 df["Volatility"] = df.groupby("Ticker")["Return_1"].transform(lambda x: x.rolling(10).std()).shift(1)
 
+# =========================
 # Volume
+# =========================
 df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change().shift(1)
 df["Volume_ma5"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(5).mean()).shift(1)
 df["Volume_ratio"] = df["Volume"].shift(1) / df["Volume_ma5"]
 
+# =========================
 # 高値安値
+# =========================
 df["HL_range"] = ((df["High"] - df["Low"]) / df["Close"]).shift(1)
 
 # =========================
-# 市場特徴（リーク防止）
+# 市場特徴（リークなし）
 # =========================
 df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean")
-
 df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
 
 df["Market_Vol"] = df.groupby("Date")["Volatility"].transform("mean")
@@ -107,7 +117,7 @@ df["Market_Return_z"] = df.groupby("Date")["Market_Return_1"].transform(
 )
 
 # =========================
-# RSI（shift）
+# RSI
 # =========================
 delta = df.groupby("Ticker")["Close"].diff()
 
@@ -127,14 +137,14 @@ df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
 df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
 # =========================
-# Target（🔥強化版）
+# 🎯 Target（強化版）
 # =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# 🔥 ここ変更
-df["Target"] = (df["FutureReturn"] > 0).astype(int)
+# 🔥 ここが重要
+df["Target"] = (df["FutureReturn"] > 0.03).astype(int)
 
 df = df.dropna(subset=["FutureReturn"])
 
@@ -148,17 +158,15 @@ df = df.replace([np.inf, -np.inf], np.nan)
 # =========================
 FEATURES = [
     "Return_1","Return_3",
-    "Rank_Return_1",   # 🔥追加
+    "Rank_Return_1","Rank_Volume",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
     "RSI",
     "Rel_Return_1",
-    "Trend_5_z",
-    "Trend_10_z",
-    "Volatility_z",
-    "Volume_ratio_z",
+    "Trend_5_z","Trend_10_z",
+    "Volatility_z","Volume_ratio_z",
     "Market_Return_z"
 ]
 
