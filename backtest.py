@@ -28,11 +28,11 @@ TARGET = "Target"
 INITIAL_CAPITAL = 1.0
 
 THRESHOLD = 0.53
+TOP_N = 3   # ★固定
 
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
-MARKET_FILTER = -0.005
 
 # =========================
 # データ
@@ -58,6 +58,7 @@ def run_backtest(train_df, test_df):
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
+
     test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
@@ -67,7 +68,6 @@ def run_backtest(train_df, test_df):
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
-
     trade_count = 0
 
     for d in dates:
@@ -98,34 +98,15 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # 相場フィルタ
-        # =========================
-        market = today["Return_1"].mean()
-        if market < MARKET_FILTER:
-            equity += daily_pnl
-            equity_curve.append(equity)
-            continue
-
-        # =========================
-        # エントリー候補
+        # エントリー（🔥完全シンプル）
         # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            # =========================
-            # 🔥 ノートレ条件（追加）
-            # =========================
+            # ★ picksを必ずここで定義
+            picks = today_f.sort_values("pred", ascending=False).head(TOP_N)
 
-
-            # =========================
-            # 🔥 動的TOP_N
-            # =========================
-
-
-            # =========================
-            # 🔥 weight = pred^2
-            # =========================
             weights = picks["pred"] ** 2.2
             total_weight = weights.sum()
 
