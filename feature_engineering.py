@@ -44,10 +44,13 @@ valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
 
 # =========================
-# 基本特徴量（🔥全部shift）
+# 基本特徴量（全部shift）
 # =========================
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change().shift(1)
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3).shift(1)
+
+# 🔥 Rank追加（超重要）
+df["Rank_Return_1"] = df.groupby("Date")["Return_1"].rank(pct=True)
 
 # MA
 df["MA3"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(3).mean()).shift(1)
@@ -70,7 +73,7 @@ df["Volume_ratio"] = df["Volume"].shift(1) / df["Volume_ma5"]
 df["HL_range"] = ((df["High"] - df["Low"]) / df["Close"]).shift(1)
 
 # =========================
-# 市場特徴（🔥リーク防止）
+# 市場特徴（リーク防止）
 # =========================
 df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean")
 
@@ -80,7 +83,7 @@ df["Market_Vol"] = df.groupby("Date")["Volatility"].transform("mean")
 df["Vol_Ratio"] = df["Volatility"] / df["Market_Vol"]
 
 # =========================
-# Trend（OK）
+# Trend
 # =========================
 df["Trend_5"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(6) - 1
 df["Trend_10"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(11) - 1
@@ -104,7 +107,7 @@ df["Market_Return_z"] = df.groupby("Date")["Market_Return_1"].transform(
 )
 
 # =========================
-# RSI（🔥shift）
+# RSI（shift）
 # =========================
 delta = df.groupby("Ticker")["Close"].diff()
 
@@ -124,13 +127,14 @@ df["limit_up_raw"] = (df["Return_1"] > 0.15).astype(int)
 df["limit_up_flag"] = df.groupby("Ticker")["limit_up_raw"].shift(1).fillna(0)
 
 # =========================
-# Target（未来OK）
+# Target（🔥強化版）
 # =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-df["Target"] = (df["FutureReturn"] > 0).astype(int)
+# 🔥 ここ変更
+df["Target"] = (df["FutureReturn"] > 0.03).astype(int)
 
 df = df.dropna(subset=["FutureReturn"])
 
@@ -144,6 +148,7 @@ df = df.replace([np.inf, -np.inf], np.nan)
 # =========================
 FEATURES = [
     "Return_1","Return_3",
+    "Rank_Return_1",   # 🔥追加
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
@@ -166,11 +171,17 @@ train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
 # 予測データ
 # =========================
 latest_date = df["Date"].max()
-
 predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
 
-print(train_df["Date"].min(), train_df["Date"].max())
-print(predict_df["Date"].unique())
+# =========================
+# デバッグ
+# =========================
+print("\n=== DATE CHECK ===")
+print("Train:", train_df["Date"].min(), "→", train_df["Date"].max())
+print("Predict:", predict_df["Date"].unique())
+
+print("\n=== TARGET CHECK ===")
+print("Target mean:", train_df["Target"].mean())
 
 # =========================
 # 保存
@@ -178,4 +189,4 @@ print(predict_df["Date"].unique())
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("保存完了")
+print("\n保存完了")
