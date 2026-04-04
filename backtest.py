@@ -35,14 +35,17 @@ TAKE_PROFIT = 0.10
 THRESHOLD = 0.52
 
 # =========================
-# 🆕 HMMフィルター設定
+# 手作りレジーム
 # =========================
-DOWN_PROB_THRESHOLD = 0.6   # ←ここが超重要
+MARKET_FILTER = -0.003
+MARKET_MA_WINDOW = 20
 
 # =========================
-# HMM特徴
+# HMM設定
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
+HMM_SKIP = 0.7
+HMM_WEAK = 0.5
 
 # =========================
 # データ
@@ -54,13 +57,10 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# 市場データ（HMM用）
+# 市場データ（HMM）
 # =========================
 market = df.groupby("Date")[HMM_FEATURES].mean().reset_index()
 
-# =========================
-# HMM学習
-# =========================
 hmm = GaussianHMM(
     n_components=3,
     covariance_type="full",
@@ -69,13 +69,26 @@ hmm = GaussianHMM(
 )
 
 hmm.fit(market[HMM_FEATURES])
-
-# 確率取得
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
-market["down_p"] = proba[:, 0]
-market["mid_p"] = proba[:, 1]
-market["trend_p"] = proba[:, 2]
+# =========================
+# 状態の意味付け（重要）
+# =========================
+state_ret = {}
+
+for i in range(3):
+    mask = proba[:, i] > 0.5
+    if mask.sum() == 0:
+        state_ret[i] = 0
+    else:
+        state_ret[i] = market["Return_1"][mask].mean()
+
+sorted_states = sorted(state_ret.items(), key=lambda x: x[1])
+
+DOWN_STATE = sorted_states[0][0]
+TREND_STATE = sorted_states[-1][0]
+
+market["down_p"] = proba[:, DOWN_STATE]
 
 # =========================
 # 学習
@@ -104,17 +117,9 @@ def run_backtest(test_df):
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
-    # =========================
     # HMMマージ
-    # =========================
     market_map = market.set_index("Date")[["down_p"]]
-
-    test_df = test_df.merge(
-        market_map,
-        left_on="Date",
-        right_index=True,
-        how="left"
-    )
+    test_df = test_df.merge(market_map, left_on="Date", right_index=True, how="left")
 
     equity = INITIAL_CAPITAL
     equity_curve = []
@@ -129,7 +134,6 @@ def run_backtest(test_df):
         # 決済
         # =========================
         new_positions = []
-
         for pos in positions:
 
             cur = today[today["Ticker"] == pos["ticker"]]
@@ -149,14 +153,40 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # 🧠 HMMフィルター（ここが本体）
+        # 手作りレジーム
+        # =========================
+        market_ret = today["Return_1"].mean()
+
+        if i >= MARKET_MA_WINDOW:
+            past_dates = dates[i-MARKET_MA_WINDOW:i]
+            past_market = df[df["Date"].isin(past_dates)]
+            market_ma = past_market["Return_1"].mean()
+        else:
+            market_ma = 0
+
+        manual_down = (market_ret < MARKET_FILTER) or (market_ma < 0)
+
+        # =========================
+        # HMM判定
         # =========================
         down_p = today["down_p"].iloc[0] if not today.empty else 0
 
-        if down_p > DOWN_PROB_THRESHOLD:
+        # =========================
+        # 🚨 統合レジーム（最重要）
+        # =========================
+        if manual_down or down_p > HMM_SKIP:
+            # 完全停止
             equity += daily_pnl
             equity_curve.append(equity)
             continue
+
+        elif down_p > HMM_WEAK:
+            # 弱気 → 半分
+            capital_ratio = 0.5
+
+        else:
+            # 通常
+            capital_ratio = 1.0
 
         # =========================
         # エントリー
@@ -171,7 +201,7 @@ def run_backtest(test_df):
         picks = today_f.sort_values("pred", ascending=False).head(1)
 
         invested = sum([p["capital"] for p in positions])
-        free_cash = equity - invested
+        free_cash = (equity - invested) * capital_ratio
 
         if d not in date_index or date_index[d] + 1 >= len(dates):
             equity += daily_pnl
@@ -217,7 +247,7 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== HMM FILTER BACKTEST ===")
+print("\n=== FINAL HYBRID REGIME BACKTEST ===")
 
 results = []
 
@@ -229,9 +259,7 @@ for year in sorted(df["Date"].dt.year.unique()):
 
     test_df = df[df["Date"].dt.year == year]
 
-    res = run_backtest(test_df)
-
-    CAGR, Sharpe, MaxDD = res
+    CAGR, Sharpe, MaxDD = run_backtest(test_df)
 
     results.append({
         "Year": year,
