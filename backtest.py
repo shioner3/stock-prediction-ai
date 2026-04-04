@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
+from itertools import product
 
 # =========================
 # 設定
@@ -23,11 +24,16 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.59
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
-MARKET_FILTER = -0.005
+
+# =========================
+# 🔥 ロバスト用パラメータ
+# =========================
+THRESHOLD_LIST = [0.57, 0.58, 0.59, 0.60]
+MARKET_FILTER_LIST = [-0.01, -0.005, 0.0]
+POWER_LIST = [2.0, 2.2, 2.5]
 
 # =========================
 # データ
@@ -41,9 +47,9 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# バックテスト関数（OOS）
+# バックテスト
 # =========================
-def run_oos(train_df, test_df):
+def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
 
     model = LGBMClassifier(
         n_estimators=300,
@@ -69,9 +75,7 @@ def run_oos(train_df, test_df):
         today = test_df[test_df["Date"] == d]
         daily_pnl = 0
 
-        # =========================
         # 決済
-        # =========================
         new_positions = []
         for pos in positions:
 
@@ -91,25 +95,21 @@ def run_oos(train_df, test_df):
 
         positions = new_positions
 
-        # =========================
         # 相場フィルタ
-        # =========================
         market = today["Return_1"].mean()
         if market < MARKET_FILTER:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
-        # =========================
         # エントリー候補
-        # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
+            # ノートレ条件
             market_score = today_f["pred"].mean()
 
-            # ノートレ
             if market_score < 0.595:
                 equity += daily_pnl
                 equity_curve.append(equity)
@@ -127,8 +127,8 @@ def run_oos(train_df, test_df):
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
-            # weight
-            weights = picks["pred"] ** 2.2
+            # weight = pred^POWER
+            weights = picks["pred"] ** POWER
             total_weight = weights.sum()
 
             invested = sum([p["capital"] for p in positions])
@@ -183,45 +183,43 @@ def run_oos(train_df, test_df):
 
 
 # =========================
-# 🔥 ローリングOOS
+# 実行（ロバスト）
 # =========================
 results = []
 
-for test_year in years:
+for th, mf, pw in product(THRESHOLD_LIST, MARKET_FILTER_LIST, POWER_LIST):
 
-    if test_year < 2023:
-        continue  # 学習期間確保
+    print(f"\n=== PARAM === TH:{th}, MF:{mf}, PW:{pw}")
 
-    train_df = df[df["Date"].dt.year < test_year]
-    test_df = df[df["Date"].dt.year == test_year]
+    yearly_scores = []
 
-    if len(train_df) == 0 or len(test_df) == 0:
-        continue
+    for test_year in years:
 
-    print(f"\n=== OOS YEAR {test_year} ===")
+        if test_year < 2022:
+            continue
 
-    CAGR, Sharpe, MaxDD, trades = run_oos(train_df, test_df)
+        train_df = df[df["Date"].dt.year < test_year]
+        test_df = df[df["Date"].dt.year == test_year]
 
-    print(f"CAGR: {CAGR:.3f}")
-    print(f"Sharpe: {Sharpe:.3f}")
-    print(f"MaxDD: {MaxDD:.3f}")
-    print(f"Trades: {trades}")
+        CAGR, Sharpe, MaxDD, trades = run_backtest(
+            train_df, test_df, th, mf, pw
+        )
+
+        yearly_scores.append(Sharpe)
+
+    avg_sharpe = np.mean(yearly_scores)
 
     results.append({
-        "year": test_year,
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD,
-        "Trades": trades
+        "THRESHOLD": th,
+        "MARKET_FILTER": mf,
+        "POWER": pw,
+        "Avg_Sharpe": avg_sharpe
     })
 
 # =========================
-# 集計
+# 結果
 # =========================
 df_res = pd.DataFrame(results)
 
-print("\n=== ROLLING OOS RESULT ===")
-print(df_res)
-
-print("\n平均")
-print(df_res.mean(numeric_only=True))
+print("\n=== ROBUST RESULT ===")
+print(df_res.sort_values("Avg_Sharpe", ascending=False))
