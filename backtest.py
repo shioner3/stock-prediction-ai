@@ -43,9 +43,11 @@ TOP_N = 1
 MARKET_FILTER = -0.003
 MARKET_MA_WINDOW = 20
 
-# 🆕 レンジ判定パラメータ
-RANGE_VOL_WINDOW = 20
-RANGE_VOL_THRESHOLD = 0.008  # 小さいほどレンジ判定厳しくなる
+# =========================
+# 🆕 レンジ検出フィルタ
+# =========================
+RANGE_WINDOW = 20
+RANGE_STD_THRESHOLD = 0.006   # ←ここが重要（要調整）
 
 # =========================
 # データ読み込み
@@ -90,6 +92,9 @@ def run_backtest(test_df):
     equity_curve = []
     positions = []
 
+    # ===== 市場リターン事前計算（レンジ用）=====
+    market_daily = df.groupby("Date")["Return_1"].mean()
+
     for i, d in enumerate(dates):
 
         today = test_df[test_df["Date"] == d]
@@ -118,7 +123,7 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # 🌍 レジーム判定（トレンド）
+        # 🌍 レジーム判定
         # =========================
         market_ret = today["Return_1"].mean()
 
@@ -130,20 +135,25 @@ def run_backtest(test_df):
             market_ma = 0
 
         # =========================
-        # 🆕 レンジ判定（ボラティリティ）
+        # 🆕 レンジ検出（追加）
         # =========================
-        if i >= RANGE_VOL_WINDOW:
-            past_dates = dates[i-RANGE_VOL_WINDOW:i]
-            past_vol = df[df["Date"].isin(past_dates)]["Return_1"].std()
+        if d in market_daily.index:
+            idx = market_daily.index.get_loc(d)
+
+            if idx >= RANGE_WINDOW:
+                past_vals = market_daily.iloc[idx-RANGE_WINDOW:idx]
+                market_std = past_vals.std()
+            else:
+                market_std = 1.0
         else:
-            past_vol = 0
+            market_std = 1.0
 
-        is_range_market = past_vol < RANGE_VOL_THRESHOLD
+        is_range = market_std < RANGE_STD_THRESHOLD
 
         # =========================
-        # 🚨 レジームフィルター（強化版）
+        # 🚨 フィルター統合
         # =========================
-        if (market_ret < MARKET_FILTER) or (market_ma < 0) or is_range_market:
+        if (market_ret < MARKET_FILTER) or (market_ma < 0) or is_range:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
