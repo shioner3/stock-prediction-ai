@@ -32,36 +32,17 @@ HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-THRESHOLD = 0.52
-
 # =========================
-# 🆕 追加（クラッシュ＋TOP）
+# ベース設定
 # =========================
 CRASH_FILTER = -0.02
-TOP_N = 2
 
-# =========================
-# 🆕 ボラティリティ閾値
-# =========================
 HIGH_VOL = 2.0
 MID_VOL = 1.0
 
-# =========================
-# 手作りレジーム
-# =========================
 MARKET_FILTER = -0.003
 MARKET_MA_WINDOW = 20
 
-# =========================
-# HMM設定
-# =========================
-HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
-HMM_SKIP = 0.75
-HMM_WEAK = 0.55
-
-# =========================
-# DD STOP
-# =========================
 MAX_DRAWDOWN = -0.20
 
 # =========================
@@ -70,12 +51,13 @@ MAX_DRAWDOWN = -0.20
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
-
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf]).fillna(0)
 
 # =========================
-# 市場データ（HMM）
+# 市場HMM
 # =========================
+HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
+
 market = df.groupby("Date")[HMM_FEATURES].mean().reset_index()
 
 hmm = GaussianHMM(
@@ -88,15 +70,25 @@ hmm = GaussianHMM(
 hmm.fit(market[HMM_FEATURES])
 proba = hmm.predict_proba(market[HMM_FEATURES])
 
+# =========================
+# state決定（argmax）
+# =========================
+state = np.argmax(proba, axis=1)
+market["state"] = state
+
+# 各stateの平均リターンで意味付け
 state_ret = {}
-for i in range(3):
-    mask = proba[:, i] > 0.5
-    state_ret[i] = market["Return_1"][mask].mean() if mask.sum() > 0 else 0
+for s in range(3):
+    state_ret[s] = market.loc[market["state"] == s, "Return_1"].mean()
 
 sorted_states = sorted(state_ret.items(), key=lambda x: x[1])
-DOWN_STATE = sorted_states[0][0]
 
-market["down_p"] = proba[:, DOWN_STATE]
+CRASH_STATE = sorted_states[0][0]
+TREND_STATE = sorted_states[-1][0]
+RANGE_STATE = sorted_states[1][0]
+
+market["state"] = state
+market_map = market.set_index("Date")[["state"]]
 
 # =========================
 # 学習
@@ -125,7 +117,6 @@ def run_backtest(test_df):
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
-    market_map = market.set_index("Date")[["down_p"]]
     test_df = test_df.merge(market_map, left_on="Date", right_index=True, how="left")
 
     equity = INITIAL_CAPITAL
@@ -164,7 +155,7 @@ def run_backtest(test_df):
         equity += daily_pnl
 
         # =========================
-        # DD管理
+        # DD制御
         # =========================
         peak_equity = max(peak_equity, equity)
         dd = (equity / peak_equity) - 1
@@ -189,7 +180,7 @@ def run_backtest(test_df):
             continue
 
         # =========================
-        # 手作りレジーム
+        # 手動レジーム
         # =========================
         if i >= MARKET_MA_WINDOW:
             past_dates = dates[i-MARKET_MA_WINDOW:i]
@@ -201,25 +192,51 @@ def run_backtest(test_df):
         manual_down = (market_ret < MARKET_FILTER) or (market_ma < 0)
 
         # =========================
-        # HMM
+        # HMM state
         # =========================
-        down_p = today["down_p"].iloc[0] if not today.empty else 0
+        s = today["state"].iloc[0]
 
-        if manual_down or down_p > HMM_SKIP:
+        if s == CRASH_STATE:
             equity_curve.append(equity)
             continue
 
         # =========================
-        # 🆕 ボラティリティベース資金管理
+        # レジーム分岐
+        # =========================
+        if s == TREND_STATE:
+            THRESHOLD = 0.50
+            TOP_N = 3
+            capital_ratio_base = 1.0
+
+        elif s == RANGE_STATE:
+            THRESHOLD = 0.58
+            TOP_N = 1
+            capital_ratio_base = 0.7
+
+        else:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # 追加ダウントレンド制御
+        # =========================
+        if manual_down:
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # ボラ調整
         # =========================
         volatility = today["Volatility"].mean()
 
         if volatility > HIGH_VOL:
-            capital_ratio = 0.3
+            vol_ratio = 0.3
         elif volatility > MID_VOL:
-            capital_ratio = 0.6
+            vol_ratio = 0.6
         else:
-            capital_ratio = 1.0
+            vol_ratio = 1.0
+
+        capital_ratio = capital_ratio_base * vol_ratio
 
         # =========================
         # エントリー
@@ -277,7 +294,7 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== FINAL HYBRID + VOL CONTROL ===")
+print("\n=== FINAL REGIME SWITCH MODEL ===")
 
 results = []
 
