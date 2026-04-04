@@ -35,7 +35,7 @@ TAKE_PROFIT = 0.10
 THRESHOLD = 0.52
 
 # =========================
-# HMM用特徴（市場状態）
+# HMM特徴
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
 
@@ -49,12 +49,12 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 # =========================
-# 市場データ作成（HMM用）
+# 市場データ（HMM用）
 # =========================
 market = df.groupby("Date")[HMM_FEATURES].mean().reset_index()
 
 # =========================
-# HMM学習（市場レジーム）
+# HMM学習
 # =========================
 hmm = GaussianHMM(
     n_components=3,
@@ -65,38 +65,12 @@ hmm = GaussianHMM(
 
 hmm.fit(market[HMM_FEATURES])
 
-market["regime_raw"] = hmm.predict(market[HMM_FEATURES])
+# ★ ここが重要（確率を使う）
+proba = hmm.predict_proba(market[HMM_FEATURES])
 
-# =========================
-# レジームを意味づけ（重要）
-# =========================
-regime_map = {}
-
-for r in range(3):
-    subset = market[market["regime_raw"] == r]
-
-    avg_ret = subset["Return_1"].mean()
-    avg_vol = subset["Volatility"].mean()
-
-    regime_map[r] = (avg_ret, avg_vol)
-
-# ソートして分類
-sorted_states = sorted(
-    regime_map.items(),
-    key=lambda x: x[1][0]  # returnでソート
-)
-
-DOWN_STATE = sorted_states[0][0]
-MID_STATE = sorted_states[1][0]
-TREND_STATE = sorted_states[2][0]
-
-market["regime"] = market["regime_raw"].map({
-    DOWN_STATE: "DOWN",
-    MID_STATE: "RANGE",
-    TREND_STATE: "TREND"
-})
-
-market = market[["Date", "regime"]]
+market["down_p"] = proba[:, 0]
+market["mid_p"] = proba[:, 1]
+market["trend_p"] = proba[:, 2]
 
 # =========================
 # 学習
@@ -125,11 +99,32 @@ def run_backtest(test_df):
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
 
+    # =========================
+    # HMMマージ
+    # =========================
+    market_map = market.set_index("Date")[["down_p","mid_p","trend_p"]]
+
+    test_df = test_df.merge(
+        market_map,
+        left_on="Date",
+        right_index=True,
+        how="left"
+    )
+
+    # =========================
+    # スコア調整（ここが本体）
+    # =========================
+    test_df["regime_score"] = (
+        test_df["trend_p"] * 1.0 +
+        test_df["mid_p"] * 0.0 +
+        test_df["down_p"] * (-1.0)
+    )
+
+    test_df["adj_pred"] = test_df["pred"] * (1 + 0.5 * test_df["regime_score"])
+
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
-
-    market_regime_map = dict(zip(market["Date"], market["regime"]))
 
     for i, d in enumerate(dates):
 
@@ -140,6 +135,7 @@ def run_backtest(test_df):
         # 決済
         # =========================
         new_positions = []
+
         for pos in positions:
 
             cur = today[today["Ticker"] == pos["ticker"]]
@@ -159,42 +155,19 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # HMMレジーム取得
-        # =========================
-        regime = market_regime_map.get(d, "RANGE")
-
-        # =========================
-        # レジーム別制御
-        # =========================
-        if regime == "DOWN":
-            equity += daily_pnl
-            equity_curve.append(equity)
-            continue
-
-        elif regime == "RANGE":
-            top_n = 1
-            threshold = THRESHOLD * 1.05
-            capital_ratio = 0.5
-
-        else:  # TREND
-            top_n = 1
-            threshold = THRESHOLD
-            capital_ratio = 1.0
-
-        # =========================
         # エントリー
         # =========================
-        today_f = today[today["pred"] > threshold]
+        today_f = today[today["adj_pred"] > THRESHOLD]
 
         if today_f.empty:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
-        picks = today_f.sort_values("pred", ascending=False).head(top_n)
+        picks = today_f.sort_values("adj_pred", ascending=False).head(1)
 
         invested = sum([p["capital"] for p in positions])
-        free_cash = (equity - invested) * capital_ratio
+        free_cash = equity - invested
 
         if d not in date_index or date_index[d] + 1 >= len(dates):
             equity += daily_pnl
@@ -240,7 +213,7 @@ def run_backtest(test_df):
 # =========================
 # テスト
 # =========================
-print("\n=== HMM REGIME BACKTEST ===")
+print("\n=== HMM SCORE-ADJUSTED BACKTEST ===")
 
 results = []
 
