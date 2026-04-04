@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
+
 from lightgbm import LGBMClassifier
+from sklearn.calibration import CalibratedClassifierCV
 
 # =========================
 # 設定
@@ -25,19 +27,13 @@ FEATURES = [
 
 TARGET = "Target"
 
-INITIAL_CAPITAL = 1.0
-
-THRESHOLD = 0.59
+TOP_K = 3
 HOLD_DAYS = 7
-
-STOP_LOSS = -0.03
-TAKE_PROFIT = 0.10
-
-MARKET_FILTER = -0.005
+INITIAL_CAPITAL = 1.0
 
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
@@ -49,21 +45,39 @@ years = sorted(df["Date"].dt.year.unique())
 
 
 # =========================
-# バックテスト関数
+# モデル構築（Calibrated）
 # =========================
-def run_backtest(train_df, test_df):
+def train_model(train_df):
 
-    model = LGBMClassifier(
-        n_estimators=300,
+    base_model = LGBMClassifier(
+        n_estimators=400,
         learning_rate=0.03,
         max_depth=6,
         random_state=42
     )
 
-    model.fit(train_df[FEATURES], train_df[TARGET])
+    calibrated = CalibratedClassifierCV(
+        base_model,
+        method="isotonic",   # ←重要（ランキング安定）
+        cv=3
+    )
+
+    calibrated.fit(train_df[FEATURES], train_df[TARGET])
+
+    return calibrated
+
+
+# =========================
+# バックテスト
+# =========================
+def run_backtest(train_df, test_df):
+
+    model = train_model(train_df)
 
     test_df = test_df.copy()
-    test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
+
+    # ===== キャリブレーション済み確率 =====
+    test_df["score"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
@@ -80,7 +94,7 @@ def run_backtest(train_df, test_df):
         daily_pnl = 0
 
         # =========================
-        # 決済処理
+        # 決済
         # =========================
         new_positions = []
 
@@ -95,7 +109,7 @@ def run_backtest(train_df, test_df):
             price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            if ret < STOP_LOSS or ret > TAKE_PROFIT or d >= pos["exit_date"]:
+            if d >= pos["exit_date"]:
                 daily_pnl += pos["capital"] * ret
             else:
                 new_positions.append(pos)
@@ -103,60 +117,47 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # 相場フィルタ
-        # =========================
-        market = today["Return_1"].mean()
-        if market < MARKET_FILTER:
-            equity += daily_pnl
-            equity_curve.append(equity)
-            continue
-
-        # =========================
         # エントリー
         # =========================
-        candidates = today[today["pred"] > THRESHOLD]
-
-        if not candidates.empty:
-
-            picks = candidates.sort_values("pred", ascending=False).head(3)
-
-            invested = sum([p["capital"] for p in positions])
-            free_cash = equity - invested
-
-            if d not in date_index or date_index[d] + 1 >= len(dates):
-                equity += daily_pnl
-                equity_curve.append(equity)
-                continue
+        if d in date_index and date_index[d] + 1 < len(dates):
 
             next_day = dates[date_index[d] + 1]
             next_data = test_df[test_df["Date"] == next_day]
 
-            for _, row in picks.iterrows():
+            # ===== TOP-Kランキング =====
+            picks = today.sort_values("score", ascending=False).head(TOP_K)
 
-                if any(p["ticker"] == row["Ticker"] for p in positions):
-                    continue
+            free_cash = equity - sum([p["capital"] for p in positions])
 
-                next_row = next_data[next_data["Ticker"] == row["Ticker"]]
-                if next_row.empty:
-                    continue
+            if free_cash > 0:
 
-                entry_price = next_row["Open"].iloc[0]
+                capital_per_trade = free_cash / TOP_K
 
-                capital = free_cash / len(picks)
+                for _, row in picks.iterrows():
 
-                if capital <= 0:
-                    continue
+                    # 既存ポジ除外
+                    if any(p["ticker"] == row["Ticker"] for p in positions):
+                        continue
 
-                positions.append({
-                    "ticker": row["Ticker"],
-                    "entry_price": entry_price,
-                    "entry_date": next_day,
-                    "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                    "capital": capital
-                })
+                    next_row = next_data[next_data["Ticker"] == row["Ticker"]]
+                    if next_row.empty:
+                        continue
 
-                trade_count += 1
+                    entry_price = next_row["Open"].iloc[0]
 
+                    positions.append({
+                        "ticker": row["Ticker"],
+                        "entry_price": entry_price,
+                        "entry_date": next_day,
+                        "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
+                        "capital": capital_per_trade
+                    })
+
+                    trade_count += 1
+
+        # =========================
+        # 更新
+        # =========================
         equity += daily_pnl
         equity_curve.append(equity)
 
@@ -171,7 +172,7 @@ def run_backtest(train_df, test_df):
 
 
 # =========================
-# 実行
+# 年別バックテスト
 # =========================
 results = []
 
@@ -209,5 +210,5 @@ df_res = pd.DataFrame(results)
 print("\n=== SUMMARY ===")
 print(df_res)
 
-print("\n平均")
+print("\nAVERAGE")
 print(df_res.mean(numeric_only=True))
