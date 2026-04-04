@@ -9,14 +9,18 @@ DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
     "Return_1","Return_3",
+    "Rank_Return_1",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
+    "RSI",
     "Rel_Return_1",
-    "Trend_5",
-    "Trend_10",
-    "Vol_Ratio"
+    "Trend_5_z",
+    "Trend_10_z",
+    "Volatility_z",
+    "Volume_ratio_z",
+    "Market_Return_z"
 ]
 
 TARGET = "Target"
