@@ -3,9 +3,6 @@ import numpy as np
 from lightgbm import LGBMClassifier
 from itertools import product
 
-# =========================
-# 設定
-# =========================
 DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
@@ -23,44 +20,50 @@ FEATURES = [
 TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
-
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
-# =========================
-# 🔥 ロバスト用パラメータ
-# =========================
 THRESHOLD_LIST = [0.57, 0.58, 0.59, 0.60]
 MARKET_FILTER_LIST = [-0.01, -0.005, 0.0]
 POWER_LIST = [2.0, 2.2, 2.5]
 
-# =========================
-# データ
-# =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
-
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# バックテスト
+# 🔥 predを事前計算
 # =========================
-def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
+pred_cache = {}
+
+for test_year in years:
+    if test_year < 2022:
+        continue
+
+    train_df = df[df["Date"].dt.year < test_year]
+    test_df = df[df["Date"].dt.year == test_year].copy()
 
     model = LGBMClassifier(
         n_estimators=300,
         learning_rate=0.03,
         max_depth=6,
-        random_state=42
+        random_state=42,
+        force_col_wise=True
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
-    test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
+
+    pred_cache[test_year] = test_df
+
+# =========================
+# バックテスト（pred前提）
+# =========================
+def run_backtest(test_df, THRESHOLD, MARKET_FILTER, POWER):
 
     dates = sorted(test_df["Date"].unique())
     date_index = {d: i for i, d in enumerate(dates)}
@@ -78,9 +81,7 @@ def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
         # 決済
         new_positions = []
         for pos in positions:
-
             cur = today[today["Ticker"] == pos["ticker"]]
-
             if cur.empty:
                 new_positions.append(pos)
                 continue
@@ -102,12 +103,10 @@ def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
             equity_curve.append(equity)
             continue
 
-        # エントリー候補
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            # ノートレ条件
             market_score = today_f["pred"].mean()
 
             if market_score < 0.595:
@@ -115,7 +114,6 @@ def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
                 equity_curve.append(equity)
                 continue
 
-            # 動的TOP_N
             if market_score > 0.62:
                 top_n = 4
             elif market_score > 0.58:
@@ -127,7 +125,6 @@ def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
-            # weight = pred^POWER
             weights = picks["pred"] ** POWER
             total_weight = weights.sum()
 
@@ -179,47 +176,27 @@ def run_backtest(train_df, test_df, THRESHOLD, MARKET_FILTER, POWER):
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    return CAGR, Sharpe, MaxDD, trade_count
-
+    return Sharpe
 
 # =========================
-# 実行（ロバスト）
+# ロバスト実行
 # =========================
 results = []
 
 for th, mf, pw in product(THRESHOLD_LIST, MARKET_FILTER_LIST, POWER_LIST):
 
-    print(f"\n=== PARAM === TH:{th}, MF:{mf}, PW:{pw}")
+    yearly = []
 
-    yearly_scores = []
-
-    for test_year in years:
-
-        if test_year < 2022:
-            continue
-
-        train_df = df[df["Date"].dt.year < test_year]
-        test_df = df[df["Date"].dt.year == test_year]
-
-        CAGR, Sharpe, MaxDD, trades = run_backtest(
-            train_df, test_df, th, mf, pw
-        )
-
-        yearly_scores.append(Sharpe)
-
-    avg_sharpe = np.mean(yearly_scores)
+    for year, test_df in pred_cache.items():
+        sharpe = run_backtest(test_df, th, mf, pw)
+        yearly.append(sharpe)
 
     results.append({
-        "THRESHOLD": th,
-        "MARKET_FILTER": mf,
-        "POWER": pw,
-        "Avg_Sharpe": avg_sharpe
+        "TH": th,
+        "MF": mf,
+        "PW": pw,
+        "AvgSharpe": np.mean(yearly)
     })
 
-# =========================
-# 結果
-# =========================
 df_res = pd.DataFrame(results)
-
-print("\n=== ROBUST RESULT ===")
-print(df_res.sort_values("Avg_Sharpe", ascending=False))
+print(df_res.sort_values("AvgSharpe", ascending=False))
