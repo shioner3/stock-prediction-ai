@@ -27,20 +27,15 @@ FEATURES = [
 TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
-HOLD_DAYS = 7
+HOLD_DAYS = 10
 
 STOP_LOSS = -0.03
-TAKE_PROFIT = 0.10
+TAKE_PROFIT = 0.12
 
 CRASH_FILTER = -0.02
 
 HIGH_VOL = 2.0
 MID_VOL = 1.0
-
-MARKET_FILTER = -0.003
-MARKET_MA_WINDOW = 20
-
-MAX_DRAWDOWN = -0.20
 
 # =========================
 # データ
@@ -51,7 +46,7 @@ df = df.sort_values(["Date", "Ticker"])
 df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf]).fillna(0)
 
 # =========================
-# HMM
+# HMM（TREND抽出だけ使う）
 # =========================
 HMM_FEATURES = ["Return_1", "Volatility", "Volume_ratio"]
 
@@ -74,32 +69,28 @@ state_ret = {}
 for s in range(3):
     state_ret[s] = market.loc[market["state"] == s, "Return_1"].mean()
 
-sorted_states = sorted(state_ret.items(), key=lambda x: x[1])
-
-CRASH_STATE = sorted_states[0][0]
-TREND_STATE = sorted_states[-1][0]
-RANGE_STATE = sorted_states[1][0]
+TREND_STATE = max(state_ret.items(), key=lambda x: x[1])[0]
 
 market_map = market.set_index("Date")[["state"]]
 
 # =========================
-# 学習
+# モデル（全データでOK）
 # =========================
 train_df = df[df["Date"].dt.year <= 2021]
 
 model = LGBMClassifier(
-    n_estimators=300,
+    n_estimators=400,
     learning_rate=0.03,
     max_depth=6,
     random_state=42
 )
 
-print("Training model...")
+print("Training TREND model...")
 model.fit(train_df[FEATURES], train_df[TARGET])
 print("Done.")
 
 # =========================
-# バックテスト
+# バックテスト（TRENDのみ）
 # =========================
 def run_backtest(test_df):
 
@@ -114,19 +105,6 @@ def run_backtest(test_df):
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
-
-    peak_equity = INITIAL_CAPITAL
-    trading_stopped = False
-
-    # =========================
-    # 状態別PnL
-    # =========================
-    state_pnl = {
-        "TREND": [],
-        "RANGE": [],
-        "CRASH": [],
-        "SKIP": []
-    }
 
     for i, d in enumerate(dates):
 
@@ -147,10 +125,6 @@ def run_backtest(test_df):
             price = cur["Close"].iloc[0]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            st = pos["state"]
-            if st in state_pnl:
-                state_pnl[st].append(pos["capital"] * ret)
-
             if ret < STOP_LOSS or ret > TAKE_PROFIT or d >= pos["exit_date"]:
                 equity += pos["capital"] * ret
             else:
@@ -159,83 +133,48 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # DD
-        # =========================
-        peak_equity = max(peak_equity, equity)
-        dd = (equity / peak_equity) - 1
-
-        if dd < MAX_DRAWDOWN:
-            trading_stopped = True
-
-        if trading_stopped and dd > -0.05:
-            trading_stopped = False
-
-        if trading_stopped:
-            equity_curve.append(equity)
-            continue
-
-        # =========================
-        # クラッシュ
+        # CRASHフィルタ
         # =========================
         market_ret = today["Return_1"].mean()
 
         if market_ret < CRASH_FILTER:
-            state_pnl["CRASH"].append(0)
             equity_curve.append(equity)
             continue
 
         # =========================
-        # state
+        # TREND以外は取引しない
         # =========================
         s = today["state"].iloc[0]
 
-        if s == CRASH_STATE:
-            state_pnl["CRASH"].append(0)
-            equity_curve.append(equity)
-            continue
-
-        if s == TREND_STATE:
-            THRESHOLD = 0.50
-            TOP_N = 3
-            capital_base = 1.0
-
-        elif s == RANGE_STATE:
-            THRESHOLD = 0.58
-            TOP_N = 1
-            capital_base = 0.7
-
-        else:
-            state_pnl["SKIP"].append(0)
+        if s != TREND_STATE:
             equity_curve.append(equity)
             continue
 
         # =========================
-        # ボラ
+        # ボラ調整
         # =========================
         vol = today["Volatility"].mean()
 
         if vol > HIGH_VOL:
-            vol_ratio = 0.3
+            cap_ratio = 0.4
         elif vol > MID_VOL:
-            vol_ratio = 0.6
+            cap_ratio = 0.7
         else:
-            vol_ratio = 1.0
-
-        capital_ratio = capital_base * vol_ratio
+            cap_ratio = 1.0
 
         # =========================
         # エントリー
         # =========================
-        today_f = today[today["pred"] > THRESHOLD]
+        today_f = today[today["pred"] > 0.52]
 
         if today_f.empty:
             equity_curve.append(equity)
             continue
 
-        picks = today_f.sort_values("pred", ascending=False).head(TOP_N)
+        picks = today_f.sort_values("pred", ascending=False).head(5)
 
         invested = sum([p["capital"] for p in positions])
-        free_cash = (equity - invested) * capital_ratio
+        free_cash = (equity - invested) * cap_ratio
 
         if i + 1 >= len(dates):
             equity_curve.append(equity)
@@ -255,18 +194,12 @@ def run_backtest(test_df):
 
             entry_price = next_row["Open"].iloc[0]
 
-            st_name = (
-                "TREND" if s == TREND_STATE else
-                "RANGE"
-            )
-
             positions.append({
                 "ticker": row["Ticker"],
                 "entry_price": entry_price,
                 "entry_date": next_day,
                 "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                "capital": free_cash / TOP_N,
-                "state": st_name
+                "capital": free_cash / 5
             })
 
         equity_curve.append(equity)
@@ -279,31 +212,13 @@ def run_backtest(test_df):
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    # =========================
-    # STATE PnL出力
-    # =========================
-    print("\n=== STATE PnL BREAKDOWN ===")
-
-    for k, v in state_pnl.items():
-        arr = np.array(v)
-        total = arr.sum()
-        trades = len(arr)
-        avg = total / (trades + 1e-9)
-        win_rate = (arr > 0).mean() if trades > 0 else 0
-
-        print(f"\n{k}")
-        print(f"  Total PnL : {total:.4f}")
-        print(f"  Trades    : {trades}")
-        print(f"  Avg PnL   : {avg:.6f}")
-        print(f"  Win Rate  : {win_rate:.3f}")
-
     return CAGR, Sharpe, MaxDD
 
 
 # =========================
 # テスト
 # =========================
-print("\n=== FINAL REGIME SWITCH MODEL ===")
+print("\n=== TREND ONLY MODEL ===")
 
 results = []
 
