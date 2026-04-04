@@ -134,7 +134,7 @@ df["FutureReturn"] = (
 )
 
 # 🔥 ここ変更
-df["Target"] = (df["FutureReturn"] > 0.03).astype(int)
+df["Target"] = (df["FutureReturn"] > 0).astype(int)
 
 df = df.dropna(subset=["FutureReturn"])
 
