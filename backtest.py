@@ -33,7 +33,7 @@ STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
 
 # =========================
-# 🔥 探索パラメータ
+# 探索パラメータ
 # =========================
 THRESHOLDS = [0.50, 0.52, 0.54, 0.56, 0.58]
 TOP_N_LIST = [1, 2, 3]
@@ -51,18 +51,26 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# バックテスト関数
+# 🔥 年1回だけ学習（ここが重要）
 # =========================
-def run_backtest(train_df, test_df, THRESHOLD, TOP_N, MARKET_FILTER):
+train_cutoff_year = 2021
+train_df = df[df["Date"].dt.year <= train_cutoff_year]
 
-    model = LGBMClassifier(
-        n_estimators=300,
-        learning_rate=0.03,
-        max_depth=6,
-        random_state=42
-    )
+model = LGBMClassifier(
+    n_estimators=300,
+    learning_rate=0.03,
+    max_depth=6,
+    random_state=42
+)
 
-    model.fit(train_df[FEATURES], train_df[TARGET])
+print("Training model once...")
+model.fit(train_df[FEATURES], train_df[TARGET])
+print("Done.")
+
+# =========================
+# バックテスト関数（学習なし）
+# =========================
+def run_backtest(test_df, THRESHOLD, TOP_N, MARKET_FILTER):
 
     test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
@@ -192,10 +200,9 @@ for TH, TN, MF in itertools.product(THRESHOLDS, TOP_N_LIST, MARKET_FILTERS):
         if test_year < 2022:
             continue
 
-        train_df = df[df["Date"].dt.year < test_year]
         test_df = df[df["Date"].dt.year == test_year]
 
-        res = run_backtest(train_df, test_df, TH, TN, MF)
+        res = run_backtest(test_df, TH, TN, MF)
 
         if res is None:
             continue
