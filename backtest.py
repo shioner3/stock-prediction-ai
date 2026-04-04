@@ -35,22 +35,27 @@ TAKE_PROFIT = 0.10
 # 固定パラメータ
 # =========================
 THRESHOLD = 0.52
-TOP_N = 1
+TOP_N_NORMAL = 1
+TOP_N_RANGE = 1
+
+# レンジ時の調整
+RANGE_THRESHOLD_MULTIPLIER = 1.05   # 閾値を少し上げる
+RANGE_CAPITAL_RATIO = 0.5          # 資金半分
 
 # =========================
-# 🌍 レジーム設定
+# レジーム設定
 # =========================
 MARKET_FILTER = -0.003
 MARKET_MA_WINDOW = 20
 
 # =========================
-# 🆕 レンジ検出フィルタ
+# レンジ検出
 # =========================
 RANGE_WINDOW = 20
-RANGE_STD_THRESHOLD = 0.006   # ←ここが重要（要調整）
+RANGE_STD_THRESHOLD = 0.006
 
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
@@ -92,7 +97,6 @@ def run_backtest(test_df):
     equity_curve = []
     positions = []
 
-    # ===== 市場リターン事前計算（レンジ用）=====
     market_daily = df.groupby("Date")["Return_1"].mean()
 
     for i, d in enumerate(dates):
@@ -101,7 +105,7 @@ def run_backtest(test_df):
         daily_pnl = 0
 
         # =========================
-        # 決済処理
+        # 決済
         # =========================
         new_positions = []
         for pos in positions:
@@ -123,7 +127,7 @@ def run_backtest(test_df):
         positions = new_positions
 
         # =========================
-        # 🌍 レジーム判定
+        # レジーム判定
         # =========================
         market_ret = today["Return_1"].mean()
 
@@ -135,7 +139,7 @@ def run_backtest(test_df):
             market_ma = 0
 
         # =========================
-        # 🆕 レンジ検出（追加）
+        # レンジ検出
         # =========================
         if d in market_daily.index:
             idx = market_daily.index.get_loc(d)
@@ -151,9 +155,21 @@ def run_backtest(test_df):
         is_range = market_std < RANGE_STD_THRESHOLD
 
         # =========================
-        # 🚨 フィルター統合
+        # モード決定
         # =========================
-        if (market_ret < MARKET_FILTER) or (market_ma < 0) or is_range:
+        if is_range:
+            top_n = TOP_N_RANGE
+            threshold = THRESHOLD * RANGE_THRESHOLD_MULTIPLIER
+            capital_ratio = RANGE_CAPITAL_RATIO
+        else:
+            top_n = TOP_N_NORMAL
+            threshold = THRESHOLD
+            capital_ratio = 1.0
+
+        # =========================
+        # レジームフィルター（弱）
+        # =========================
+        if market_ret < MARKET_FILTER or market_ma < 0:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
@@ -161,17 +177,17 @@ def run_backtest(test_df):
         # =========================
         # エントリー
         # =========================
-        today_f = today[today["pred"] > THRESHOLD]
+        today_f = today[today["pred"] > threshold]
 
         if today_f.empty:
             equity += daily_pnl
             equity_curve.append(equity)
             continue
 
-        picks = today_f.sort_values("pred", ascending=False).head(TOP_N)
+        picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
         invested = sum([p["capital"] for p in positions])
-        free_cash = equity - invested
+        free_cash = (equity - invested) * capital_ratio
 
         if d not in date_index or date_index[d] + 1 >= len(dates):
             equity += daily_pnl
@@ -191,14 +207,13 @@ def run_backtest(test_df):
                 continue
 
             entry_price = next_row["Open"].iloc[0]
-            capital = free_cash
 
             positions.append({
                 "ticker": row["Ticker"],
                 "entry_price": entry_price,
                 "entry_date": next_day,
                 "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                "capital": capital
+                "capital": free_cash
             })
 
         equity += daily_pnl
@@ -221,7 +236,7 @@ def run_backtest(test_df):
 # =========================
 # 年別テスト
 # =========================
-print("\n=== REPRODUCIBILITY TEST (REGIME + RANGE FILTERED) ===")
+print("\n=== REPRODUCIBILITY TEST (REGIME + RANGE SCALED) ===")
 
 results = []
 
