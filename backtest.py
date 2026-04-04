@@ -27,12 +27,12 @@ TARGET = "Target"
 
 INITIAL_CAPITAL = 1.0
 
-THRESHOLD = 0.52
-TOP_N = 1   # ★固定
+THRESHOLD = 0.59
 
 HOLD_DAYS = 7
 STOP_LOSS = -0.03
 TAKE_PROFIT = 0.10
+MARKET_FILTER = -0.005
 
 # =========================
 # データ
@@ -58,7 +58,6 @@ def run_backtest(train_df, test_df):
     )
 
     model.fit(train_df[FEATURES], train_df[TARGET])
-
     test_df = test_df.copy()
     test_df["pred"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
@@ -68,6 +67,7 @@ def run_backtest(train_df, test_df):
     equity = INITIAL_CAPITAL
     equity_curve = []
     positions = []
+
     trade_count = 0
 
     for d in dates:
@@ -98,15 +98,48 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（🔥完全シンプル）
+        # 相場フィルタ
+        # =========================
+        market = today["Return_1"].mean()
+        if market < MARKET_FILTER:
+            equity += daily_pnl
+            equity_curve.append(equity)
+            continue
+
+        # =========================
+        # エントリー候補
         # =========================
         today_f = today[today["pred"] > THRESHOLD]
 
         if not today_f.empty:
 
-            # ★ picksを必ずここで定義
-            picks = today_f.sort_values("pred", ascending=False).head(TOP_N)
+            # =========================
+            # 🔥 ノートレ条件（追加）
+            # =========================
+            market_score = today_f["pred"].mean()
 
+            if market_score < 0.595:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # =========================
+            # 🔥 動的TOP_N
+            # =========================
+            if market_score > 0.62:
+                top_n = 4
+            elif market_score > 0.58:
+                top_n = 3
+            elif market_score > 0.54:
+                top_n = 2
+            else:
+                top_n = 1
+
+            picks = today_f.sort_values("pred", ascending=False).head(top_n)
+
+            # =========================
+            # 🔥 weight = pred^2
+            # =========================
             weights = picks["pred"] ** 2.2
             total_weight = weights.sum()
 
