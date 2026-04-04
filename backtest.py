@@ -121,16 +121,7 @@ def run_backtest(train_df, test_df):
             # =========================
             # 🔥 動的TOP_N
             # =========================
-            if market_score > 0.62:
-                top_n = 4
-            elif market_score > 0.58:
-                top_n = 3
-            elif market_score > 0.54:
-                top_n = 2
-            else:
-                top_n = 1
 
-            picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
             # =========================
             # 🔥 weight = pred^2
