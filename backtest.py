@@ -110,10 +110,18 @@ def run_backtest(train_df, test_df):
         if not today_f.empty:
 
             # =========================
-            # 🔥 動的TOP_N（修正版）
+            # 🔥 ノートレ条件（追加）
             # =========================
             market_score = today_f["pred"].mean()
 
+            if market_score < 0.54:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # =========================
+            # 🔥 動的TOP_N
+            # =========================
             if market_score > 0.62:
                 top_n = 4
             elif market_score > 0.58:
@@ -121,7 +129,7 @@ def run_backtest(train_df, test_df):
             elif market_score > 0.54:
                 top_n = 2
             else:
-                top_n = 1   # ←これ追加
+                top_n = 1
 
             picks = today_f.sort_values("pred", ascending=False).head(top_n)
 
