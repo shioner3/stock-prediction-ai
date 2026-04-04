@@ -114,7 +114,7 @@ def run_backtest(train_df, test_df):
             # =========================
             market_score = today_f["pred"].mean()
 
-            if market_score < 0.54:
+            if market_score < 0.59:
                 equity += daily_pnl
                 equity_curve.append(equity)
                 continue
