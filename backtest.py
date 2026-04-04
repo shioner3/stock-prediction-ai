@@ -9,7 +9,7 @@ DATA_PATH = "ml_dataset.parquet"
 
 FEATURES = [
     "Return_1","Return_3",
-    "Rank_Return_1",
+    "Rank_Return_1","Rank_Volume",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
