@@ -56,11 +56,15 @@ for w in [3, 5, 10]:
     df[f"MA{w}_ratio"] = df["Close"].shift(1) / df[f"MA{w}"]
 
 # ボラ
-df["Volatility"] = df.groupby("Ticker")["Return_1"].transform(lambda x: x.rolling(10).std()).shift(1)
+df["Volatility"] = df.groupby("Ticker")["Return_1"].transform(
+    lambda x: x.rolling(10).std()
+).shift(1)
 
 # 出来高
 df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change().shift(1)
-df["Volume_ma5"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(5).mean()).shift(1)
+df["Volume_ma5"] = df.groupby("Ticker")["Volume"].transform(
+    lambda x: x.rolling(5).mean()
+).shift(1)
 df["Volume_ratio"] = df["Volume"].shift(1) / df["Volume_ma5"]
 
 # 高値安値（t-1）
@@ -74,7 +78,7 @@ df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
 df["Trend_5"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(6) - 1
 df["Trend_10"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(11) - 1
 
-# Zスコア
+# Zスコア（過去のみ）
 def zscore(group, col, window):
     mean = group[col].rolling(window).mean()
     std = group[col].rolling(window).std()
@@ -88,19 +92,23 @@ df["Trend_10_z"] = df.groupby("Ticker", group_keys=False).apply(
 )
 
 # =========================
-# 🎯 ターゲット（生リターン）
+# 🎯 ターゲット（ランキング化）
 # =========================
 
+# ① 将来リターン（未来のみ）
 df["FutureReturn"] = df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 
-# 外れ値カット（安定化）
-df["Target"] = df["FutureReturn"].clip(-0.2, 0.2)
+# ② 外れ値カット（重要）
+df["FutureReturn"] = df["FutureReturn"].clip(-0.2, 0.2)
 
-# 欠損削除
+# ③ 🔥 同日内ランキング（リークなし）
+df["Target"] = df.groupby("Date")["FutureReturn"].rank(pct=True)
+
+# ④ 欠損削除
 df = df.dropna(subset=["Target"])
 
 # =========================
-# FEATURES（ランク系完全削除）
+# FEATURES（クリーン版）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -136,4 +144,4 @@ print("Predict:", latest_date)
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（完全クリーン版）")
+print("\n保存完了（ランキング版・完全クリーン）")
