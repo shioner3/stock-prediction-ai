@@ -33,22 +33,17 @@ FEATURES = [
 ]
 
 # =========================
-# 市場レジーム作成（🔥追加）
+# レジーム（修正版）
 # =========================
+market = df.groupby("Date")["Return_1"].mean()
+market_smooth = market.rolling(20).mean()
 
-df["Market_Return"] = df.groupby("Date")["Return_1"].transform("mean")
-df["Market_Smooth"] = df["Market_Return"].rolling(20).mean()
+df["Market_Smooth"] = df["Date"].map(market_smooth)
 
 df["Regime"] = np.where(
     df["Market_Smooth"] > 0.001, "up",
     np.where(df["Market_Smooth"] < -0.001, "down", "range")
 )
-
-# =========================
-# 営業日リスト
-# =========================
-dates = sorted(df["Date"].unique())
-date_to_index = {d: i for i, d in enumerate(dates)}
 
 # =========================
 # モデル
@@ -74,6 +69,10 @@ def run_backtest(train_df, test_df):
     test_df = test_df.copy()
     test_df["score"] = model.predict(test_df[FEATURES])
 
+    # 🔥 test期間ベースで統一
+    dates = sorted(test_df["Date"].unique())
+    date_to_index = {d: i for i, d in enumerate(dates)}
+
     grouped = {d: g for d, g in test_df.groupby("Date")}
 
     equity = INITIAL_CAPITAL
@@ -83,7 +82,7 @@ def run_backtest(train_df, test_df):
     positions = []
     trade_logs = []
 
-    for d in sorted(grouped.keys()):
+    for d in dates:
 
         today = grouped[d]
         i = date_to_index[d]
@@ -134,7 +133,15 @@ def run_backtest(train_df, test_df):
             if available > 0 and cash > 0:
 
                 next_day = dates[i + 1]
-                next_data = grouped.get(next_day, pd.DataFrame())
+
+                # 🔥 存在保証（これでエラー完全防止）
+                if next_day not in grouped:
+                    continue
+
+                next_data = grouped[next_day]
+
+                if next_data.empty or "Ticker" not in next_data.columns:
+                    continue
 
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
@@ -164,6 +171,7 @@ def run_backtest(train_df, test_df):
                                 continue
 
                             next_row = next_data[next_data["Ticker"] == ticker]
+
                             if next_row.empty:
                                 continue
 
