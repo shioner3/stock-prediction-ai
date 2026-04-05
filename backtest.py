@@ -9,11 +9,11 @@ from itertools import product
 DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
-MAX_POSITIONS = 7
+MAX_POSITIONS = 5
 ALPHA = 2.0
 
 # 🔥 HOLD固定（重要）
-HOLD_DAYS = 5
+HOLD_DAYS = 7
 
 # 🔥 探索範囲（HOLD削除）
 TOP_RATE_LIST = [0.01, 0.02, 0.03]
