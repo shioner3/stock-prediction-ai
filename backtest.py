@@ -24,7 +24,6 @@ df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 # 🔥 feature engineeringと完全一致
 FEATURES = [
     "Return_1","Return_3",
-    "Rank_Return_1","Rank_Volume",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
