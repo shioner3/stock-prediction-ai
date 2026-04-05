@@ -33,6 +33,18 @@ FEATURES = [
 ]
 
 # =========================
+# 市場レジーム作成（🔥追加）
+# =========================
+
+df["Market_Return"] = df.groupby("Date")["Return_1"].transform("mean")
+df["Market_Smooth"] = df["Market_Return"].rolling(20).mean()
+
+df["Regime"] = np.where(
+    df["Market_Smooth"] > 0.001, "up",
+    np.where(df["Market_Smooth"] < -0.001, "down", "range")
+)
+
+# =========================
 # 営業日リスト
 # =========================
 dates = sorted(df["Date"].unique())
@@ -69,10 +81,6 @@ def run_backtest(train_df, test_df):
     equity_curve = []
 
     positions = []
-
-    # =========================
-    # 🔥 取引ログ
-    # =========================
     trade_logs = []
 
     for d in sorted(grouped.keys()):
@@ -87,9 +95,7 @@ def run_backtest(train_df, test_df):
 
         for pos in positions:
 
-            exit_idx = pos["exit_idx"]
-
-            if i == exit_idx:
+            if i == pos["exit_idx"]:
 
                 cur = today[today["Ticker"] == pos["ticker"]]
                 if cur.empty:
@@ -100,9 +106,6 @@ def run_backtest(train_df, test_df):
 
                 cash += pos["capital"] * (1 + ret)
 
-                # =========================
-                # 🔥 トレードログ記録
-                # =========================
                 trade_logs.append({
                     "ticker": pos["ticker"],
                     "entry_date": pos["entry_date"],
@@ -112,7 +115,8 @@ def run_backtest(train_df, test_df):
                     "return": ret,
                     "capital": pos["capital"],
                     "score": pos["score"],
-                    "profit": pos["capital"] * ret
+                    "profit": pos["capital"] * ret,
+                    "regime": pos["regime"]
                 })
 
             else:
@@ -169,19 +173,18 @@ def run_backtest(train_df, test_df):
                             if capital <= 0:
                                 continue
 
-                            entry_price = next_row["Open"].iloc[0]
-
                             exit_idx = i + HOLD_DAYS
                             if exit_idx >= len(dates):
                                 continue
 
                             positions.append({
                                 "ticker": ticker,
-                                "entry_price": entry_price,
+                                "entry_price": next_row["Open"].iloc[0],
                                 "entry_date": d,
                                 "exit_idx": exit_idx,
                                 "capital": capital,
-                                "score": row.score
+                                "score": row.score,
+                                "regime": row.Regime
                             })
 
                             cash -= capital
