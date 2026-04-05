@@ -12,10 +12,12 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 ALPHA = 2.0
 
-# 🔥 探索範囲
+# 🔥 HOLD固定（重要）
+HOLD_DAYS = 3
+
+# 🔥 探索範囲（HOLD削除）
 TOP_RATE_LIST = [0.01, 0.02, 0.03]
 TREND_LIST = [-0.5, 0.0, 0.5]
-HOLD_DAYS_LIST = [3, 5, 7, 10]
 
 # =========================
 # データ
@@ -41,7 +43,7 @@ years = sorted(df["Date"].dt.year.unique())
 # =========================
 def train_model(train_df):
     model = LGBMRegressor(
-        n_estimators=200,   # 少し軽量化（探索用）
+        n_estimators=200,
         learning_rate=0.03,
         max_depth=6,
         random_state=42,
@@ -53,7 +55,7 @@ def train_model(train_df):
 # =========================
 # バックテスト
 # =========================
-def run_backtest(train_df, test_df, TOP_RATE, TREND_TH, HOLD_DAYS):
+def run_backtest(train_df, test_df, TOP_RATE, TREND_TH):
 
     model = train_model(train_df)
 
@@ -109,7 +111,7 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH, HOLD_DAYS):
                 next_day = dates[date_index[d]+1]
                 next_data = grouped[next_day]
 
-                # 🔥 パラメータ化されたフィルタ
+                # 🔥 フィルタ
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
                     (today["score"] > today["score"].quantile(0.9))
@@ -127,7 +129,7 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH, HOLD_DAYS):
 
                     if scores.sum() > 0:
 
-                        weights = (scores ** ALPHA)
+                        weights = scores ** ALPHA
                         weights /= weights.sum()
 
                         for i, row in enumerate(picks.itertuples()):
@@ -184,17 +186,16 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH, HOLD_DAYS):
 
     return CAGR, Sharpe, MaxDD
 
-
 # =========================
-# 🔥 グリッドサーチ
+# 🔥 グリッドサーチ（HOLDなし）
 # =========================
 results = []
 
-param_grid = list(product(TOP_RATE_LIST, TREND_LIST, HOLD_DAYS_LIST))
+param_grid = list(product(TOP_RATE_LIST, TREND_LIST))
 
 print(f"総パターン数: {len(param_grid)}")
 
-for TOP_RATE, TREND_TH, HOLD_DAYS in param_grid:
+for TOP_RATE, TREND_TH in param_grid:
 
     all_metrics = []
 
@@ -205,7 +206,7 @@ for TOP_RATE, TREND_TH, HOLD_DAYS in param_grid:
         train_df = df[df["Date"].dt.year < y]
         test_df = df[df["Date"].dt.year == y]
 
-        res = run_backtest(train_df, test_df, TOP_RATE, TREND_TH, HOLD_DAYS)
+        res = run_backtest(train_df, test_df, TOP_RATE, TREND_TH)
 
         if res is not None:
             all_metrics.append(res)
@@ -217,7 +218,7 @@ for TOP_RATE, TREND_TH, HOLD_DAYS in param_grid:
     sharpe = np.mean([m[1] for m in all_metrics])
     mdd = np.mean([m[2] for m in all_metrics])
 
-    print(f"TOP:{TOP_RATE} Trend:{TREND_TH} HOLD:{HOLD_DAYS} → CAGR:{cagr:.2f} Sharpe:{sharpe:.2f}")
+    print(f"TOP:{TOP_RATE} Trend:{TREND_TH} → CAGR:{cagr:.2f} Sharpe:{sharpe:.2f}")
 
     results.append([TOP_RATE, TREND_TH, HOLD_DAYS, cagr, sharpe, mdd])
 
