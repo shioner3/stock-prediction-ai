@@ -52,7 +52,7 @@ df["Rank_Return_1"] = df.groupby("Date")["Return_1"].rank(pct=True)
 df["Rank_Volume"] = df.groupby("Date")["Volume"].rank(pct=True)
 
 # MA
-for w in [3,5,10]:
+for w in [3, 5, 10]:
     df[f"MA{w}"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(w).mean()).shift(1)
     df[f"MA{w}_ratio"] = df["Close"].shift(1) / df[f"MA{w}"]
 
@@ -75,18 +75,29 @@ df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
 df["Trend_5"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(6) - 1
 df["Trend_10"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(11) - 1
 
-# Z
+# Zスコア
 def zscore(group, col, window):
-    return (group[col] - group[col].rolling(window).mean()) / (group[col].rolling(window).std() + 1e-9)
+    mean = group[col].rolling(window).mean()
+    std = group[col].rolling(window).std()
+    return (group[col] - mean) / (std + 1e-9)
 
 df["Trend_5_z"] = df.groupby("Ticker", group_keys=False).apply(lambda x: zscore(x, "Trend_5", Z_WINDOW))
 df["Trend_10_z"] = df.groupby("Ticker", group_keys=False).apply(lambda x: zscore(x, "Trend_10", Z_WINDOW))
 
 # =========================
-# 🎯 回帰ターゲット
+# 🎯 ターゲット（最重要：回帰ランキング化）
 # =========================
-df["Target"] = df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 
+# ① 将来リターン
+df["FutureReturn"] = df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
+
+# ② 外れ値カット（超重要）
+df["FutureReturn"] = df["FutureReturn"].clip(-0.2, 0.2)
+
+# ③ 日付ごとランキング（これが核心）
+df["Target"] = df.groupby("Date")["FutureReturn"].rank(pct=True)
+
+# ④ 欠損削除
 df = df.dropna(subset=["Target"])
 
 # =========================
@@ -103,10 +114,28 @@ FEATURES = [
     "Trend_5_z","Trend_10_z"
 ]
 
-train_df = df.dropna(subset=FEATURES + ["Target"])
-predict_df = df[df["Date"] == df["Date"].max()].dropna(subset=FEATURES)
+# =========================
+# データ作成
+# =========================
+train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
 
+latest_date = df["Date"].max()
+predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
+
+# =========================
+# デバッグ
+# =========================
+print("\n=== TARGET CHECK ===")
+print(train_df["Target"].describe())
+
+print("\n=== DATE CHECK ===")
+print("Train:", train_df["Date"].min(), "→", train_df["Date"].max())
+print("Predict:", latest_date)
+
+# =========================
+# 保存
+# =========================
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("保存完了")
+print("\n保存完了（回帰ランキング版）")
