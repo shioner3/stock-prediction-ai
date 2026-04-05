@@ -11,7 +11,7 @@ HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
-TOP_RATE = 0.05
+TOP_RATE = 0.02
 ALPHA = 2.0
 
 # =========================
@@ -113,7 +113,10 @@ def run_backtest(train_df, test_df):
                 next_data = grouped[next_day]
 
                 # フィルタ
-                today_f = today[today["Trend_5_z"] > -0.5]
+                today_f = today[
+                     (today["Trend_5_z"] > 0) &
+                     (today["score"] > today["score"].quantile(0.9))
+                 ]
 
                 if len(today_f) > 0:
 
