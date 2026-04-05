@@ -11,8 +11,8 @@ HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
-TOP_RATE = 0.05   # 上位5%
-ALPHA = 2.0       # weight強調
+TOP_RATE = 0.05
+ALPHA = 2.0
 
 # =========================
 # データ
@@ -22,21 +22,19 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date","Ticker"])
 
 FEATURES = [c for c in df.columns if c not in ["Date","Ticker","Name","Target"]]
-
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
 # モデル
 # =========================
 def train_model(train_df):
-
     model = LGBMRegressor(
-        n_estimators=500,
+        n_estimators=300,   # ←軽量化
         learning_rate=0.03,
         max_depth=6,
-        random_state=42
+        random_state=42,
+        n_jobs=-1           # ←並列化
     )
-
     model.fit(train_df[FEATURES], train_df["Target"])
     return model
 
@@ -50,7 +48,9 @@ def run_backtest(train_df, test_df):
     test_df = test_df.copy()
     test_df["score"] = model.predict(test_df[FEATURES])
 
-    dates = sorted(test_df["Date"].unique())
+    # 🔥 日付辞書化（超高速化）
+    grouped = {d: g for d, g in test_df.groupby("Date")}
+    dates = sorted(grouped.keys())
     date_index = {d:i for i,d in enumerate(dates)}
 
     equity = INITIAL_CAPITAL
@@ -61,7 +61,7 @@ def run_backtest(train_df, test_df):
 
     for d in dates:
 
-        today = test_df[test_df["Date"]==d]
+        today = grouped[d]
         daily_pnl = 0
 
         # =========================
@@ -89,7 +89,7 @@ def run_backtest(train_df, test_df):
         # =========================
         # エントリー
         # =========================
-        if d in date_index and date_index[d]+1 < len(dates):
+        if date_index[d] + 1 < len(dates):
 
             available = MAX_POSITIONS - len(positions)
             if available <= 0:
@@ -98,11 +98,9 @@ def run_backtest(train_df, test_df):
                 continue
 
             next_day = dates[date_index[d]+1]
-            next_data = test_df[test_df["Date"]==next_day]
+            next_data = grouped[next_day]
 
-            # =========================
-            # 🔥 トレンドフィルタ
-            # =========================
+            # フィルタ
             today_f = today[today["Trend_5_z"] > -0.5]
 
             if len(today_f) == 0:
@@ -110,56 +108,42 @@ def run_backtest(train_df, test_df):
                 equity_curve.append(equity)
                 continue
 
-            # =========================
-            # 🔥 上位％抽出
-            # =========================
+            # 上位抽出
             TOP_K = max(3, int(len(today_f) * TOP_RATE))
+            picks = today_f.nlargest(TOP_K, "score")   # ←高速
 
-            picks = today_f.sort_values("score", ascending=False).head(TOP_K)
-
-            # 保有制限
             picks = picks.head(available)
 
             if len(picks) > 0:
 
-                free_cash = equity - sum([p["capital"] for p in positions])
+                free_cash = equity - sum(p["capital"] for p in positions)
 
-                # =========================
-                # 🔥 スコア正規化（超重要）
-                # =========================
-                scores = picks["score"]
-
-                # 中心化（平均との差）
+                scores = picks["score"].values
                 scores = scores - scores.mean()
-
-                # マイナス切り捨て（ロングのみ）
-                scores = scores.clip(lower=0)
+                scores = np.clip(scores, 0, None)
 
                 if scores.sum() == 0:
                     equity += daily_pnl
                     equity_curve.append(equity)
                     continue
 
-                # =========================
-                # 🔥 weight = score^α
-                # =========================
                 weights = scores ** ALPHA
                 weights = weights / weights.sum()
 
-                for i, (_, row) in enumerate(picks.iterrows()):
+                tickers = picks["Ticker"].values
 
-                    # 重複回避
-                    if any(p["ticker"] == row["Ticker"] for p in positions):
+                for i in range(len(picks)):
+
+                    ticker = tickers[i]
+
+                    if any(p["ticker"] == ticker for p in positions):
                         continue
 
-                    next_row = next_data[next_data["Ticker"]==row["Ticker"]]
+                    next_row = next_data[next_data["Ticker"]==ticker]
                     if next_row.empty:
                         continue
 
-                    weight = weights.iloc[i]
-                    capital = free_cash * weight
-
-                    # 🔥 集中リスク制御
+                    capital = free_cash * weights[i]
                     capital = min(capital, equity * 0.3)
 
                     if capital <= 0:
@@ -168,7 +152,7 @@ def run_backtest(train_df, test_df):
                     entry_price = next_row["Open"].iloc[0]
 
                     positions.append({
-                        "ticker": row["Ticker"],
+                        "ticker": ticker,
                         "entry_price": entry_price,
                         "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
                         "capital": capital
@@ -176,9 +160,6 @@ def run_backtest(train_df, test_df):
 
                     trade_count += 1
 
-        # =========================
-        # 更新
-        # =========================
         equity += daily_pnl
         equity_curve.append(equity)
 
@@ -190,7 +171,6 @@ def run_backtest(train_df, test_df):
     MaxDD = (equity_curve/equity_curve.cummax()-1).min()
 
     return CAGR, Sharpe, MaxDD, trade_count
-
 
 # =========================
 # 実行
