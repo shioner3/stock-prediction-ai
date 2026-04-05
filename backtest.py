@@ -70,8 +70,6 @@ def run_backtest(train_df, test_df):
     test_df["score"] = model.predict(test_df[FEATURES])
 
     dates = sorted(test_df["Date"].unique())
-    date_to_index = {d: i for i, d in enumerate(dates)}
-
     grouped = {d: g for d, g in test_df.groupby("Date")}
 
     equity = INITIAL_CAPITAL
@@ -81,10 +79,9 @@ def run_backtest(train_df, test_df):
     positions = []
     trade_logs = []
 
-    for d in dates:
+    for i, d in enumerate(dates):
 
         today = grouped[d]
-        i = date_to_index[d]
 
         # =========================
         # 決済
@@ -132,18 +129,8 @@ def run_backtest(train_df, test_df):
             if available > 0 and cash > 0:
 
                 next_day = dates[i + 1]
-
-                if next_day not in grouped:
-                    continue
-
                 next_data = grouped[next_day]
 
-                if next_data.empty or "Ticker" not in next_data.columns:
-                    continue
-
-                # =========================
-                # 🔥 scoreフィルタ（quantile）
-                # =========================
                 threshold = today["score"].quantile(0.9)
 
                 today_f = today[
@@ -154,8 +141,7 @@ def run_backtest(train_df, test_df):
                 if len(today_f) > 0:
 
                     TOP_K = max(3, int(len(today_f) * TOP_RATE))
-                    picks = today_f.nlargest(TOP_K, "score")
-                    picks = picks.head(available)
+                    picks = today_f.nlargest(TOP_K, "score").head(available)
 
                     scores = picks["score"].values
                     scores = scores - scores.mean()
@@ -180,9 +166,6 @@ def run_backtest(train_df, test_df):
                             capital = cash * weights[j]
                             capital = min(capital, equity * 0.2)
 
-                            if capital <= 0:
-                                continue
-
                             exit_idx = i + HOLD_DAYS
                             if exit_idx >= len(dates):
                                 continue
@@ -200,7 +183,7 @@ def run_backtest(train_df, test_df):
                             cash -= capital
 
         # =========================
-        # 評価額
+        # 評価
         # =========================
         pos_val = 0
 
@@ -217,16 +200,41 @@ def run_backtest(train_df, test_df):
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
-    if len(equity_curve) < 50:
-        return None, None
-
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
     trade_df = pd.DataFrame(trade_logs)
 
+    # =========================
+    # 🔥 score単調性チェック（追加）
+    # =========================
+    print("\n=== SCORE MONOTONICITY CHECK ===")
+
+    try:
+        q10 = trade_df.groupby(pd.qcut(trade_df["score"], 10, duplicates="drop"))["return"].mean()
+        q20 = trade_df.groupby(pd.qcut(trade_df["score"], 20, duplicates="drop"))["return"].mean()
+
+        print("\n--- Q10 ---")
+        print(q10)
+
+        print("\n--- Q20 ---")
+        print(q20)
+
+        # 単調性スコア（順位相関）
+        monotonicity = np.corrcoef(
+            trade_df["score"],
+            trade_df["return"]
+        )[0, 1]
+
+        print("\n--- SCORE-RETURN CORRELATION ---")
+        print(monotonicity)
+
+    except Exception as e:
+        print("monotonicity check failed:", e)
+
     return (CAGR, Sharpe, MaxDD), trade_df
+
 
 # =========================
 # 実行
@@ -265,15 +273,11 @@ if len(all_metrics) > 0:
     print(f"MaxDD : {mdd:.4f}")
 
 # =========================
-# 取引ログ＋分析
+# ログ分析
 # =========================
 if len(all_trades) > 0:
 
     trade_log_df = pd.concat(all_trades, ignore_index=True)
-    trade_log_df.to_parquet("trade_log.parquet")
-
-    print("\n=== TRADE LOG SAVED ===")
-    print(trade_log_df.head())
 
     print("\n=== REGIME ANALYSIS ===")
     print(trade_log_df.groupby("regime")["return"].mean())
