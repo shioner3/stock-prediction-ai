@@ -139,7 +139,8 @@ def run_backtest(train_df, test_df):
             # ランキング + スコアフィルタ
             # =========================
             picks = today.sort_values("score", ascending=False)
-            # スコアフィルタ(一旦削除)
+            # スコアフィルタ
+            picks = picks[picks["score"] > 0.52]
             picks = picks.head(TOP_K)
 
             free_cash = equity - sum([p["capital"] for p in positions])
