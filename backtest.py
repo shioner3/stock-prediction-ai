@@ -11,6 +11,11 @@ HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
+# 🔥 超重要パラメータ
+TOP_RATE = 0.05   # 上位5%
+ALPHA = 2.0       # weight強化
+SCORE_FILTER = 0.55  # 最低スコア
+
 # =========================
 # データ
 # =========================
@@ -61,7 +66,9 @@ def run_backtest(train_df, test_df):
         today = test_df[test_df["Date"]==d]
         daily_pnl = 0
 
+        # =========================
         # 決済
+        # =========================
         new_positions = []
         for pos in positions:
 
@@ -81,7 +88,9 @@ def run_backtest(train_df, test_df):
 
         positions = new_positions
 
+        # =========================
         # エントリー
+        # =========================
         if d in date_index and date_index[d]+1 < len(dates):
 
             available = MAX_POSITIONS - len(positions)
@@ -93,20 +102,52 @@ def run_backtest(train_df, test_df):
             next_day = dates[date_index[d]+1]
             next_data = test_df[test_df["Date"]==next_day]
 
-            # 上位銘柄
-            picks = today.sort_values("score", ascending=False).head(available)
+            # =========================
+            # 🔥 トレンドフィルタ
+            # =========================
+            today_f = today[today["Trend_5_z"] > -0.5]
+
+            if len(today_f) == 0:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
+            # =========================
+            # 🔥 上位％抽出（最重要）
+            # =========================
+            TOP_K = max(3, int(len(today_f) * TOP_RATE))
+
+            picks = today_f.sort_values("score", ascending=False)
+
+            # 🔥 スコアフィルタ
+            picks = picks[picks["score"] > SCORE_FILTER]
+
+            # 上位のみ
+            picks = picks.head(TOP_K)
+
+            # 保有制限
+            picks = picks.head(available)
 
             if len(picks) > 0:
 
                 free_cash = equity - sum([p["capital"] for p in positions])
 
-                weights = picks["score"].clip(lower=0)
+                # =========================
+                # 🔥 weight = score^α
+                # =========================
+                weights = picks["score"] ** ALPHA
                 total = weights.sum()
 
                 if total == 0:
+                    equity += daily_pnl
+                    equity_curve.append(equity)
                     continue
 
                 for i, (_, row) in enumerate(picks.iterrows()):
+
+                    # 重複回避
+                    if any(p["ticker"] == row["Ticker"] for p in positions):
+                        continue
 
                     next_row = next_data[next_data["Ticker"]==row["Ticker"]]
                     if next_row.empty:
@@ -114,6 +155,12 @@ def run_backtest(train_df, test_df):
 
                     weight = weights.iloc[i] / total
                     capital = free_cash * weight
+
+                    # 🔥 集中リスク制御
+                    capital = min(capital, equity * 0.3)
+
+                    if capital <= 0:
+                        continue
 
                     entry_price = next_row["Open"].iloc[0]
 
@@ -126,6 +173,9 @@ def run_backtest(train_df, test_df):
 
                     trade_count += 1
 
+        # =========================
+        # 更新
+        # =========================
         equity += daily_pnl
         equity_curve.append(equity)
 
