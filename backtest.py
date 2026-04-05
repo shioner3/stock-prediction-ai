@@ -1,10 +1,9 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMRegressor
-from itertools import product
 
 # =========================
-# 設定
+# 設定（固定）
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
@@ -12,12 +11,10 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 ALPHA = 2.0
 
-# 🔥 HOLD固定（重要）
+# 🔥 固定パラメータ
+TOP_RATE = 0.01
+TREND_TH = 0.0
 HOLD_DAYS = 7
-
-# 🔥 探索範囲（HOLD削除）
-TOP_RATE_LIST = [0.01, 0.02, 0.03]
-TREND_LIST = [-0.5, 0.0, 0.5]
 
 # =========================
 # データ
@@ -55,7 +52,7 @@ def train_model(train_df):
 # =========================
 # バックテスト
 # =========================
-def run_backtest(train_df, test_df, TOP_RATE, TREND_TH):
+def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
 
@@ -64,7 +61,7 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH):
 
     grouped = {d: g for d, g in test_df.groupby("Date")}
     dates = sorted(grouped.keys())
-    date_index = {d:i for i,d in enumerate(dates)}
+    date_index = {d: i for i, d in enumerate(dates)}
 
     equity = INITIAL_CAPITAL
     cash = INITIAL_CAPITAL
@@ -108,10 +105,10 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH):
 
             if available > 0 and cash > 0:
 
-                next_day = dates[date_index[d]+1]
+                next_day = dates[date_index[d] + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 フィルタ
+                # 🔥 固定フィルタ
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
                     (today["score"] > today["score"].quantile(0.9))
@@ -164,6 +161,7 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH):
         # 評価額
         # =========================
         pos_val = 0
+
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
             if not cur.empty:
@@ -180,56 +178,36 @@ def run_backtest(train_df, test_df, TOP_RATE, TREND_TH):
     if len(equity_curve) < 50:
         return None
 
-    CAGR = equity_curve.iloc[-1] ** (252/len(equity_curve)) - 1
-    Sharpe = returns.mean()/(returns.std()+1e-9)*np.sqrt(252)
-    MaxDD = (equity_curve/equity_curve.cummax()-1).min()
+    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
     return CAGR, Sharpe, MaxDD
 
 # =========================
-# 🔥 グリッドサーチ（HOLDなし）
+# 実行
 # =========================
-results = []
+all_metrics = []
 
-param_grid = list(product(TOP_RATE_LIST, TREND_LIST))
-
-print(f"総パターン数: {len(param_grid)}")
-
-for TOP_RATE, TREND_TH in param_grid:
-
-    all_metrics = []
-
-    for y in years:
-        if y < 2022:
-            continue
-
-        train_df = df[df["Date"].dt.year < y]
-        test_df = df[df["Date"].dt.year == y]
-
-        res = run_backtest(train_df, test_df, TOP_RATE, TREND_TH)
-
-        if res is not None:
-            all_metrics.append(res)
-
-    if len(all_metrics) == 0:
+for y in years:
+    if y < 2022:
         continue
+
+    train_df = df[df["Date"].dt.year < y]
+    test_df = df[df["Date"].dt.year == y]
+
+    res = run_backtest(train_df, test_df)
+
+    if res is not None:
+        all_metrics.append(res)
+
+if len(all_metrics) > 0:
 
     cagr = np.mean([m[0] for m in all_metrics])
     sharpe = np.mean([m[1] for m in all_metrics])
     mdd = np.mean([m[2] for m in all_metrics])
 
-    print(f"TOP:{TOP_RATE} Trend:{TREND_TH} → CAGR:{cagr:.2f} Sharpe:{sharpe:.2f}")
-
-    results.append([TOP_RATE, TREND_TH, HOLD_DAYS, cagr, sharpe, mdd])
-
-# =========================
-# 結果
-# =========================
-res_df = pd.DataFrame(results, columns=[
-    "TOP_RATE","Trend_TH","HOLD_DAYS","CAGR","Sharpe","MaxDD"
-])
-
-res_df = res_df.sort_values("Sharpe", ascending=False)
-
-print("\n=== BEST ===")
-print(res_df.head(10))
+    print("\n=== RESULT ===")
+    print(f"CAGR  : {cagr:.4f}")
+    print(f"Sharpe: {sharpe:.4f}")
+    print(f"MaxDD : {mdd:.4f}")
