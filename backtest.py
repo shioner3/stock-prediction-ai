@@ -1,72 +1,41 @@
 import pandas as pd
 import numpy as np
-
-from lightgbm import LGBMClassifier
-from sklearn.calibration import CalibratedClassifierCV
+from lightgbm import LGBMRegressor
 
 # =========================
 # 設定
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
-FEATURES = [
-    "Return_1","Return_3",
-    "Rank_Return_1","Rank_Volume",
-    "MA3_ratio","MA5_ratio","MA10_ratio",
-    "Volatility",
-    "Volume_change","Volume_ratio",
-    "HL_range",
-    "RSI",
-    "Rel_Return_1",
-    "Trend_5_z",
-    "Trend_10_z",
-    "Volatility_z",
-    "Volume_ratio_z",
-    "Market_Return_z"
-]
-
-TARGET = "Target"
-
 HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
-# 🔥 追加（超重要）
-ALPHA = 2.0   # ←ここを2.0〜3.0で調整
-
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values(["Date", "Ticker"])
+df = df.sort_values(["Date","Ticker"])
 
-df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+FEATURES = [c for c in df.columns if c not in ["Date","Ticker","Name","Target"]]
 
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
-# モデル構築
+# モデル
 # =========================
 def train_model(train_df):
 
-    base_model = LGBMClassifier(
-        n_estimators=400,
+    model = LGBMRegressor(
+        n_estimators=500,
         learning_rate=0.03,
         max_depth=6,
         random_state=42
     )
 
-    calibrated = CalibratedClassifierCV(
-        base_model,
-        method="isotonic",
-        cv=3
-    )
-
-    calibrated.fit(train_df[FEATURES], train_df[TARGET])
-
-    return calibrated
-
+    model.fit(train_df[FEATURES], train_df["Target"])
+    return model
 
 # =========================
 # バックテスト
@@ -76,10 +45,10 @@ def run_backtest(train_df, test_df):
     model = train_model(train_df)
 
     test_df = test_df.copy()
-    test_df["score"] = model.predict_proba(test_df[FEATURES])[:, 1]
+    test_df["score"] = model.predict(test_df[FEATURES])
 
     dates = sorted(test_df["Date"].unique())
-    date_index = {d: i for i, d in enumerate(dates)}
+    date_index = {d:i for i,d in enumerate(dates)}
 
     equity = INITIAL_CAPITAL
     equity_curve = []
@@ -89,16 +58,14 @@ def run_backtest(train_df, test_df):
 
     for d in dates:
 
-        today = test_df[test_df["Date"] == d]
+        today = test_df[test_df["Date"]==d]
         daily_pnl = 0
 
-        # =========================
         # 決済
-        # =========================
         new_positions = []
         for pos in positions:
 
-            cur = today[today["Ticker"] == pos["ticker"]]
+            cur = today[today["Ticker"]==pos["ticker"]]
 
             if cur.empty:
                 new_positions.append(pos)
@@ -114,80 +81,60 @@ def run_backtest(train_df, test_df):
 
         positions = new_positions
 
-        # =========================
         # エントリー
-        # =========================
-        if d in date_index and date_index[d] + 1 < len(dates):
+        if d in date_index and date_index[d]+1 < len(dates):
 
-            available_slots = MAX_POSITIONS - len(positions)
-            if available_slots <= 0:
+            available = MAX_POSITIONS - len(positions)
+            if available <= 0:
                 equity += daily_pnl
                 equity_curve.append(equity)
                 continue
 
-            next_day = dates[date_index[d] + 1]
-            next_data = test_df[test_df["Date"] == next_day]
+            next_day = dates[date_index[d]+1]
+            next_data = test_df[test_df["Date"]==next_day]
 
-            today_f = today
-
-            TOP_K = max(3, int(len(today_f) * 0.05))
-
-            picks = today_f.sort_values("score", ascending=False).head(TOP_K)
-            picks = picks.head(available_slots)
+            # 上位銘柄
+            picks = today.sort_values("score", ascending=False).head(available)
 
             if len(picks) > 0:
 
                 free_cash = equity - sum([p["capital"] for p in positions])
 
-                # =========================
-                # 🔥 weight = score^α
-                # =========================
-                weights = picks["score"] ** ALPHA
-                total_weight = weights.sum()
+                weights = picks["score"].clip(lower=0)
+                total = weights.sum()
+
+                if total == 0:
+                    continue
 
                 for i, (_, row) in enumerate(picks.iterrows()):
 
-                    if any(p["ticker"] == row["Ticker"] for p in positions):
-                        continue
-
-                    next_row = next_data[next_data["Ticker"] == row["Ticker"]]
+                    next_row = next_data[next_data["Ticker"]==row["Ticker"]]
                     if next_row.empty:
                         continue
 
-                    entry_price = next_row["Open"].iloc[0]
-
-                    # 🔥 ウェイト配分
-                    weight = weights.iloc[i] / total_weight
+                    weight = weights.iloc[i] / total
                     capital = free_cash * weight
 
-                    # 🔥 集中リスク制御（任意）
-                    capital = min(capital, equity * 0.3)
-
-                    if capital <= 0:
-                        continue
+                    entry_price = next_row["Open"].iloc[0]
 
                     positions.append({
                         "ticker": row["Ticker"],
                         "entry_price": entry_price,
-                        "entry_date": next_day,
                         "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
                         "capital": capital
                     })
 
                     trade_count += 1
 
-        # =========================
-        # 更新
-        # =========================
         equity += daily_pnl
         equity_curve.append(equity)
 
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
-    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
-    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
-    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
+    CAGR = equity_curve.iloc[-1] ** (252/len(equity_curve)) - 1
+    Sharpe = returns.mean()/(returns.std()+1e-9)*np.sqrt(252)
+    MaxDD = (equity_curve/equity_curve.cummax()-1).min()
 
     return CAGR, Sharpe, MaxDD, trade_count
 
@@ -197,35 +144,18 @@ def run_backtest(train_df, test_df):
 # =========================
 results = []
 
-for test_year in years:
+for y in years:
 
-    if test_year < 2022:
+    if y < 2022:
         continue
 
-    print(f"\n=== YEAR {test_year} ===")
-
-    train_df = df[df["Date"].dt.year < test_year]
-    test_df = df[df["Date"].dt.year == test_year]
+    train_df = df[df["Date"].dt.year < y]
+    test_df = df[df["Date"].dt.year == y]
 
     CAGR, Sharpe, MaxDD, trades = run_backtest(train_df, test_df)
 
-    print(f"CAGR: {CAGR:.3f}")
-    print(f"Sharpe: {Sharpe:.3f}")
-    print(f"MaxDD: {MaxDD:.3f}")
-    print(f"Trades: {trades}")
+    print(f"{y} CAGR:{CAGR:.3f} Sharpe:{Sharpe:.2f}")
 
-    results.append({
-        "year": test_year,
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD,
-        "Trades": trades
-    })
+    results.append([y,CAGR,Sharpe,MaxDD,trades])
 
-df_res = pd.DataFrame(results)
-
-print("\n=== SUMMARY ===")
-print(df_res)
-
-print("\nAVERAGE")
-print(df_res.mean(numeric_only=True))
+print(pd.DataFrame(results, columns=["year","CAGR","Sharpe","MaxDD","Trades"]))
