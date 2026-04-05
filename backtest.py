@@ -37,6 +37,7 @@ FEATURES = [
 # =========================
 market = df.groupby("Date")["Return_1"].mean()
 market_smooth = market.rolling(20).mean()
+
 df["Market_Smooth"] = df["Date"].map(market_smooth)
 
 df["Regime"] = np.where(
@@ -140,9 +141,14 @@ def run_backtest(train_df, test_df):
                 if next_data.empty or "Ticker" not in next_data.columns:
                     continue
 
+                # =========================
+                # 🔥 scoreフィルタ（quantile）
+                # =========================
+                threshold = today["score"].quantile(0.9)
+
                 today_f = today[
-                     (today["Trend_5_z"] > TREND_TH) &
-                     (today["score"] > 0.55)
+                    (today["Trend_5_z"] > TREND_TH) &
+                    (today["score"] > threshold)
                 ]
 
                 if len(today_f) > 0:
@@ -269,24 +275,15 @@ if len(all_trades) > 0:
     print("\n=== TRADE LOG SAVED ===")
     print(trade_log_df.head())
 
-    # =========================
-    # 🔥 分析① レジーム別
-    # =========================
     print("\n=== REGIME ANALYSIS ===")
     print(trade_log_df.groupby("regime")["return"].mean())
 
-    # =========================
-    # 🔥 分析② score分位
-    # =========================
     print("\n=== SCORE QUANTILE ANALYSIS ===")
     try:
         print(trade_log_df.groupby(pd.qcut(trade_log_df["score"], 10))["return"].mean())
     except:
-        print("qcut failed (score distribution issue)")
+        print("qcut failed")
 
-    # =========================
-    # 🔥 分析③ 勝率
-    # =========================
     win_rate = (trade_log_df["return"] > 0).mean()
     print("\n=== WIN RATE ===")
     print(f"{win_rate:.4f}")
