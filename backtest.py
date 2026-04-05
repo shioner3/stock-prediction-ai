@@ -3,7 +3,7 @@ import numpy as np
 from lightgbm import LGBMRegressor
 
 # =========================
-# 設定（固定）
+# 設定
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
@@ -11,7 +11,6 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 ALPHA = 2.0
 
-# 🔥 固定パラメータ
 TOP_RATE = 0.01
 TREND_TH = 0.0
 HOLD_DAYS = 7
@@ -33,7 +32,11 @@ FEATURES = [
     "Trend_5_z","Trend_10_z"
 ]
 
-years = sorted(df["Date"].dt.year.unique())
+# =========================
+# 営業日リスト（🔥重要）
+# =========================
+dates = sorted(df["Date"].unique())
+date_to_index = {d: i for i, d in enumerate(dates)}
 
 # =========================
 # モデル
@@ -60,8 +63,6 @@ def run_backtest(train_df, test_df):
     test_df["score"] = model.predict(test_df[FEATURES])
 
     grouped = {d: g for d, g in test_df.groupby("Date")}
-    dates = sorted(grouped.keys())
-    date_index = {d: i for i, d in enumerate(dates)}
 
     equity = INITIAL_CAPITAL
     cash = INITIAL_CAPITAL
@@ -69,18 +70,21 @@ def run_backtest(train_df, test_df):
 
     positions = []
 
-    for d in dates:
+    for d in sorted(grouped.keys()):
 
         today = grouped[d]
+        i = date_to_index[d]
 
         # =========================
-        # 決済
+        # 決済（🔥営業日ベース）
         # =========================
         new_positions = []
 
         for pos in positions:
 
-            if d == pos["exit_date"]:
+            exit_idx = pos["exit_idx"]
+
+            if i == exit_idx:
 
                 cur = today[today["Ticker"] == pos["ticker"]]
                 if cur.empty:
@@ -99,16 +103,15 @@ def run_backtest(train_df, test_df):
         # =========================
         # エントリー
         # =========================
-        if date_index[d] + 1 < len(dates):
+        if i + 1 < len(dates):
 
             available = MAX_POSITIONS - len(positions)
 
             if available > 0 and cash > 0:
 
-                next_day = dates[date_index[d] + 1]
-                next_data = grouped[next_day]
+                next_day = dates[i + 1]
+                next_data = grouped.get(next_day, pd.DataFrame())
 
-                # 🔥 固定フィルタ
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
                     (today["score"] > today["score"].quantile(0.9))
@@ -129,7 +132,7 @@ def run_backtest(train_df, test_df):
                         weights = scores ** ALPHA
                         weights /= weights.sum()
 
-                        for i, row in enumerate(picks.itertuples()):
+                        for j, row in enumerate(picks.itertuples()):
 
                             ticker = row.Ticker
 
@@ -140,7 +143,7 @@ def run_backtest(train_df, test_df):
                             if next_row.empty:
                                 continue
 
-                            capital = cash * weights[i]
+                            capital = cash * weights[j]
                             capital = min(capital, equity * 0.2)
 
                             if capital <= 0:
@@ -148,10 +151,17 @@ def run_backtest(train_df, test_df):
 
                             entry_price = next_row["Open"].iloc[0]
 
+                            # =========================
+                            # 🔥 営業日ベース exit index
+                            # =========================
+                            exit_idx = i + HOLD_DAYS
+                            if exit_idx >= len(dates):
+                                continue
+
                             positions.append({
                                 "ticker": ticker,
                                 "entry_price": entry_price,
-                                "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
+                                "exit_idx": exit_idx,
                                 "capital": capital
                             })
 
@@ -189,7 +199,8 @@ def run_backtest(train_df, test_df):
 # =========================
 all_metrics = []
 
-for y in years:
+for y in sorted(df["Date"].dt.year.unique()):
+
     if y < 2022:
         continue
 
