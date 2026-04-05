@@ -9,7 +9,7 @@ from itertools import product
 DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
-MAX_POSITIONS = 5
+MAX_POSITIONS = 7
 ALPHA = 2.0
 
 # 🔥 HOLD固定（重要）
