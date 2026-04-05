@@ -143,7 +143,7 @@ def run_backtest(train_df, test_df):
                 today_f = today[
                      (today["Trend_5_z"] > TREND_TH) &
                      (today["score"] > 0.55)
-                 ]
+                ]
 
                 if len(today_f) > 0:
 
