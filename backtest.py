@@ -19,9 +19,20 @@ ALPHA = 2.0
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values(["Date","Ticker"])
+df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
-FEATURES = [c for c in df.columns if c not in ["Date","Ticker","Name","Target"]]
+# 🔥 feature engineeringと完全一致
+FEATURES = [
+    "Return_1","Return_3",
+    "Rank_Return_1","Rank_Volume",
+    "MA3_ratio","MA5_ratio","MA10_ratio",
+    "Volatility",
+    "Volume_change","Volume_ratio",
+    "HL_range",
+    "Rel_Return_1",
+    "Trend_5_z","Trend_10_z"
+]
+
 years = sorted(df["Date"].dt.year.unique())
 
 # =========================
@@ -48,15 +59,16 @@ def run_backtest(train_df, test_df):
     test_df = test_df.copy()
     test_df["score"] = model.predict(test_df[FEATURES])
 
-    # 日付ごとに高速アクセス
+    # 高速化
     grouped = {d: g for d, g in test_df.groupby("Date")}
     dates = sorted(grouped.keys())
     date_index = {d:i for i,d in enumerate(dates)}
 
     equity = INITIAL_CAPITAL
+    cash = INITIAL_CAPITAL   # 🔥 現金管理導入
     equity_curve = []
-    positions = []
 
+    positions = []
     trade_count = 0
 
     for d in dates:
@@ -65,25 +77,25 @@ def run_backtest(train_df, test_df):
         daily_pnl = 0
 
         # =========================
-        # 🔥 決済（exit日のみ）
+        # 🔥 決済（exit日だけ）
         # =========================
         new_positions = []
 
         for pos in positions:
 
-            # exit日になったら決済
             if d == pos["exit_date"]:
 
                 cur = today[today["Ticker"] == pos["ticker"]]
-
                 if cur.empty:
                     continue
 
-                # 🔥 exitはOpenで約定
                 exit_price = cur["Open"].iloc[0]
 
                 ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
-                daily_pnl += pos["capital"] * ret
+                pnl = pos["capital"] * ret
+
+                cash += pos["capital"] + pnl   # 🔥 元本＋利益を現金に戻す
+                daily_pnl += pnl
 
             else:
                 new_positions.append(pos)
@@ -91,91 +103,94 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー
+        # 🔥 エントリー
         # =========================
         if date_index[d] + 1 < len(dates):
 
-            available = MAX_POSITIONS - len(positions)
-            if available <= 0:
-                equity += daily_pnl
-                equity_curve.append(equity)
-                continue
+            available_slots = MAX_POSITIONS - len(positions)
+            if available_slots > 0 and cash > 0:
 
-            next_day = dates[date_index[d]+1]
-            next_data = grouped[next_day]
+                next_day = dates[date_index[d] + 1]
+                next_data = grouped[next_day]
 
-            # フィルタ
-            today_f = today[today["Trend_5_z"] > -0.5]
+                # フィルタ
+                today_f = today[today["Trend_5_z"] > -0.5]
 
-            if len(today_f) == 0:
-                equity += daily_pnl
-                equity_curve.append(equity)
-                continue
+                if len(today_f) > 0:
 
-            # 上位抽出
-            TOP_K = max(3, int(len(today_f) * TOP_RATE))
-            picks = today_f.nlargest(TOP_K, "score")
+                    TOP_K = max(3, int(len(today_f) * TOP_RATE))
+                    picks = today_f.nlargest(TOP_K, "score")
 
-            picks = picks.head(available)
+                    picks = picks.head(available_slots)
 
-            if len(picks) > 0:
+                    if len(picks) > 0:
 
-                free_cash = equity - sum(p["capital"] for p in positions)
+                        scores = picks["score"].values
+                        scores = scores - scores.mean()
+                        scores = np.clip(scores, 0, None)
 
-                scores = picks["score"].values
-                scores = scores - scores.mean()
-                scores = np.clip(scores, 0, None)
+                        if scores.sum() > 0:
 
-                if scores.sum() == 0:
-                    equity += daily_pnl
-                    equity_curve.append(equity)
-                    continue
+                            weights = scores ** ALPHA
+                            weights = weights / weights.sum()
 
-                weights = scores ** ALPHA
-                weights = weights / weights.sum()
+                            tickers = picks["Ticker"].values
 
-                tickers = picks["Ticker"].values
+                            for i in range(len(picks)):
 
-                for i in range(len(picks)):
+                                ticker = tickers[i]
 
-                    ticker = tickers[i]
+                                # 🔥 重複保有禁止
+                                if any(p["ticker"] == ticker for p in positions):
+                                    continue
 
-                    if any(p["ticker"] == ticker for p in positions):
-                        continue
+                                next_row = next_data[next_data["Ticker"] == ticker]
+                                if next_row.empty:
+                                    continue
 
-                    next_row = next_data[next_data["Ticker"] == ticker]
-                    if next_row.empty:
-                        continue
+                                # 🔥 投資額 = 現金ベース
+                                capital = cash * weights[i]
 
-                    capital = free_cash * weights[i]
-                    capital = min(capital, equity * 0.3)
+                                # 🔥 集中制限（重要）
+                                capital = min(capital, equity * 0.2)
 
-                    if capital <= 0:
-                        continue
+                                if capital <= 0:
+                                    continue
 
-                    entry_price = next_row["Open"].iloc[0]
+                                entry_price = next_row["Open"].iloc[0]
 
-                    positions.append({
-                        "ticker": ticker,
-                        "entry_price": entry_price,
-                        "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                        "capital": capital
-                    })
+                                positions.append({
+                                    "ticker": ticker,
+                                    "entry_price": entry_price,
+                                    "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
+                                    "capital": capital
+                                })
 
-                    trade_count += 1
+                                cash -= capital   # 🔥 現金減少
+
+                                trade_count += 1
 
         # =========================
-        # 更新
+        # 🔥 評価額更新
         # =========================
-        equity += daily_pnl
+        position_value = 0
+
+        for pos in positions:
+            cur = today[today["Ticker"] == pos["ticker"]]
+            if not cur.empty:
+                price = cur["Close"].iloc[0]
+                ret = (price - pos["entry_price"]) / pos["entry_price"]
+                position_value += pos["capital"] * (1 + ret)
+
+        equity = cash + position_value
         equity_curve.append(equity)
 
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
-    CAGR = equity_curve.iloc[-1] ** (252/len(equity_curve)) - 1
-    Sharpe = returns.mean()/(returns.std()+1e-9)*np.sqrt(252)
-    MaxDD = (equity_curve/equity_curve.cummax()-1).min()
+    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
     return CAGR, Sharpe, MaxDD, trade_count
 
