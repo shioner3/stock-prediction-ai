@@ -3,7 +3,7 @@ import numpy as np
 from lightgbm import LGBMRegressor
 
 # =========================
-# 設定
+# 設定（固定）
 # =========================
 DATA_PATH = "ml_dataset.parquet"
 
@@ -11,13 +11,10 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 ALPHA = 2.0
 
+# 🔥 固定パラメータ
 TOP_RATE = 0.01
 TREND_TH = 0.0
 HOLD_DAYS = 7
-
-STOP_LOSS = -0.08
-TAKE_PROFIT = 0.15
-EXIT_RANK_TH = 0.6
 
 # =========================
 # データ
@@ -61,7 +58,6 @@ def run_backtest(train_df, test_df):
 
     test_df = test_df.copy()
     test_df["score"] = model.predict(test_df[FEATURES])
-    test_df["score_rank"] = test_df["score"].rank(pct=True)
 
     grouped = {d: g for d, g in test_df.groupby("Date")}
     dates = sorted(grouped.keys())
@@ -73,49 +69,28 @@ def run_backtest(train_df, test_df):
 
     positions = []
 
-    trade_count = 0  # 🔥追加
-
     for d in dates:
 
         today = grouped[d]
 
         # =========================
-        # 決済（EXITロジック）
+        # 決済
         # =========================
         new_positions = []
 
         for pos in positions:
 
-            cur = today[today["Ticker"] == pos["ticker"]]
+            if d == pos["exit_date"]:
 
-            if cur.empty:
-                continue
+                cur = today[today["Ticker"] == pos["ticker"]]
+                if cur.empty:
+                    continue
 
-            price = cur["Open"].iloc[0]
-            current_return = (price - pos["entry_price"]) / pos["entry_price"]
+                exit_price = cur["Open"].iloc[0]
+                ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
-            exit_flag = False
+                cash += pos["capital"] * (1 + ret)
 
-            # 🔥 損切り
-            if current_return < STOP_LOSS:
-                exit_flag = True
-
-            # 🔥 利確
-            elif current_return > TAKE_PROFIT:
-                exit_flag = True
-
-            # 🔥 スコア弱化
-            elif "score_rank" in cur.columns:
-                if cur["score_rank"].iloc[0] < EXIT_RANK_TH:
-                    exit_flag = True
-
-            # 🔥 時間切れ
-            elif d == pos["exit_date"]:
-                exit_flag = True
-
-            if exit_flag:
-                cash += pos["capital"] * (1 + current_return)
-                trade_count += 1
             else:
                 new_positions.append(pos)
 
@@ -133,6 +108,7 @@ def run_backtest(train_df, test_df):
                 next_day = dates[date_index[d] + 1]
                 next_data = grouped[next_day]
 
+                # 🔥 固定フィルタ
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
                     (today["score"] > today["score"].quantile(0.9))
@@ -206,7 +182,7 @@ def run_backtest(train_df, test_df):
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    return CAGR, Sharpe, MaxDD, trade_count
+    return CAGR, Sharpe, MaxDD
 
 # =========================
 # 実行
@@ -230,10 +206,8 @@ if len(all_metrics) > 0:
     cagr = np.mean([m[0] for m in all_metrics])
     sharpe = np.mean([m[1] for m in all_metrics])
     mdd = np.mean([m[2] for m in all_metrics])
-    trades = np.sum([m[3] for m in all_metrics])
 
     print("\n=== RESULT ===")
     print(f"CAGR  : {cagr:.4f}")
     print(f"Sharpe: {sharpe:.4f}")
     print(f"MaxDD : {mdd:.4f}")
-    print(f"Trades: {trades}")
