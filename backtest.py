@@ -31,6 +31,9 @@ HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
+# 🔥 追加（超重要）
+ALPHA = 2.0   # ←ここを2.0〜3.0で調整
+
 # =========================
 # データ読み込み
 # =========================
@@ -116,7 +119,6 @@ def run_backtest(train_df, test_df):
         # =========================
         if d in date_index and date_index[d] + 1 < len(dates):
 
-            # 🔥 保有数制限
             available_slots = MAX_POSITIONS - len(positions)
             if available_slots <= 0:
                 equity += daily_pnl
@@ -126,35 +128,24 @@ def run_backtest(train_df, test_df):
             next_day = dates[date_index[d] + 1]
             next_data = test_df[test_df["Date"] == next_day]
 
-            # =========================
-            # トレンドフィルタ
-            # =========================
             today_f = today
 
-            # =========================
-            # TOP_K動的
-            # =========================
             TOP_K = max(3, int(len(today_f) * 0.05))
 
-            # =========================
-            # ランキング
-            # =========================
-            picks = today_f.sort_values("score", ascending=False)
-
-            # スコアフィルタ
-
-            # TOP_K制限
-            picks = picks.head(TOP_K)
-
-            # 🔥 保有枠に収める
+            picks = today_f.sort_values("score", ascending=False).head(TOP_K)
             picks = picks.head(available_slots)
 
             if len(picks) > 0:
 
                 free_cash = equity - sum([p["capital"] for p in positions])
-                capital_per_trade = free_cash / len(picks)
 
-                for _, row in picks.iterrows():
+                # =========================
+                # 🔥 weight = score^α
+                # =========================
+                weights = picks["score"] ** ALPHA
+                total_weight = weights.sum()
+
+                for i, (_, row) in enumerate(picks.iterrows()):
 
                     if any(p["ticker"] == row["Ticker"] for p in positions):
                         continue
@@ -165,12 +156,22 @@ def run_backtest(train_df, test_df):
 
                     entry_price = next_row["Open"].iloc[0]
 
+                    # 🔥 ウェイト配分
+                    weight = weights.iloc[i] / total_weight
+                    capital = free_cash * weight
+
+                    # 🔥 集中リスク制御（任意）
+                    capital = min(capital, equity * 0.3)
+
+                    if capital <= 0:
+                        continue
+
                     positions.append({
                         "ticker": row["Ticker"],
                         "entry_price": entry_price,
                         "entry_date": next_day,
                         "exit_date": next_day + pd.Timedelta(days=HOLD_DAYS),
-                        "capital": capital_per_trade
+                        "capital": capital
                     })
 
                     trade_count += 1
@@ -221,9 +222,6 @@ for test_year in years:
         "Trades": trades
     })
 
-# =========================
-# 集計
-# =========================
 df_res = pd.DataFrame(results)
 
 print("\n=== SUMMARY ===")
