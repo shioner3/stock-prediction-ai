@@ -116,7 +116,7 @@ def run_backtest(train_df, test_df):
                 today_f = today[
                      (today["Trend_5_z"] > 0) &
                      (today["score"] > today["score"].quantile(0.9))
-                 ]
+                ]
 
                 if len(today_f) > 0:
 
