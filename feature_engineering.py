@@ -50,11 +50,7 @@ df = df[df["Date"].isin(valid_dates)].copy()
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change().shift(1)
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3).shift(1)
 
-# 横断ランキング（OK：中身は過去）
-df["Rank_Return_1"] = df.groupby("Date")["Return_1"].rank(pct=True)
-df["Rank_Volume"] = df.groupby("Date")["Volume"].shift(1).groupby(df["Date"]).rank(pct=True)
-
-# MA（完全に過去）
+# MA（完全過去）
 for w in [3, 5, 10]:
     df[f"MA{w}"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(w).mean()).shift(1)
     df[f"MA{w}_ratio"] = df["Close"].shift(1) / df[f"MA{w}"]
@@ -67,7 +63,7 @@ df["Volume_change"] = df.groupby("Ticker")["Volume"].pct_change().shift(1)
 df["Volume_ma5"] = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(5).mean()).shift(1)
 df["Volume_ratio"] = df["Volume"].shift(1) / df["Volume_ma5"]
 
-# 高値安値
+# 高値安値（t-1）
 df["HL_range"] = ((df["High"] - df["Low"]) / df["Close"]).shift(1)
 
 # 市場（t-1ベース）
@@ -78,37 +74,36 @@ df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
 df["Trend_5"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(6) - 1
 df["Trend_10"] = df["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(11) - 1
 
-# Zスコア（過去のみ）
+# Zスコア
 def zscore(group, col, window):
     mean = group[col].rolling(window).mean()
     std = group[col].rolling(window).std()
     return (group[col] - mean) / (std + 1e-9)
 
-df["Trend_5_z"] = df.groupby("Ticker", group_keys=False).apply(lambda x: zscore(x, "Trend_5", Z_WINDOW))
-df["Trend_10_z"] = df.groupby("Ticker", group_keys=False).apply(lambda x: zscore(x, "Trend_10", Z_WINDOW))
+df["Trend_5_z"] = df.groupby("Ticker", group_keys=False).apply(
+    lambda x: zscore(x, "Trend_5", Z_WINDOW)
+)
+df["Trend_10_z"] = df.groupby("Ticker", group_keys=False).apply(
+    lambda x: zscore(x, "Trend_10", Z_WINDOW)
+)
 
 # =========================
-# 🎯 ターゲット（完全リーク排除）
+# 🎯 ターゲット（生リターン）
 # =========================
 
-# 将来リターン（未来のみ）
 df["FutureReturn"] = df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 
 # 外れ値カット（安定化）
-df["FutureReturn"] = df["FutureReturn"].clip(-0.2, 0.2)
-
-# 🔥 ここが最重要（ランキング禁止）
-df["Target"] = df["FutureReturn"]
+df["Target"] = df["FutureReturn"].clip(-0.2, 0.2)
 
 # 欠損削除
 df = df.dropna(subset=["Target"])
 
 # =========================
-# FEATURES
+# FEATURES（ランク系完全削除）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
-    "Rank_Return_1","Rank_Volume",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
@@ -141,4 +136,4 @@ print("Predict:", latest_date)
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（完全リーク排除版）")
+print("\n保存完了（完全クリーン版）")
