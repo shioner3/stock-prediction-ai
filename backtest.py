@@ -134,7 +134,7 @@ def run_backtest(train_df, test_df):
             # =========================
             # TOP_K動的
             # =========================
-            TOP_K = max(2, int(len(today_f) * 0.05))
+            TOP_K = max(3, int(len(today_f) * 0.05))
 
             # =========================
             # ランキング
