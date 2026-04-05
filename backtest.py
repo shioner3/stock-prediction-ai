@@ -33,11 +33,10 @@ FEATURES = [
 ]
 
 # =========================
-# レジーム（修正版）
+# レジーム
 # =========================
 market = df.groupby("Date")["Return_1"].mean()
 market_smooth = market.rolling(20).mean()
-
 df["Market_Smooth"] = df["Date"].map(market_smooth)
 
 df["Regime"] = np.where(
@@ -69,7 +68,6 @@ def run_backtest(train_df, test_df):
     test_df = test_df.copy()
     test_df["score"] = model.predict(test_df[FEATURES])
 
-    # 🔥 test期間ベースで統一
     dates = sorted(test_df["Date"].unique())
     date_to_index = {d: i for i, d in enumerate(dates)}
 
@@ -134,7 +132,6 @@ def run_backtest(train_df, test_df):
 
                 next_day = dates[i + 1]
 
-                # 🔥 存在保証（これでエラー完全防止）
                 if next_day not in grouped:
                     continue
 
@@ -171,7 +168,6 @@ def run_backtest(train_df, test_df):
                                 continue
 
                             next_row = next_data[next_data["Ticker"] == ticker]
-
                             if next_row.empty:
                                 continue
 
@@ -263,11 +259,34 @@ if len(all_metrics) > 0:
     print(f"MaxDD : {mdd:.4f}")
 
 # =========================
-# 取引ログ保存
+# 取引ログ＋分析
 # =========================
 if len(all_trades) > 0:
+
     trade_log_df = pd.concat(all_trades, ignore_index=True)
     trade_log_df.to_parquet("trade_log.parquet")
 
     print("\n=== TRADE LOG SAVED ===")
     print(trade_log_df.head())
+
+    # =========================
+    # 🔥 分析① レジーム別
+    # =========================
+    print("\n=== REGIME ANALYSIS ===")
+    print(trade_log_df.groupby("regime")["return"].mean())
+
+    # =========================
+    # 🔥 分析② score分位
+    # =========================
+    print("\n=== SCORE QUANTILE ANALYSIS ===")
+    try:
+        print(trade_log_df.groupby(pd.qcut(trade_log_df["score"], 10))["return"].mean())
+    except:
+        print("qcut failed (score distribution issue)")
+
+    # =========================
+    # 🔥 分析③ 勝率
+    # =========================
+    win_rate = (trade_log_df["return"] > 0).mean()
+    print("\n=== WIN RATE ===")
+    print(f"{win_rate:.4f}")
