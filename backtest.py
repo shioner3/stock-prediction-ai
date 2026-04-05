@@ -118,7 +118,15 @@ def run_backtest(train_df, test_df):
         # エントリー
         # =========================
         if d in date_index and date_index[d] + 1 < len(dates):
+        
+        available_slots = MAX_POSITIONS - len(positions)
 
+        if available_slots <= 0:
+            equity_curve.append(equity)
+            continue
+            
+        picks = picks.head(available_slots)
+        
             next_day = dates[date_index[d] + 1]
             next_data = test_df[test_df["Date"] == next_day]
 
