@@ -29,11 +29,11 @@ years = sorted(df["Date"].dt.year.unique())
 # =========================
 def train_model(train_df):
     model = LGBMRegressor(
-        n_estimators=300,   # ←軽量化
+        n_estimators=300,
         learning_rate=0.03,
         max_depth=6,
         random_state=42,
-        n_jobs=-1           # ←並列化
+        n_jobs=-1
     )
     model.fit(train_df[FEATURES], train_df["Target"])
     return model
@@ -48,7 +48,7 @@ def run_backtest(train_df, test_df):
     test_df = test_df.copy()
     test_df["score"] = model.predict(test_df[FEATURES])
 
-    # 🔥 日付辞書化（超高速化）
+    # 日付ごとに高速アクセス
     grouped = {d: g for d, g in test_df.groupby("Date")}
     dates = sorted(grouped.keys())
     date_index = {d:i for i,d in enumerate(dates)}
@@ -65,22 +65,26 @@ def run_backtest(train_df, test_df):
         daily_pnl = 0
 
         # =========================
-        # 決済
+        # 🔥 決済（exit日のみ）
         # =========================
         new_positions = []
+
         for pos in positions:
 
-            cur = today[today["Ticker"]==pos["ticker"]]
+            # exit日になったら決済
+            if d == pos["exit_date"]:
 
-            if cur.empty:
-                new_positions.append(pos)
-                continue
+                cur = today[today["Ticker"] == pos["ticker"]]
 
-            price = cur["Close"].iloc[0]
-            ret = (price - pos["entry_price"]) / pos["entry_price"]
+                if cur.empty:
+                    continue
 
-            if d >= pos["exit_date"]:
+                # 🔥 exitはOpenで約定
+                exit_price = cur["Open"].iloc[0]
+
+                ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
                 daily_pnl += pos["capital"] * ret
+
             else:
                 new_positions.append(pos)
 
@@ -110,7 +114,7 @@ def run_backtest(train_df, test_df):
 
             # 上位抽出
             TOP_K = max(3, int(len(today_f) * TOP_RATE))
-            picks = today_f.nlargest(TOP_K, "score")   # ←高速
+            picks = today_f.nlargest(TOP_K, "score")
 
             picks = picks.head(available)
 
@@ -139,7 +143,7 @@ def run_backtest(train_df, test_df):
                     if any(p["ticker"] == ticker for p in positions):
                         continue
 
-                    next_row = next_data[next_data["Ticker"]==ticker]
+                    next_row = next_data[next_data["Ticker"] == ticker]
                     if next_row.empty:
                         continue
 
@@ -160,6 +164,9 @@ def run_backtest(train_df, test_df):
 
                     trade_count += 1
 
+        # =========================
+        # 更新
+        # =========================
         equity += daily_pnl
         equity_curve.append(equity)
 
@@ -171,6 +178,7 @@ def run_backtest(train_df, test_df):
     MaxDD = (equity_curve/equity_curve.cummax()-1).min()
 
     return CAGR, Sharpe, MaxDD, trade_count
+
 
 # =========================
 # 実行
@@ -189,6 +197,6 @@ for y in years:
 
     print(f"{y} CAGR:{CAGR:.3f} Sharpe:{Sharpe:.2f}")
 
-    results.append([y,CAGR,Sharpe,MaxDD,trades])
+    results.append([y, CAGR, Sharpe, MaxDD, trades])
 
 print(pd.DataFrame(results, columns=["year","CAGR","Sharpe","MaxDD","Trades"]))
