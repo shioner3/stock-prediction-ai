@@ -42,9 +42,8 @@ df[FEATURES] = df[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
 
 years = sorted(df["Date"].dt.year.unique())
 
-
 # =========================
-# モデル構築（Calibrated）
+# モデル構築
 # =========================
 def train_model(train_df):
 
@@ -72,9 +71,8 @@ def train_model(train_df):
 def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
-    test_df = test_df.copy()
 
-    # ===== スコア（キャリブレーション済み確率）=====
+    test_df = test_df.copy()
     test_df["score"] = model.predict_proba(test_df[FEATURES])[:, 1]
 
     dates = sorted(test_df["Date"].unique())
@@ -95,7 +93,6 @@ def run_backtest(train_df, test_df):
         # 決済
         # =========================
         new_positions = []
-
         for pos in positions:
 
             cur = today[today["Ticker"] == pos["ticker"]]
@@ -118,49 +115,53 @@ def run_backtest(train_df, test_df):
         # エントリー
         # =========================
         if d in date_index and date_index[d] + 1 < len(dates):
-        
-        available_slots = MAX_POSITIONS - len(positions)
 
-        if available_slots <= 0:
-            equity_curve.append(equity)
-            continue
-            
-        picks = picks.head(available_slots)
-        
+            # 🔥 保有数制限
+            available_slots = MAX_POSITIONS - len(positions)
+            if available_slots <= 0:
+                equity += daily_pnl
+                equity_curve.append(equity)
+                continue
+
             next_day = dates[date_index[d] + 1]
             next_data = test_df[test_df["Date"] == next_day]
 
             # =========================
-            # トレンドフィルタ（重要）
+            # トレンドフィルタ
             # =========================
-            today = today[today["Trend_5_z"] > -0.5]
-            
+            today_f = today[today["Trend_5_z"] > -0.5]
 
-            if len(today) == 0:
+            if len(today_f) == 0:
+                equity += daily_pnl
+                equity_curve.append(equity)
                 continue
 
             # =========================
-            # TOP_K動的化
+            # TOP_K動的
             # =========================
-            TOP_K = max(2, int(len(today) * 0.05))
+            TOP_K = max(2, int(len(today_f) * 0.05))
 
             # =========================
-            # ランキング + スコアフィルタ
+            # ランキング
             # =========================
-            picks = today.sort_values("score", ascending=False)
-            # スコアフィルタ
+            picks = today_f.sort_values("score", ascending=False)
+
+            # 軽いフィルタ
             picks = picks[picks["score"] > 0.52]
+
+            # TOP_K制限
             picks = picks.head(TOP_K)
 
-            free_cash = equity - sum([p["capital"] for p in positions])
+            # 🔥 保有枠に収める
+            picks = picks.head(available_slots)
 
-            if free_cash > 0:
+            if len(picks) > 0:
 
-                capital_per_trade = free_cash / max(len(picks), 1)
+                free_cash = equity - sum([p["capital"] for p in positions])
+                capital_per_trade = free_cash / len(picks)
 
                 for _, row in picks.iterrows():
 
-                    # 既存ポジ除外
                     if any(p["ticker"] == row["Ticker"] for p in positions):
                         continue
 
@@ -197,7 +198,7 @@ def run_backtest(train_df, test_df):
 
 
 # =========================
-# 年別バックテスト
+# 実行
 # =========================
 results = []
 
@@ -225,7 +226,6 @@ for test_year in years:
         "MaxDD": MaxDD,
         "Trades": trades
     })
-
 
 # =========================
 # 集計
