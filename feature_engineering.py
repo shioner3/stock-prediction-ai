@@ -50,7 +50,7 @@ df = df[df["Date"].isin(valid_dates)].copy()
 df["Return_1"] = df.groupby("Ticker")["Close"].pct_change().shift(1)
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3).shift(1)
 
-# 横断ランキング（t時点だが中身はt-1ベースなのでOK）
+# 横断ランキング（OK：中身は過去）
 df["Rank_Return_1"] = df.groupby("Date")["Return_1"].rank(pct=True)
 df["Rank_Volume"] = df.groupby("Date")["Volume"].shift(1).groupby(df["Date"]).rank(pct=True)
 
@@ -88,19 +88,19 @@ df["Trend_5_z"] = df.groupby("Ticker", group_keys=False).apply(lambda x: zscore(
 df["Trend_10_z"] = df.groupby("Ticker", group_keys=False).apply(lambda x: zscore(x, "Trend_10", Z_WINDOW))
 
 # =========================
-# 🎯 ターゲット（リークゼロ設計）
+# 🎯 ターゲット（完全リーク排除）
 # =========================
 
-# ① 将来リターン（未来のみ）
+# 将来リターン（未来のみ）
 df["FutureReturn"] = df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 
-# ② 外れ値カット（安定化）
+# 外れ値カット（安定化）
 df["FutureReturn"] = df["FutureReturn"].clip(-0.2, 0.2)
 
-# ③ 同日内ランキング（←ここが肝）
-df["Target"] = df.groupby("Date")["FutureReturn"].rank(pct=True)
+# 🔥 ここが最重要（ランキング禁止）
+df["Target"] = df["FutureReturn"]
 
-# ④ 未来データ使うので最後は削除
+# 欠損削除
 df = df.dropna(subset=["Target"])
 
 # =========================
@@ -141,4 +141,4 @@ print("Predict:", latest_date)
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（リーク完全排除版）")
+print("\n保存完了（完全リーク排除版）")
