@@ -33,7 +33,7 @@ FEATURES = [
 ]
 
 # =========================
-# 営業日リスト（🔥重要）
+# 営業日リスト
 # =========================
 dates = sorted(df["Date"].unique())
 date_to_index = {d: i for i, d in enumerate(dates)}
@@ -70,13 +70,18 @@ def run_backtest(train_df, test_df):
 
     positions = []
 
+    # =========================
+    # 🔥 取引ログ
+    # =========================
+    trade_logs = []
+
     for d in sorted(grouped.keys()):
 
         today = grouped[d]
         i = date_to_index[d]
 
         # =========================
-        # 決済（🔥営業日ベース）
+        # 決済
         # =========================
         new_positions = []
 
@@ -94,6 +99,21 @@ def run_backtest(train_df, test_df):
                 ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
                 cash += pos["capital"] * (1 + ret)
+
+                # =========================
+                # 🔥 トレードログ記録
+                # =========================
+                trade_logs.append({
+                    "ticker": pos["ticker"],
+                    "entry_date": pos["entry_date"],
+                    "exit_date": d,
+                    "entry_price": pos["entry_price"],
+                    "exit_price": exit_price,
+                    "return": ret,
+                    "capital": pos["capital"],
+                    "score": pos["score"],
+                    "profit": pos["capital"] * ret
+                })
 
             else:
                 new_positions.append(pos)
@@ -151,9 +171,6 @@ def run_backtest(train_df, test_df):
 
                             entry_price = next_row["Open"].iloc[0]
 
-                            # =========================
-                            # 🔥 営業日ベース exit index
-                            # =========================
                             exit_idx = i + HOLD_DAYS
                             if exit_idx >= len(dates):
                                 continue
@@ -161,8 +178,10 @@ def run_backtest(train_df, test_df):
                             positions.append({
                                 "ticker": ticker,
                                 "entry_price": entry_price,
+                                "entry_date": d,
                                 "exit_idx": exit_idx,
-                                "capital": capital
+                                "capital": capital,
+                                "score": row.score
                             })
 
                             cash -= capital
@@ -186,18 +205,21 @@ def run_backtest(train_df, test_df):
     returns = equity_curve.pct_change().dropna()
 
     if len(equity_curve) < 50:
-        return None
+        return None, None
 
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    return CAGR, Sharpe, MaxDD
+    trade_df = pd.DataFrame(trade_logs)
+
+    return (CAGR, Sharpe, MaxDD), trade_df
 
 # =========================
 # 実行
 # =========================
 all_metrics = []
+all_trades = []
 
 for y in sorted(df["Date"].dt.year.unique()):
 
@@ -207,11 +229,17 @@ for y in sorted(df["Date"].dt.year.unique()):
     train_df = df[df["Date"].dt.year < y]
     test_df = df[df["Date"].dt.year == y]
 
-    res = run_backtest(train_df, test_df)
+    res, trades = run_backtest(train_df, test_df)
 
     if res is not None:
         all_metrics.append(res)
 
+    if trades is not None:
+        all_trades.append(trades)
+
+# =========================
+# 結果
+# =========================
 if len(all_metrics) > 0:
 
     cagr = np.mean([m[0] for m in all_metrics])
@@ -222,3 +250,13 @@ if len(all_metrics) > 0:
     print(f"CAGR  : {cagr:.4f}")
     print(f"Sharpe: {sharpe:.4f}")
     print(f"MaxDD : {mdd:.4f}")
+
+# =========================
+# 取引ログ保存
+# =========================
+if len(all_trades) > 0:
+    trade_log_df = pd.concat(all_trades, ignore_index=True)
+    trade_log_df.to_parquet("trade_log.parquet")
+
+    print("\n=== TRADE LOG SAVED ===")
+    print(trade_log_df.head())
