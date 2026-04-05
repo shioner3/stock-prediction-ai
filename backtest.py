@@ -11,7 +11,6 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 ALPHA = 2.0
 
-TOP_RATE = 0.03
 TREND_TH = 0.0
 HOLD_DAYS = 7
 
@@ -70,7 +69,7 @@ def run_backtest(train_df, test_df):
     test_df["raw_score"] = model.predict(test_df[FEATURES])
 
     # =========================
-    # 🔥 rank化（重要）
+    # rank化（core）
     # =========================
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
@@ -125,7 +124,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー
+        # エントリー（rankベースのみ）
         # =========================
         if i + 1 < len(dates):
 
@@ -136,20 +135,21 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 rankベースなので閾値も安定
-                threshold = 0.9
-
+                # 🔥 シンプルフィルタ（過剰排除なし）
                 today_f = today[
-                    (today["Trend_5_z"] > TREND_TH) &
-                    (today["score"] > threshold)
-                ]
+                    today["Trend_5_z"] > TREND_TH
+                ].copy()
 
                 if len(today_f) > 0:
 
-                    TOP_K = max(3, int(len(today_f) * TOP_RATE))
-                    picks = today_f.nlargest(TOP_K, "score").head(available)
+                    # =========================
+                    # TOP_K完全削除 → 上位N直接選択
+                    # =========================
+                    picks = today_f.nlargest(available, "score")
 
                     scores = picks["score"].values
+
+                    # rankなので平均との差のみ軽く調整（任意）
                     scores = scores - scores.mean()
                     scores = np.clip(scores, 0, None)
 
@@ -213,9 +213,9 @@ def run_backtest(train_df, test_df):
     trade_df = pd.DataFrame(trade_logs)
 
     # =========================
-    # score検証（rank後）
+    # score検証
     # =========================
-    print("\n=== SCORE MONOTONICITY CHECK (RANKED) ===")
+    print("\n=== SCORE MONOTONICITY CHECK ===")
 
     try:
         q10 = trade_df.groupby(pd.qcut(trade_df["score"], 10, duplicates="drop"))["return"].mean()
