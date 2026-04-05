@@ -11,10 +11,8 @@ HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
-# 🔥 超重要パラメータ
 TOP_RATE = 0.05   # 上位5%
-ALPHA = 2.0       # weight強化
-SCORE_FILTER = 0.55  # 最低スコア
+ALPHA = 2.0       # weight強調
 
 # =========================
 # データ
@@ -113,17 +111,11 @@ def run_backtest(train_df, test_df):
                 continue
 
             # =========================
-            # 🔥 上位％抽出（最重要）
+            # 🔥 上位％抽出
             # =========================
             TOP_K = max(3, int(len(today_f) * TOP_RATE))
 
-            picks = today_f.sort_values("score", ascending=False)
-
-            # 🔥 スコアフィルタ
-            picks = picks[picks["score"] > SCORE_FILTER]
-
-            # 上位のみ
-            picks = picks.head(TOP_K)
+            picks = today_f.sort_values("score", ascending=False).head(TOP_K)
 
             # 保有制限
             picks = picks.head(available)
@@ -133,15 +125,26 @@ def run_backtest(train_df, test_df):
                 free_cash = equity - sum([p["capital"] for p in positions])
 
                 # =========================
-                # 🔥 weight = score^α
+                # 🔥 スコア正規化（超重要）
                 # =========================
-                weights = picks["score"] ** ALPHA
-                total = weights.sum()
+                scores = picks["score"]
 
-                if total == 0:
+                # 中心化（平均との差）
+                scores = scores - scores.mean()
+
+                # マイナス切り捨て（ロングのみ）
+                scores = scores.clip(lower=0)
+
+                if scores.sum() == 0:
                     equity += daily_pnl
                     equity_curve.append(equity)
                     continue
+
+                # =========================
+                # 🔥 weight = score^α
+                # =========================
+                weights = scores ** ALPHA
+                weights = weights / weights.sum()
 
                 for i, (_, row) in enumerate(picks.iterrows()):
 
@@ -153,7 +156,7 @@ def run_backtest(train_df, test_df):
                     if next_row.empty:
                         continue
 
-                    weight = weights.iloc[i] / total
+                    weight = weights.iloc[i]
                     capital = free_cash * weight
 
                     # 🔥 集中リスク制御
