@@ -9,7 +9,7 @@ from datetime import datetime
 # 設定
 # =========================
 TOP_N = 3
-HOLD_DAYS = 5
+HOLD_DAYS = 7
 
 BASE_DIR = os.path.dirname(__file__)
 
