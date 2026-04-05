@@ -13,7 +13,7 @@ MAX_POSITIONS = 5
 ALPHA = 2.0
 
 # 🔥 HOLD固定（重要）
-HOLD_DAYS = 3
+HOLD_DAYS = 5
 
 # 🔥 探索範囲（HOLD削除）
 TOP_RATE_LIST = [0.01, 0.02, 0.03]
