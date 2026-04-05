@@ -67,7 +67,12 @@ def run_backtest(train_df, test_df):
     model = train_model(train_df)
 
     test_df = test_df.copy()
-    test_df["score"] = model.predict(test_df[FEATURES])
+    test_df["raw_score"] = model.predict(test_df[FEATURES])
+
+    # =========================
+    # 🔥 rank化（重要）
+    # =========================
+    test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     dates = sorted(test_df["Date"].unique())
     grouped = {d: g for d, g in test_df.groupby("Date")}
@@ -131,7 +136,8 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                threshold = today["score"].quantile(0.9)
+                # 🔥 rankベースなので閾値も安定
+                threshold = 0.9
 
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
@@ -207,31 +213,23 @@ def run_backtest(train_df, test_df):
     trade_df = pd.DataFrame(trade_logs)
 
     # =========================
-    # 🔥 score単調性チェック（追加）
+    # score検証（rank後）
     # =========================
-    print("\n=== SCORE MONOTONICITY CHECK ===")
+    print("\n=== SCORE MONOTONICITY CHECK (RANKED) ===")
 
     try:
         q10 = trade_df.groupby(pd.qcut(trade_df["score"], 10, duplicates="drop"))["return"].mean()
-        q20 = trade_df.groupby(pd.qcut(trade_df["score"], 20, duplicates="drop"))["return"].mean()
 
         print("\n--- Q10 ---")
         print(q10)
 
-        print("\n--- Q20 ---")
-        print(q20)
-
-        # 単調性スコア（順位相関）
-        monotonicity = np.corrcoef(
-            trade_df["score"],
-            trade_df["return"]
-        )[0, 1]
+        corr = np.corrcoef(trade_df["score"], trade_df["return"])[0, 1]
 
         print("\n--- SCORE-RETURN CORRELATION ---")
-        print(monotonicity)
+        print(corr)
 
     except Exception as e:
-        print("monotonicity check failed:", e)
+        print("check failed:", e)
 
     return (CAGR, Sharpe, MaxDD), trade_df
 
@@ -282,12 +280,5 @@ if len(all_trades) > 0:
     print("\n=== REGIME ANALYSIS ===")
     print(trade_log_df.groupby("regime")["return"].mean())
 
-    print("\n=== SCORE QUANTILE ANALYSIS ===")
-    try:
-        print(trade_log_df.groupby(pd.qcut(trade_log_df["score"], 10))["return"].mean())
-    except:
-        print("qcut failed")
-
-    win_rate = (trade_log_df["return"] > 0).mean()
     print("\n=== WIN RATE ===")
-    print(f"{win_rate:.4f}")
+    print((trade_log_df["return"] > 0).mean())
