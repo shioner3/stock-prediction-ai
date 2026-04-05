@@ -2,17 +2,14 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
-from lightgbm import LGBMClassifier
-from sklearn.calibration import CalibratedClassifierCV
+from lightgbm import LGBMRegressor
 from datetime import datetime
 
 # =========================
 # 設定
 # =========================
-TOP_N = 1
+TOP_N = 3
 HOLD_DAYS = 7
-THRESHOLD = 0.55
-CANDIDATES = 20
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -20,161 +17,41 @@ TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
 
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
-MODEL_META_PATH = os.path.join(BASE_DIR, "model_meta.pkl")
-
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
-
-os.makedirs(LOG_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-month_str = datetime.now().strftime("%Y-%m")
-PRED_LOG_PATH = os.path.join(LOG_DIR, f"predictions_{month_str}.csv")
-OUTPUT_PATH = os.path.join(OUTPUT_DIR, "today_picks.csv")
 
 # =========================
-# FEATURES
-# =========================
-FEATURES = [
-    "Return_1","Return_3",
-    "Rank_Return_1",
-    "MA3_ratio","MA5_ratio","MA10_ratio",
-    "Volatility",
-    "Volume_change","Volume_ratio",
-    "HL_range",
-    "RSI",
-    "Rel_Return_1",
-    "Trend_5_z",
-    "Trend_10_z",
-    "Volatility_z",
-    "Volume_ratio_z",
-    "Market_Return_z"
-]
-
-TARGET = "Target"
-
-# =========================
-# カラム正規化
-# =========================
-def normalize_columns(df):
-    if "Ticker" not in df.columns and "コード" in df.columns:
-        df = df.rename(columns={"コード": "Ticker"})
-    if "Name" not in df.columns and "銘柄名" in df.columns:
-        df = df.rename(columns={"銘柄名": "Name"})
-    return df
-
-# =========================
-# データ読み込み
+# データ
 # =========================
 train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
-train_df = normalize_columns(train_df)
-predict_df = normalize_columns(predict_df)
-
-train_df["Date"] = pd.to_datetime(train_df["Date"])
-predict_df["Date"] = pd.to_datetime(predict_df["Date"])
-
-latest_date = predict_df["Date"].max()
-current_month = latest_date.strftime("%Y-%m")
-
-print(f"\n📅 予測日: {latest_date}")
+FEATURES = [c for c in train_df.columns if c not in ["Date","Ticker","Name","Target"]]
 
 # =========================
-# モデル管理
+# モデル
 # =========================
-retrain = True
+model = LGBMRegressor(
+    n_estimators=500,
+    learning_rate=0.03,
+    max_depth=6,
+    random_state=42
+)
 
-if os.path.exists(MODEL_PATH) and os.path.exists(MODEL_META_PATH):
-    meta = pickle.load(open(MODEL_META_PATH, "rb"))
-    if meta.get("train_month") == current_month:
-        retrain = False
+model.fit(train_df[FEATURES], train_df["Target"])
 
-# =========================
-# 🔥 キャリブレーションモデル
-# =========================
-if retrain:
-    print("🔄 モデル再学習（Calibrated）")
-
-    train_df = train_df.replace([np.inf, -np.inf], np.nan).fillna(0)
-
-    base_model = LGBMClassifier(
-        n_estimators=300,
-        learning_rate=0.03,
-        max_depth=6,
-        random_state=42
-    )
-
-    model = CalibratedClassifierCV(
-        estimator=base_model,
-        method="isotonic",   # ←重要（精度重視）
-        cv=3
-    )
-
-    model.fit(train_df[FEATURES], train_df[TARGET])
-
-    pickle.dump(model, open(MODEL_PATH, "wb"))
-    pickle.dump({"train_month": current_month}, open(MODEL_META_PATH, "wb"))
-
-else:
-    print("⚡ 既存モデル使用")
-    model = pickle.load(open(MODEL_PATH, "rb"))
+pickle.dump(model, open(MODEL_PATH, "wb"))
 
 # =========================
-# 今日データ
+# 予測
 # =========================
-today = predict_df[predict_df["Date"] == latest_date].copy()
-
-missing_cols = [c for c in FEATURES if c not in today.columns]
-if missing_cols:
-    raise ValueError(f"❌ Missing features: {missing_cols}")
-
-today[FEATURES] = today[FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+today = predict_df.copy()
+today["Pred"] = model.predict(today[FEATURES])
 
 # =========================
-# 予測（ここが重要）
+# ランキング
 # =========================
-today["Pred"] = model.predict_proba(today[FEATURES])[:, 1]
+today = today.sort_values("Pred", ascending=False).head(TOP_N)
 
-print("\n=== PRED CHECK ===")
-print(today["Pred"].describe())
-
-# =========================
-# フィルター
-# =========================
-if "limit_up_flag" in today.columns:
-    today = today[today["limit_up_flag"] == 0]
-
-if "Volume" in today.columns:
-    today = today[today["Volume"].fillna(0) > 10000]
-
-if today.empty:
-    print("⚠️ 銘柄なし")
-    exit()
-
-# =========================
-# 銘柄選定
-# =========================
-candidates = today.sort_values("Pred", ascending=False).head(CANDIDATES)
-
-filtered = candidates[candidates["Pred"] > THRESHOLD]
-
-if len(filtered) < TOP_N:
-    filtered = candidates.head(TOP_N)
-
-today = filtered.head(TOP_N).copy()
-
-# =========================
-# 出力
-# =========================
-today["PredRank"] = range(1, len(today) + 1)
-
-today["predict_date"] = latest_date
-today["target_date"] = latest_date + pd.Timedelta(days=HOLD_DAYS)
-
-today.to_csv(OUTPUT_PATH, index=False)
+today["PredRank"] = range(1, len(today)+1)
 
 print("\n=== 今日の銘柄 ===")
-print(today[["Ticker", "Name", "Pred", "PredRank"]])
-
-print(f"\n📤 出力完了: {OUTPUT_PATH}")
+print(today[["Ticker","Name","Pred","PredRank"]])
