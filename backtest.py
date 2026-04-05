@@ -29,6 +29,7 @@ TARGET = "Target"
 
 HOLD_DAYS = 7
 INITIAL_CAPITAL = 1.0
+MAX_POSITIONS = 5
 
 # =========================
 # データ読み込み
