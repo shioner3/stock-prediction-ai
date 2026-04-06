@@ -32,7 +32,7 @@ FEATURES = [
 ]
 
 # =========================
-# レジーム（※分析用のみ）
+# レジーム
 # =========================
 market = df.groupby("Date")["Return_1"].mean()
 market_smooth = market.rolling(20).mean()
@@ -67,10 +67,7 @@ def run_backtest(train_df, test_df):
 
     test_df = test_df.copy()
 
-    # 🔥 生値予測
     test_df["raw_score"] = model.predict(test_df[FEATURES])
-
-    # 🔥 rank（選択専用）
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     dates = sorted(test_df["Date"].unique())
@@ -121,7 +118,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（🔥シンプル最強版）
+        # エントリー（🔥レジームフィルタ追加）
         # =========================
         if i + 1 < len(dates):
 
@@ -132,14 +129,14 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # ✅ フィルタはこれだけ
+                # 🔥 ここが今回の修正ポイント
                 today_f = today[
-                    today["Trend_5_z"] > TREND_TH
+                    (today["Trend_5_z"] > TREND_TH) &
+                    (today["Regime"] != "range")
                 ]
 
                 if len(today_f) > 0:
 
-                    # 🔥 scoreのみで上位選択
                     picks = today_f.nlargest(available, "score")
 
                     capital_per_position = cash / len(picks)
