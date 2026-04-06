@@ -8,9 +8,12 @@ from lightgbm import LGBMRegressor
 DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
-MAX_POSITIONS = 5
+MAX_POSITIONS = 10   # 🔥 分散強化（重要）
 HOLD_DAYS = 10
+
 TREND_TH = 0.0
+SCORE_TH = 0.7       # 🔥 スコア下限
+VOL_Q = 0.8          # 🔥 ボラ上限
 
 # =========================
 # データ
@@ -27,12 +30,7 @@ FEATURES = [
     "HL_range",
     "Rel_Return_1",
     "Trend_5_z","Trend_10_z",
-    
-    # 🔥 追加分
-    "Gap",
-    "Volatility_change",
-    "Volume_spike",
-    "Momentum_acc"
+    "Gap","Volatility_change","Volume_spike","Momentum_acc"
 ]
 
 # =========================
@@ -70,11 +68,7 @@ def run_backtest(train_df, test_df):
     model = train_model(train_df)
 
     test_df = test_df.copy()
-
-    # 🔥 生値予測（重要）
     test_df["raw_score"] = model.predict(test_df[FEATURES])
-
-    # 🔥 rankは選択専用
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     dates = sorted(test_df["Date"].unique())
@@ -97,7 +91,6 @@ def run_backtest(train_df, test_df):
         new_positions = []
 
         for pos in positions:
-
             if i == pos["exit_idx"]:
 
                 cur = today[today["Ticker"] == pos["ticker"]]
@@ -114,7 +107,7 @@ def run_backtest(train_df, test_df):
                     "entry_date": pos["entry_date"],
                     "exit_date": d,
                     "return": ret,
-                    "raw_score": pos["raw_score"],  # ←ここ重要
+                    "raw_score": pos["raw_score"],
                     "score": pos["score"],
                     "regime": pos["regime"]
                 })
@@ -125,7 +118,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー
+        # エントリー（🔥フィルタ強化）
         # =========================
         if i + 1 < len(dates):
 
@@ -136,17 +129,32 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 最低限フィルタ
-                today_f = today[
-                    today["Trend_5_z"] > TREND_TH
-                ]
+                # =========================
+                # 🔥 フィルタ群
+                # =========================
+
+                # ① トレンド
+                today_f = today[today["Trend_5_z"] > TREND_TH]
+
+                # ② スコア下限
+                today_f = today_f[today_f["score"] > SCORE_TH]
+
+                # ③ ボラフィルタ（過熱除去）
+                if len(today_f) > 0:
+                    vol_th = today_f["Volatility"].quantile(VOL_Q)
+                    today_f = today_f[today_f["Volatility"] < vol_th]
+
+                # ④ 市場フィルタ（上昇相場のみ）
+                today_f = today_f[today_f["Market_Smooth"] > 0]
+
+                # ⑤ 出来高スパイク（ブレイクアウト狙い）
+                today_f = today_f[today_f["Volume_spike"] > 1.0]
 
                 if len(today_f) > 0:
 
-                    # 🔥 rankで上位選択
+                    # 上位選択
                     picks = today_f.nlargest(available, "score")
 
-                    # 🔥 等金額（これがベスト）
                     capital_per_position = cash / len(picks)
 
                     for row in picks.itertuples():
@@ -205,7 +213,7 @@ def run_backtest(train_df, test_df):
     trade_df = pd.DataFrame(trade_logs)
 
     # =========================
-    # 🔥 正しい検証（raw_score）
+    # raw_score検証
     # =========================
     print("\n=== RAW SCORE CHECK ===")
 
@@ -227,6 +235,7 @@ def run_backtest(train_df, test_df):
         pass
 
     return (CAGR, Sharpe, MaxDD), trade_df
+
 
 # =========================
 # 実行
