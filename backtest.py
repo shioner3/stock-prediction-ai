@@ -12,6 +12,8 @@ MAX_POSITIONS = 10
 HOLD_DAYS = 10
 
 TREND_TH = 0.0
+N_BINS = 10          # 🔥 スコア分割数
+MIN_RET = 0.0        # 🔥 採用する最低期待値
 
 # =========================
 # データ
@@ -59,16 +61,44 @@ def train_model(train_df):
     return model
 
 # =========================
+# 🔥 スコア帯最適化
+# =========================
+def optimize_score_range(train_df, model):
+
+    df_tmp = train_df.copy()
+    df_tmp["raw_score"] = model.predict(df_tmp[FEATURES])
+
+    # 分位分割
+    df_tmp["bin"] = pd.qcut(df_tmp["raw_score"], N_BINS, duplicates="drop")
+
+    # binごとの平均リターン
+    stats = df_tmp.groupby("bin")["Target"].mean()
+
+    # 🔥 良いbinだけ採用
+    good_bins = stats[stats > MIN_RET].index
+
+    print("\n=== SCORE BIN OPT ===")
+    print(stats)
+    print("USE BINS:", list(good_bins))
+
+    return good_bins
+
+# =========================
 # バックテスト
 # =========================
 def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
 
-    test_df = test_df.copy()
+    # 🔥 スコア帯を学習
+    good_bins = optimize_score_range(train_df, model)
 
+    test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
+
+    # testにもbin適用
+    test_df["bin"] = pd.qcut(test_df["raw_score"], N_BINS, duplicates="drop")
 
     dates = sorted(test_df["Date"].unique())
     grouped = {d: g for d, g in test_df.groupby("Date")}
@@ -90,7 +120,6 @@ def run_backtest(train_df, test_df):
         new_positions = []
 
         for pos in positions:
-
             if i == pos["exit_idx"]:
 
                 cur = today[today["Ticker"] == pos["ticker"]]
@@ -118,7 +147,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（🔥down特化）
+        # エントリー（🔥down特化 + スコア帯）
         # =========================
         if i + 1 < len(dates):
 
@@ -129,16 +158,14 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 down限定 + トレンド + ノイズ削減
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
                     (today["Regime"] == "down") &
-                    (today["raw_score"] > 0)   # ←重要：ノイズ削減
+                    (today["bin"].isin(good_bins))  # 🔥ここが核心
                 ]
 
                 if len(today_f) > 0:
 
-                    # 🔥 scoreのみで選択
                     picks = today_f.nlargest(available, "score")
 
                     capital_per_position = cash / len(picks)
@@ -198,28 +225,6 @@ def run_backtest(train_df, test_df):
 
     trade_df = pd.DataFrame(trade_logs)
 
-    # =========================
-    # raw_score検証
-    # =========================
-    print("\n=== RAW SCORE CHECK ===")
-
-    try:
-        q10 = trade_df.groupby(
-            pd.qcut(trade_df["raw_score"], 10, duplicates="drop")
-        )["return"].mean()
-
-        print(q10)
-
-        corr = np.corrcoef(
-            trade_df["raw_score"],
-            trade_df["return"]
-        )[0, 1]
-
-        print("corr:", corr)
-
-    except:
-        pass
-
     return (CAGR, Sharpe, MaxDD), trade_df
 
 
@@ -227,7 +232,6 @@ def run_backtest(train_df, test_df):
 # 実行
 # =========================
 all_metrics = []
-all_trades = []
 
 for y in sorted(df["Date"].dt.year.unique()):
 
@@ -237,13 +241,10 @@ for y in sorted(df["Date"].dt.year.unique()):
     train_df = df[df["Date"].dt.year < y]
     test_df = df[df["Date"].dt.year == y]
 
-    res, trades = run_backtest(train_df, test_df)
+    res, _ = run_backtest(train_df, test_df)
 
     if res is not None:
         all_metrics.append(res)
-
-    if trades is not None:
-        all_trades.append(trades)
 
 # =========================
 # 結果
@@ -258,16 +259,3 @@ if len(all_metrics) > 0:
     print(f"CAGR  : {cagr:.4f}")
     print(f"Sharpe: {sharpe:.4f}")
     print(f"MaxDD : {mdd:.4f}")
-
-# =========================
-# ログ分析
-# =========================
-if len(all_trades) > 0:
-
-    trade_log_df = pd.concat(all_trades, ignore_index=True)
-
-    print("\n=== REGIME ANALYSIS ===")
-    print(trade_log_df.groupby("regime")["return"].mean())
-
-    print("\n=== WIN RATE ===")
-    print((trade_log_df["return"] > 0).mean())
