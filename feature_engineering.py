@@ -43,7 +43,7 @@ valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
 
 # =========================
-# 🔥 特徴量（完全に過去のみ）
+# 🔥 基本特徴量（過去のみ）
 # =========================
 
 # リターン
@@ -76,7 +76,7 @@ df["Volume_ratio"] = df["Volume"].shift(1) / df["Volume_ma5"]
 df["HL_range"] = ((df["High"] - df["Low"]) / df["Close"]).shift(1)
 
 # =========================
-# 市場
+# 市場（リーク防止済）
 # =========================
 df["Market_Return_1"] = df.groupby("Date")["Return_1"].transform("mean").shift(1)
 df["Rel_Return_1"] = df["Return_1"] - df["Market_Return_1"]
@@ -99,18 +99,35 @@ trend10_std  = df.groupby("Ticker")["Trend_10"].transform(lambda x: x.rolling(Z_
 df["Trend_10_z"] = (df["Trend_10"] - trend10_mean) / (trend10_std + 1e-9)
 
 # =========================
-# 🎯 ターゲット（🔥修正ポイント）
+# 🔥 追加特徴量（完全リーク対策版）
 # =========================
 
-# 将来リターン
+# ① ギャップ（前日終値ベース）
+df["Gap"] = df["Open"].shift(1) / df["Close"].shift(2) - 1
+
+# ② ボラ変化（過去ボラのみ）
+df["Volatility_change"] = df["Volatility"] / df.groupby("Ticker")["Volatility"].shift(5)
+
+# ③ 出来高スパイク（過去のみ）
+vol_mean_20 = df.groupby("Ticker")["Volume"].transform(
+    lambda x: x.rolling(20).mean()
+).shift(1)
+
+df["Volume_spike"] = df["Volume"].shift(1) / vol_mean_20
+
+# ④ モメンタム加速（すでに過去化されてるのでOK）
+df["Momentum_acc"] = df["Return_1"] - df["Return_3"]
+
+# =========================
+# 🎯 ターゲット（生値）
+# =========================
 df["FutureReturn"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# 外れ値カット（重要）
+# 外れ値カット
 df["FutureReturn"] = df["FutureReturn"].clip(-0.2, 0.2)
 
-# ✅ 学習用ターゲットは「生値」
 df["Target"] = df["FutureReturn"]
 
 # 欠損削除
@@ -126,7 +143,13 @@ FEATURES = [
     "Volume_change","Volume_ratio",
     "HL_range",
     "Rel_Return_1",
-    "Trend_5_z","Trend_10_z"
+    "Trend_5_z","Trend_10_z",
+    
+    # 🔥 追加分
+    "Gap",
+    "Volatility_change",
+    "Volume_spike",
+    "Momentum_acc"
 ]
 
 # =========================
@@ -136,13 +159,6 @@ train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
 
 latest_date = df["Date"].max()
 predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
-
-# =========================
-# 🔥 予測用にrankはここで作る（重要）
-# =========================
-# ※ モデル学習後に使う想定なので保存用には作っておく
-
-predict_df["Target_dummy"] = 0  # ダミー（整合性用）
 
 # =========================
 # デバッグ
@@ -160,4 +176,4 @@ print("Predict:", latest_date)
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（生値ターゲット版・正規構造）")
+print("\n保存完了（追加特徴量＋リーク対策済み）")
