@@ -9,10 +9,9 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
-ALPHA = 2.0
+HOLD_DAYS = 7
 
 TREND_TH = 0.0
-HOLD_DAYS = 7
 
 # =========================
 # データ
@@ -68,9 +67,7 @@ def run_backtest(train_df, test_df):
     test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
 
-    # =========================
-    # rank化（core）
-    # =========================
+    # rank化（核）
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     dates = sorted(test_df["Date"].unique())
@@ -109,12 +106,9 @@ def run_backtest(train_df, test_df):
                     "ticker": pos["ticker"],
                     "entry_date": pos["entry_date"],
                     "exit_date": d,
-                    "entry_price": pos["entry_price"],
-                    "exit_price": exit_price,
                     "return": ret,
                     "capital": pos["capital"],
                     "score": pos["score"],
-                    "profit": pos["capital"] * ret,
                     "regime": pos["regime"]
                 })
 
@@ -124,7 +118,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（rankベースのみ）
+        # エントリー（rank alpha 正式版）
         # =========================
         if i + 1 < len(dates):
 
@@ -135,58 +129,45 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 シンプルフィルタ（過剰排除なし）
+                # 最低限フィルタのみ
                 today_f = today[
                     today["Trend_5_z"] > TREND_TH
-                ].copy()
+                ]
 
                 if len(today_f) > 0:
 
-                    # =========================
-                    # TOP_K完全削除 → 上位N直接選択
-                    # =========================
+                    # 🔥 上位Nのみ
                     picks = today_f.nlargest(available, "score")
 
-                    scores = picks["score"].values
+                    # 🔥 完全等金額
+                    capital_per_position = cash / len(picks)
 
-                    # rankなので平均との差のみ軽く調整（任意）
-                    scores = scores - scores.mean()
-                    scores = np.clip(scores, 0, None)
+                    for row in picks.itertuples():
 
-                    if scores.sum() > 0:
+                        ticker = row.Ticker
 
-                        weights = scores ** ALPHA
-                        weights /= weights.sum()
+                        if any(p["ticker"] == ticker for p in positions):
+                            continue
 
-                        for j, row in enumerate(picks.itertuples()):
+                        next_row = next_data[next_data["Ticker"] == ticker]
+                        if next_row.empty:
+                            continue
 
-                            ticker = row.Ticker
+                        exit_idx = i + HOLD_DAYS
+                        if exit_idx >= len(dates):
+                            continue
 
-                            if any(p["ticker"] == ticker for p in positions):
-                                continue
+                        positions.append({
+                            "ticker": ticker,
+                            "entry_price": next_row["Open"].iloc[0],
+                            "entry_date": d,
+                            "exit_idx": exit_idx,
+                            "capital": capital_per_position,
+                            "score": row.score,
+                            "regime": row.Regime
+                        })
 
-                            next_row = next_data[next_data["Ticker"] == ticker]
-                            if next_row.empty:
-                                continue
-
-                            capital = cash * weights[j]
-                            capital = min(capital, equity * 0.2)
-
-                            exit_idx = i + HOLD_DAYS
-                            if exit_idx >= len(dates):
-                                continue
-
-                            positions.append({
-                                "ticker": ticker,
-                                "entry_price": next_row["Open"].iloc[0],
-                                "entry_date": d,
-                                "exit_idx": exit_idx,
-                                "capital": capital,
-                                "score": row.score,
-                                "regime": row.Regime
-                            })
-
-                            cash -= capital
+                        cash -= capital_per_position
 
         # =========================
         # 評価
@@ -215,21 +196,17 @@ def run_backtest(train_df, test_df):
     # =========================
     # score検証
     # =========================
-    print("\n=== SCORE MONOTONICITY CHECK ===")
+    print("\n=== SCORE CHECK (FINAL) ===")
 
     try:
         q10 = trade_df.groupby(pd.qcut(trade_df["score"], 10, duplicates="drop"))["return"].mean()
-
-        print("\n--- Q10 ---")
         print(q10)
 
         corr = np.corrcoef(trade_df["score"], trade_df["return"])[0, 1]
+        print("corr:", corr)
 
-        print("\n--- SCORE-RETURN CORRELATION ---")
-        print(corr)
-
-    except Exception as e:
-        print("check failed:", e)
+    except:
+        pass
 
     return (CAGR, Sharpe, MaxDD), trade_df
 
