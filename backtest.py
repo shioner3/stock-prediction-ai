@@ -118,7 +118,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（🔥レジームフィルタ追加）
+        # エントリー（🔥down特化）
         # =========================
         if i + 1 < len(dates):
 
@@ -129,14 +129,16 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 ここが今回の修正ポイント
+                # 🔥 down限定 + トレンド + ノイズ削減
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
-                    (today["Regime"] != "range")
+                    (today["Regime"] == "down") &
+                    (today["raw_score"] > 0)   # ←重要：ノイズ削減
                 ]
 
                 if len(today_f) > 0:
 
+                    # 🔥 scoreのみで選択
                     picks = today_f.nlargest(available, "score")
 
                     capital_per_position = cash / len(picks)
