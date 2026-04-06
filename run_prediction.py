@@ -3,7 +3,6 @@ import numpy as np
 import os
 import pickle
 from lightgbm import LGBMRegressor
-from datetime import datetime
 
 # =========================
 # 設定
@@ -38,20 +37,29 @@ model = LGBMRegressor(
 
 model.fit(train_df[FEATURES], train_df["Target"])
 
+# 保存
 pickle.dump(model, open(MODEL_PATH, "wb"))
 
 # =========================
 # 予測
 # =========================
 today = predict_df.copy()
-today["Pred"] = model.predict(today[FEATURES])
+
+# 🔥 生値スコア
+today["raw_score"] = model.predict(today[FEATURES])
+
+# 🔥 rank化（これが本質）
+today["score"] = today["raw_score"].rank(pct=True)
 
 # =========================
-# ランキング
+# 上位選択（rankベース）
 # =========================
-today = today.sort_values("Pred", ascending=False).head(TOP_N)
+today = today.sort_values("score", ascending=False).head(TOP_N)
 
 today["PredRank"] = range(1, len(today)+1)
 
-print("\n=== 今日の銘柄 ===")
-print(today[["Ticker","Name","Pred","PredRank"]])
+# =========================
+# 出力
+# =========================
+print("\n=== 今日の銘柄（rankベース） ===")
+print(today[["Ticker","Name","raw_score","score","PredRank"]])
