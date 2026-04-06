@@ -68,20 +68,20 @@ def optimize_score_range(train_df, model):
     df_tmp = train_df.copy()
     df_tmp["raw_score"] = model.predict(df_tmp[FEATURES])
 
-    # 分位分割
-    df_tmp["bin"] = pd.qcut(df_tmp["raw_score"], N_BINS, duplicates="drop")
+    # 🔥 境界取得
+    _, bins = pd.qcut(df_tmp["raw_score"], N_BINS, retbins=True, duplicates="drop")
 
-    # binごとの平均リターン
+    df_tmp["bin"] = pd.cut(df_tmp["raw_score"], bins=bins, include_lowest=True)
+
     stats = df_tmp.groupby("bin")["Target"].mean()
 
-    # 🔥 良いbinだけ採用
     good_bins = stats[stats > MIN_RET].index
 
     print("\n=== SCORE BIN OPT ===")
     print(stats)
     print("USE BINS:", list(good_bins))
 
-    return good_bins
+    return bins, good_bins
 
 # =========================
 # バックテスト
@@ -98,7 +98,9 @@ def run_backtest(train_df, test_df):
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     # testにもbin適用
-    test_df["bin"] = pd.qcut(test_df["raw_score"], N_BINS, duplicates="drop")
+    bins, good_bins = optimize_score_range(train_df, model)
+
+    test_df["bin"] = pd.cut(test_df["raw_score"], bins=bins, include_lowest=True)
 
     dates = sorted(test_df["Date"].unique())
     grouped = {d: g for d, g in test_df.groupby("Date")}
