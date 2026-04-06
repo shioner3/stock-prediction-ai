@@ -60,14 +60,13 @@ def train_model(train_df):
     return model
 
 # =========================
-# 🔥 スコア帯最適化（上位2bin固定）
+# スコア帯最適化
 # =========================
 def optimize_score_range(train_df, model):
 
     df_tmp = train_df.copy()
     df_tmp["raw_score"] = model.predict(df_tmp[FEATURES])
 
-    # 🔥 bin境界取得
     _, bins = pd.qcut(
         df_tmp["raw_score"],
         N_BINS,
@@ -81,10 +80,9 @@ def optimize_score_range(train_df, model):
         include_lowest=True
     )
 
-    # binごとの平均リターン
     stats = df_tmp.groupby("bin")["Target"].mean()
 
-    # 🔥 上位2binだけ使う
+    # 上位2bin
     good_bins = stats.sort_values().tail(2).index
 
     print("\n=== SCORE BIN OPT ===")
@@ -100,19 +98,22 @@ def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
 
-    # 🔥 修正ポイント
     bins, good_bins = optimize_score_range(train_df, model)
 
     test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    # 🔥 trainと同じbinを使う
+    # bin適用
     test_df["bin"] = pd.cut(
         test_df["raw_score"],
         bins=bins,
         include_lowest=True
     )
+
+    # 🔥 binを数値化（これが重要）
+    bin_order = {b: i for i, b in enumerate(sorted(good_bins))}
+    test_df["bin_rank"] = test_df["bin"].map(bin_order)
 
     dates = sorted(test_df["Date"].unique())
     grouped = {d: g for d, g in test_df.groupby("Date")}
@@ -122,7 +123,6 @@ def run_backtest(train_df, test_df):
     equity_curve = []
 
     positions = []
-    trade_logs = []
 
     for i, d in enumerate(dates):
 
@@ -145,23 +145,13 @@ def run_backtest(train_df, test_df):
 
                 cash += pos["capital"] * (1 + ret)
 
-                trade_logs.append({
-                    "ticker": pos["ticker"],
-                    "entry_date": pos["entry_date"],
-                    "exit_date": d,
-                    "return": ret,
-                    "raw_score": pos["raw_score"],
-                    "score": pos["score"],
-                    "regime": pos["regime"]
-                })
-
             else:
                 new_positions.append(pos)
 
         positions = new_positions
 
         # =========================
-        # エントリー（🔥down特化 + 上位bin）
+        # エントリー
         # =========================
         if i + 1 < len(dates):
 
@@ -180,7 +170,11 @@ def run_backtest(train_df, test_df):
 
                 if len(today_f) > 0:
 
-                    picks = today_f.nlargest(available, "score")
+                    # 🔥 bin優先 → raw_score順
+                    picks = today_f.sort_values(
+                        ["bin_rank", "raw_score"],
+                        ascending=[False, False]
+                    ).head(available)
 
                     capital_per_position = cash / len(picks)
 
@@ -202,12 +196,8 @@ def run_backtest(train_df, test_df):
                         positions.append({
                             "ticker": ticker,
                             "entry_price": next_row["Open"].iloc[0],
-                            "entry_date": d,
                             "exit_idx": exit_idx,
-                            "capital": capital_per_position,
-                            "raw_score": row.raw_score,
-                            "score": row.score,
-                            "regime": row.Regime
+                            "capital": capital_per_position
                         })
 
                         cash -= capital_per_position
