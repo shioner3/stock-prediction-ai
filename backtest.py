@@ -68,21 +68,20 @@ def optimize_score_range(train_df, model):
     df_tmp = train_df.copy()
     df_tmp["raw_score"] = model.predict(df_tmp[FEATURES])
 
-    # 分位分割
-    df_tmp["bin"] = pd.qcut(df_tmp["raw_score"], N_BINS, duplicates="drop")
+    # 🔥 境界取得
+    _, bins = pd.qcut(df_tmp["raw_score"], N_BINS, retbins=True, duplicates="drop")
 
-    # binごとの平均リターン
+    df_tmp["bin"] = pd.cut(df_tmp["raw_score"], bins=bins, include_lowest=True)
+
     stats = df_tmp.groupby("bin")["Target"].mean()
 
-    # 🔥 良いbinだけ採用
     good_bins = stats[stats > MIN_RET].index
 
     print("\n=== SCORE BIN OPT ===")
     print(stats)
     print("USE BINS:", list(good_bins))
 
-    return good_bins
-
+    return bins, good_bins
 # =========================
 # バックテスト
 # =========================
