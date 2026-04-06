@@ -9,7 +9,7 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
-HOLD_DAYS = 5
+HOLD_DAYS = 7
 TREND_TH = 0.0
 
 # =========================
