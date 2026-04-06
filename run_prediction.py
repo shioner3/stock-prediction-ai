@@ -8,7 +8,7 @@ from lightgbm import LGBMRegressor
 # 設定
 # =========================
 TOP_N = 3
-HOLD_DAYS = 7
+HOLD_DAYS = 10
 
 BASE_DIR = os.path.dirname(__file__)
 
