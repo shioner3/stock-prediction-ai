@@ -9,7 +9,7 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
-HOLD_DAYS = 7
+HOLD_DAYS = 3
 TREND_TH = 0.0
 
 # =========================
@@ -26,7 +26,13 @@ FEATURES = [
     "Volume_change","Volume_ratio",
     "HL_range",
     "Rel_Return_1",
-    "Trend_5_z","Trend_10_z"
+    "Trend_5_z","Trend_10_z",
+    
+    # 🔥 追加分
+    "Gap",
+    "Volatility_change",
+    "Volume_spike",
+    "Momentum_acc"
 ]
 
 # =========================
