@@ -10,7 +10,6 @@ DATA_PATH = "ml_dataset.parquet"
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 HOLD_DAYS = 7
-
 TREND_TH = 0.0
 
 # =========================
@@ -65,9 +64,11 @@ def run_backtest(train_df, test_df):
     model = train_model(train_df)
 
     test_df = test_df.copy()
+
+    # 🔥 生値予測（重要）
     test_df["raw_score"] = model.predict(test_df[FEATURES])
 
-    # rank化（核）
+    # 🔥 rankは選択専用
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     dates = sorted(test_df["Date"].unique())
@@ -107,7 +108,7 @@ def run_backtest(train_df, test_df):
                     "entry_date": pos["entry_date"],
                     "exit_date": d,
                     "return": ret,
-                    "capital": pos["capital"],
+                    "raw_score": pos["raw_score"],  # ←ここ重要
                     "score": pos["score"],
                     "regime": pos["regime"]
                 })
@@ -118,7 +119,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（rank alpha 正式版）
+        # エントリー
         # =========================
         if i + 1 < len(dates):
 
@@ -129,17 +130,17 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 最低限フィルタのみ
+                # 最低限フィルタ
                 today_f = today[
                     today["Trend_5_z"] > TREND_TH
                 ]
 
                 if len(today_f) > 0:
 
-                    # 🔥 上位Nのみ
+                    # 🔥 rankで上位選択
                     picks = today_f.nlargest(available, "score")
 
-                    # 🔥 完全等金額
+                    # 🔥 等金額（これがベスト）
                     capital_per_position = cash / len(picks)
 
                     for row in picks.itertuples():
@@ -163,6 +164,7 @@ def run_backtest(train_df, test_df):
                             "entry_date": d,
                             "exit_idx": exit_idx,
                             "capital": capital_per_position,
+                            "raw_score": row.raw_score,
                             "score": row.score,
                             "regime": row.Regime
                         })
@@ -184,6 +186,9 @@ def run_backtest(train_df, test_df):
         equity = cash + pos_val
         equity_curve.append(equity)
 
+    # =========================
+    # 評価指標
+    # =========================
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
@@ -194,22 +199,28 @@ def run_backtest(train_df, test_df):
     trade_df = pd.DataFrame(trade_logs)
 
     # =========================
-    # score検証
+    # 🔥 正しい検証（raw_score）
     # =========================
-    print("\n=== SCORE CHECK (FINAL) ===")
+    print("\n=== RAW SCORE CHECK ===")
 
     try:
-        q10 = trade_df.groupby(pd.qcut(trade_df["score"], 10, duplicates="drop"))["return"].mean()
+        q10 = trade_df.groupby(
+            pd.qcut(trade_df["raw_score"], 10, duplicates="drop")
+        )["return"].mean()
+
         print(q10)
 
-        corr = np.corrcoef(trade_df["score"], trade_df["return"])[0, 1]
+        corr = np.corrcoef(
+            trade_df["raw_score"],
+            trade_df["return"]
+        )[0, 1]
+
         print("corr:", corr)
 
     except:
         pass
 
     return (CAGR, Sharpe, MaxDD), trade_df
-
 
 # =========================
 # 実行
