@@ -12,8 +12,7 @@ MAX_POSITIONS = 10
 HOLD_DAYS = 10
 
 TREND_TH = 0.0
-N_BINS = 10          # 🔥 スコア分割数
-MIN_RET = 0.0        # 🔥 採用する最低期待値
+N_BINS = 10
 
 # =========================
 # データ
@@ -61,27 +60,39 @@ def train_model(train_df):
     return model
 
 # =========================
-# 🔥 スコア帯最適化
+# 🔥 スコア帯最適化（上位2bin固定）
 # =========================
 def optimize_score_range(train_df, model):
 
     df_tmp = train_df.copy()
     df_tmp["raw_score"] = model.predict(df_tmp[FEATURES])
 
-    # 🔥 境界取得
-    _, bins = pd.qcut(df_tmp["raw_score"], N_BINS, retbins=True, duplicates="drop")
+    # 🔥 bin境界取得
+    _, bins = pd.qcut(
+        df_tmp["raw_score"],
+        N_BINS,
+        retbins=True,
+        duplicates="drop"
+    )
 
-    df_tmp["bin"] = pd.cut(df_tmp["raw_score"], bins=bins, include_lowest=True)
+    df_tmp["bin"] = pd.cut(
+        df_tmp["raw_score"],
+        bins=bins,
+        include_lowest=True
+    )
 
+    # binごとの平均リターン
     stats = df_tmp.groupby("bin")["Target"].mean()
 
-    good_bins = stats[stats > MIN_RET].index
+    # 🔥 上位2binだけ使う
+    good_bins = stats.sort_values().tail(2).index
 
     print("\n=== SCORE BIN OPT ===")
     print(stats)
-    print("USE BINS:", list(good_bins))
+    print("USE TOP BINS:", list(good_bins))
 
     return bins, good_bins
+
 # =========================
 # バックテスト
 # =========================
@@ -89,15 +100,19 @@ def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
 
-    # 🔥 スコア帯を学習
-    good_bins = optimize_score_range(train_df, model)
+    # 🔥 修正ポイント
+    bins, good_bins = optimize_score_range(train_df, model)
 
     test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    # testにもbin適用
-    test_df["bin"] = pd.qcut(test_df["raw_score"], N_BINS, duplicates="drop")
+    # 🔥 trainと同じbinを使う
+    test_df["bin"] = pd.cut(
+        test_df["raw_score"],
+        bins=bins,
+        include_lowest=True
+    )
 
     dates = sorted(test_df["Date"].unique())
     grouped = {d: g for d, g in test_df.groupby("Date")}
@@ -146,7 +161,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（🔥down特化 + スコア帯）
+        # エントリー（🔥down特化 + 上位bin）
         # =========================
         if i + 1 < len(dates):
 
@@ -160,7 +175,7 @@ def run_backtest(train_df, test_df):
                 today_f = today[
                     (today["Trend_5_z"] > TREND_TH) &
                     (today["Regime"] == "down") &
-                    (today["bin"].isin(good_bins))  # 🔥ここが核心
+                    (today["bin"].isin(good_bins))
                 ]
 
                 if len(today_f) > 0:
@@ -222,10 +237,7 @@ def run_backtest(train_df, test_df):
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    trade_df = pd.DataFrame(trade_logs)
-
-    return (CAGR, Sharpe, MaxDD), trade_df
-
+    return (CAGR, Sharpe, MaxDD)
 
 # =========================
 # 実行
@@ -240,7 +252,7 @@ for y in sorted(df["Date"].dt.year.unique()):
     train_df = df[df["Date"].dt.year < y]
     test_df = df[df["Date"].dt.year == y]
 
-    res, _ = run_backtest(train_df, test_df)
+    res = run_backtest(train_df, test_df)
 
     if res is not None:
         all_metrics.append(res)
