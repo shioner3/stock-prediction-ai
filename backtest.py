@@ -48,7 +48,11 @@ FEATURES = [
 # =========================
 def train_model(train_df):
 
-    train_df = train_df.sort_values("Date")
+    train_df = train_df.sort_values("Date").copy()
+
+    # 🔥 Rankラベル生成（ここ重要）
+    train_df["TargetRank"] = train_df.groupby("Date")["Target"].rank(method="first")
+
     group = train_df.groupby("Date").size().to_list()
 
     model = LGBMRanker(
@@ -60,7 +64,12 @@ def train_model(train_df):
         random_state=42
     )
 
-    model.fit(train_df[FEATURES], train_df["Target"], group=group)
+    # 🔥 Target → TargetRankに変更
+    model.fit(
+        train_df[FEATURES],
+        train_df["TargetRank"],
+        group=group
+    )
 
     return model
 
@@ -89,7 +98,9 @@ def run_backtest(train_df, test_df):
 
         today = grouped[d]
 
+        # =========================
         # 決済
+        # =========================
         new_positions = []
         for pos in positions:
 
@@ -118,7 +129,9 @@ def run_backtest(train_df, test_df):
 
         positions = new_positions
 
+        # =========================
         # エントリー
+        # =========================
         if i + 1 < len(dates):
 
             available = MAX_POSITIONS - len(positions)
@@ -130,16 +143,20 @@ def run_backtest(train_df, test_df):
 
                 today_f = today.copy()
 
+                # Marketフィルター
                 if USE_MARKET_FILTER:
                     today_f = today_f[today_f["Market_Trend"] > 0]
 
+                # TOP_RATE
                 today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
                 if len(today_f) > 0:
 
                     picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
+                    # 重み（score × trend）
                     weights = picks["score"] * (1 + picks["Trend_5_z"].clip(-1, 1))
+
                     if weights.sum() == 0:
                         continue
 
@@ -171,7 +188,9 @@ def run_backtest(train_df, test_df):
 
                         cash -= capital
 
+        # =========================
         # 評価
+        # =========================
         pos_val = 0
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
@@ -192,46 +211,26 @@ def run_backtest(train_df, test_df):
         return None
 
     # =========================
-    # 基本指標
+    # 指標計算
     # =========================
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    # =========================
-    # 勝ちの質
-    # =========================
     win_rate = (trade_df["return"] > 0).mean()
-
     avg_win = trade_df[trade_df["return"] > 0]["return"].mean()
     avg_loss = trade_df[trade_df["return"] < 0]["return"].mean()
 
     pf = -avg_win / avg_loss if avg_loss != 0 else np.nan
-
     expectancy = win_rate * avg_win + (1 - win_rate) * avg_loss
 
-    # =========================
-    # 安定性
-    # =========================
     trade_count = len(trade_df)
 
-    # 月次
-    equity_df = pd.DataFrame({"Date": dates, "Equity": equity_curve})
-    equity_df["Month"] = equity_df["Date"].dt.to_period("M")
-    monthly = equity_df.groupby("Month")["Equity"].last().pct_change()
-
-    # 連敗
     losses = (trade_df["return"] < 0).astype(int)
     streak = (losses.groupby((losses != losses.shift()).cumsum()).cumsum()).max()
 
-    # =========================
-    # 分布
-    # =========================
     desc = trade_df["return"].describe()
 
-    # =========================
-    # Regime別
-    # =========================
     regime_perf = trade_df.groupby(
         trade_df["Market_Trend"] > 0
     )["return"].mean()
@@ -246,7 +245,6 @@ def run_backtest(train_df, test_df):
         "Trades": trade_count,
         "MaxLosingStreak": streak,
         "ReturnDist": desc,
-        "Monthly": monthly,
         "Regime": regime_perf
     }
 
