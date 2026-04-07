@@ -12,6 +12,7 @@ TOP_RATE = 0.1
 HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
+N_CLASS = 30  # ← クラス数
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -47,12 +48,31 @@ FEATURES = [
 ]
 
 # =========================
-# 学習データ前処理（🔥ここ重要）
+# 学習データ前処理
 # =========================
 train_df = train_df.sort_values("Date").copy()
 
-# 🔥 Rankラベル生成
-train_df["TargetRank"] = train_df.groupby("Date")["Target"].rank(method="first")
+# 🔥 日付ごとにqcut（安全版）
+def make_target_class(x):
+    try:
+        return pd.qcut(
+            x,
+            q=N_CLASS,
+            labels=False,
+            duplicates="drop"
+        )
+    except:
+        # fallback（データ少ない日対策）
+        return pd.cut(
+            x,
+            bins=min(N_CLASS, len(x)),
+            labels=False
+        )
+
+train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
+
+# 念のためint化
+train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
 # group作成
 group = train_df.groupby("Date").size().to_list()
@@ -69,10 +89,10 @@ model = LGBMRanker(
     random_state=42
 )
 
-# 🔥 Target → TargetRankに変更
+# 🔥 Target → TargetClass
 model.fit(
     train_df[FEATURES],
-    train_df["TargetRank"],
+    train_df["TargetClass"],
     group=group
 )
 
@@ -99,7 +119,7 @@ if USE_MARKET_FILTER:
     today = today[today["Market_Trend"] > 0]
 
 # =========================
-# TOP_RATEフィルター
+# TOP_RATE
 # =========================
 today = today[today["score"] >= (1 - TOP_RATE)]
 
@@ -111,11 +131,10 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 重み（score × trend）
+# 重み
 # =========================
 today["weight_raw"] = today["score"] * (1 + today["Trend_5_z"].clip(-1, 1))
 
-# ゼロ除算防止
 if today["weight_raw"].sum() > 0:
     today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 else:
@@ -124,7 +143,7 @@ else:
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（Ranker最終版） ===")
+print("\n=== 今日の銘柄（TargetClass版） ===")
 print(today[[
     "Ticker","Name",
     "raw_score","score",
