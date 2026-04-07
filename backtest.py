@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMRegressor
-from tqdm import tqdm
 
 # =========================
 # 設定
@@ -9,12 +8,12 @@ from tqdm import tqdm
 DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
+MAX_POSITIONS = 5
 TOP_N = 3
 HOLD_DAYS = 7
-RETRAIN_SPAN = 20
 
 # =========================
-# FEATURES
+# FEATURES（完全一致）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -32,161 +31,190 @@ FEATURES = [
 ]
 
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
-df = df.sort_values("Date").reset_index(drop=True)
-
-dates = df["Date"].unique()
-
-# 🔥 日付ごとに分割（高速化）
-date_groups = {d: g for d, g in df.groupby("Date")}
+df["Date"] = pd.to_datetime(df["Date"])
+df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# 状態管理
+# モデル
 # =========================
-capital = INITIAL_CAPITAL
-equity_curve = []
-
-positions = []
-model = None
-
-trade_logs = []
-daily_logs = []
+def train_model(train_df):
+    model = LGBMRegressor(
+        n_estimators=400,
+        learning_rate=0.05,
+        max_depth=-1,
+        num_leaves=31,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        n_jobs=-1
+    )
+    model.fit(train_df[FEATURES], train_df["Target"])
+    return model
 
 # =========================
 # バックテスト
 # =========================
-for i in tqdm(range(len(dates))):
+def run_backtest(train_df, test_df):
 
-    current_date = dates[i]
-    today_df = date_groups[current_date]
+    model = train_model(train_df)
 
-    # 🔥 ticker辞書（高速lookup）
-    price_dict = dict(zip(today_df["Ticker"], today_df["Close"]))
+    test_df = test_df.copy()
 
-    # =========================
-    # ① 決済
-    # =========================
-    new_positions = []
-    daily_return = 0
+    # 🔥 スコア（raw + rank）
+    test_df["raw_score"] = model.predict(test_df[FEATURES])
+    test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    for pos in positions:
-        pos["days"] += 1
+    dates = sorted(test_df["Date"].unique())
+    grouped = {d: g for d, g in test_df.groupby("Date")}
 
-        if pos["days"] >= HOLD_DAYS:
-            if pos["Ticker"] in price_dict:
-                exit_price = price_dict[pos["Ticker"]]
-                ret = (exit_price / pos["entry_price"]) - 1
-                pnl = ret * pos["weight"]
-                daily_return += pnl
+    equity = INITIAL_CAPITAL
+    cash = INITIAL_CAPITAL
+    equity_curve = []
+
+    positions = []
+    trade_logs = []
+
+    for i, d in enumerate(dates):
+
+        today = grouped[d]
+
+        # =========================
+        # 決済
+        # =========================
+        new_positions = []
+
+        for pos in positions:
+            if i == pos["exit_idx"]:
+
+                cur = today[today["Ticker"] == pos["ticker"]]
+                if cur.empty:
+                    continue
+
+                exit_price = cur["Open"].iloc[0]
+                ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
+                cash += pos["capital"] * (1 + ret)
 
                 trade_logs.append({
-                    "EntryDate": pos["entry_date"],
-                    "ExitDate": current_date,
-                    "Ticker": pos["Ticker"],
-                    "Return": ret,
-                    "Weight": pos["weight"],
-                    "Score": pos["score"],
-                    "Trend": pos["trend"]
+                    "ticker": pos["ticker"],
+                    "entry_date": pos["entry_date"],
+                    "exit_date": d,
+                    "return": ret,
+                    "score": pos["score"],
+                    "trend": pos["trend"]
                 })
-        else:
-            new_positions.append(pos)
 
-    positions = new_positions
+            else:
+                new_positions.append(pos)
 
-    # =========================
-    # ② 資産更新
-    # =========================
-    capital *= (1 + daily_return)
-    equity_curve.append(capital)
+        positions = new_positions
 
-    daily_logs.append({
-        "Date": current_date,
-        "Return": daily_return,
-        "Capital": capital
-    })
+        # =========================
+        # エントリー
+        # =========================
+        if i + 1 < len(dates):
 
-    # =========================
-    # ③ 学習
-    # =========================
-    if i < 100:
-        continue
+            available = MAX_POSITIONS - len(positions)
 
-    if (model is None) or (i % RETRAIN_SPAN == 0):
+            if available > 0 and cash > 0:
 
-        train_df = df[df["Date"] < current_date].dropna(subset=FEATURES + ["Target"])
+                today_f = today[today["score"] > 0.9]   # 🔥 強化
 
-        if len(train_df) < 1000:
-            continue
+                if len(today_f) > 0:
 
-        model = LGBMRegressor(
-            n_estimators=400,
-            learning_rate=0.05,
-            max_depth=-1,
-            num_leaves=31,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=42
-        )
+                    picks = today_f.sort_values("score", ascending=False).head(TOP_N)
+                    picks = picks.head(available)
 
-        model.fit(train_df[FEATURES], train_df["Target"])
+                    # 🔥 weight（レジーム内包）
+                    weights = (1 + picks["Trend_5_z"].clip(-1, 1))
+                    weights = weights / weights.sum()
 
-    # =========================
-    # ④ 予測
-    # =========================
-    today_df = today_df.dropna(subset=FEATURES)
+                    next_day = dates[i + 1]
+                    next_data = grouped[next_day]
 
-    if len(today_df) == 0:
-        continue
+                    for (_, row), w in zip(picks.iterrows(), weights):
 
-    today_df = today_df.copy()
+                        ticker = row["Ticker"]
 
-    today_df["raw_score"] = model.predict(today_df[FEATURES])
-    today_df["score"] = today_df["raw_score"].rank(pct=True)
+                        if any(p["ticker"] == ticker for p in positions):
+                            continue
 
-    today_df = today_df[today_df["score"] > 0.8]
-    today_df = today_df.sort_values("score", ascending=False).head(TOP_N)
+                        next_row = next_data[next_data["Ticker"] == ticker]
+                        if next_row.empty:
+                            continue
 
-    if len(today_df) == 0:
-        continue
+                        capital_alloc = cash * w
 
-    # =========================
-    # ⑤ エントリー
-    # =========================
-    weights = (1 + today_df["Trend_5_z"].clip(-1, 1))
-    weights = weights / weights.sum()
+                        exit_idx = i + HOLD_DAYS
+                        if exit_idx >= len(dates):
+                            continue
 
-    for (_, row), w in zip(today_df.iterrows(), weights):
-        positions.append({
-            "Ticker": row["Ticker"],
-            "entry_price": row["Close"],
-            "entry_date": current_date,
-            "weight": w,
-            "days": 0,
-            "score": row["score"],
-            "trend": row["Trend_5_z"]
-        })
+                        positions.append({
+                            "ticker": ticker,
+                            "entry_price": next_row["Open"].iloc[0],
+                            "entry_date": d,
+                            "exit_idx": exit_idx,
+                            "capital": capital_alloc,
+                            "score": row["score"],
+                            "trend": row["Trend_5_z"]
+                        })
+
+                        cash -= capital_alloc
+
+        # =========================
+        # 評価額
+        # =========================
+        pos_val = 0
+
+        for pos in positions:
+            cur = today[today["Ticker"] == pos["ticker"]]
+            if not cur.empty:
+                price = cur["Close"].iloc[0]
+                ret = (price - pos["entry_price"]) / pos["entry_price"]
+                pos_val += pos["capital"] * (1 + ret)
+
+        equity = cash + pos_val
+        equity_curve.append(equity)
+
+    equity_curve = pd.Series(equity_curve)
+    returns = equity_curve.pct_change().dropna()
+
+    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+    Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
+    MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
+
+    return (CAGR, Sharpe, MaxDD)
 
 # =========================
-# 結果計算
+# 実行（年次WF）
 # =========================
-equity_curve = pd.Series(equity_curve)
-returns = equity_curve.pct_change().dropna()
+results = []
 
-cagr = (equity_curve.iloc[-1]) ** (252 / len(equity_curve)) - 1
-sharpe = returns.mean() / returns.std() * np.sqrt(252)
-max_dd = (equity_curve / equity_curve.cummax() - 1).min()
+for y in sorted(df["Date"].dt.year.unique()):
 
-trades = pd.DataFrame(trade_logs)
-daily = pd.DataFrame(daily_logs)
+    if y < 2022:
+        continue
+
+    train_df = df[df["Date"].dt.year < y]
+    test_df = df[df["Date"].dt.year == y]
+
+    res = run_backtest(train_df, test_df)
+
+    if res:
+        results.append(res)
 
 # =========================
 # 出力
 # =========================
-print("\n===== Backtest Result =====")
-print(f"CAGR: {cagr:.2%}")
-print(f"Sharpe: {sharpe:.2f}")
-print(f"MaxDD: {max_dd:.2%}")
+if results:
+    cagr = np.mean([r[0] for r in results])
+    sharpe = np.mean([r[1] for r in results])
+    mdd = np.mean([r[2] for r in results])
 
-print("\nTrades:", len(trades))
+    print("\n=== RESULT ===")
+    print(f"CAGR  : {cagr:.4f}")
+    print(f"Sharpe: {sharpe:.4f}")
+    print(f"MaxDD : {mdd:.4f}")
