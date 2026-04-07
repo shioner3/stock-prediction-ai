@@ -9,7 +9,7 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 10
-HOLD_DAYS = 5
+HOLD_DAYS = 10
 
 N_BINS = 10
 
