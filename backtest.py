@@ -13,7 +13,7 @@ TOP_N = 3
 HOLD_DAYS = 7
 
 # =========================
-# FEATURES（完全一致）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -62,8 +62,6 @@ def run_backtest(train_df, test_df):
     model = train_model(train_df)
 
     test_df = test_df.copy()
-
-    # 🔥 スコア（raw + rank）
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
@@ -75,7 +73,6 @@ def run_backtest(train_df, test_df):
     equity_curve = []
 
     positions = []
-    trade_logs = []
 
     for i, d in enumerate(dates):
 
@@ -98,15 +95,6 @@ def run_backtest(train_df, test_df):
 
                 cash += pos["capital"] * (1 + ret)
 
-                trade_logs.append({
-                    "ticker": pos["ticker"],
-                    "entry_date": pos["entry_date"],
-                    "exit_date": d,
-                    "return": ret,
-                    "score": pos["score"],
-                    "trend": pos["trend"]
-                })
-
             else:
                 new_positions.append(pos)
 
@@ -121,15 +109,19 @@ def run_backtest(train_df, test_df):
 
             if available > 0 and cash > 0:
 
-                today_f = today[today["score"] > 0.9]   # 🔥 強化
+                today_f = today[today["score"] > 0.9]
 
                 if len(today_f) > 0:
 
                     picks = today_f.sort_values("score", ascending=False).head(TOP_N)
                     picks = picks.head(available)
 
-                    # 🔥 weight（レジーム内包）
+                    # 🔥 weight安全化
                     weights = (1 + picks["Trend_5_z"].clip(-1, 1))
+
+                    if weights.sum() == 0:
+                        weights = np.ones(len(weights))
+
                     weights = weights / weights.sum()
 
                     next_day = dates[i + 1]
@@ -148,6 +140,10 @@ def run_backtest(train_df, test_df):
 
                         capital_alloc = cash * w
 
+                        # 🔥 最低投資額ガード
+                        if capital_alloc <= 0:
+                            continue
+
                         exit_idx = i + HOLD_DAYS
                         if exit_idx >= len(dates):
                             continue
@@ -155,11 +151,8 @@ def run_backtest(train_df, test_df):
                         positions.append({
                             "ticker": ticker,
                             "entry_price": next_row["Open"].iloc[0],
-                            "entry_date": d,
                             "exit_idx": exit_idx,
-                            "capital": capital_alloc,
-                            "score": row["score"],
-                            "trend": row["Trend_5_z"]
+                            "capital": capital_alloc
                         })
 
                         cash -= capital_alloc
@@ -177,19 +170,34 @@ def run_backtest(train_df, test_df):
                 pos_val += pos["capital"] * (1 + ret)
 
         equity = cash + pos_val
+
+        # 🔥 NaN防止
+        if np.isnan(equity) or np.isinf(equity):
+            equity = equity_curve[-1] if len(equity_curve) > 0 else INITIAL_CAPITAL
+
         equity_curve.append(equity)
 
     equity_curve = pd.Series(equity_curve)
-    returns = equity_curve.pct_change().dropna()
 
-    CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+    # 🔥 returns安全化
+    returns = equity_curve.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+    if len(returns) == 0:
+        return (0, 0, 0)
+
+    # 🔥 CAGR安全化
+    if equity_curve.iloc[-1] <= 0:
+        CAGR = 0
+    else:
+        CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
+
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
     return (CAGR, Sharpe, MaxDD)
 
 # =========================
-# 実行（年次WF）
+# 実行
 # =========================
 results = []
 
