@@ -11,7 +11,6 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 10
 HOLD_DAYS = 5
 
-TREND_TH = 0.0
 N_BINS = 10
 
 # =========================
@@ -60,7 +59,7 @@ def train_model(train_df):
     return model
 
 # =========================
-# スコア帯最適化（上位2bin）
+# 🔥 逆張り用スコア帯（下位2bin）
 # =========================
 def optimize_score_range(train_df, model):
 
@@ -82,12 +81,12 @@ def optimize_score_range(train_df, model):
 
     stats = df_tmp.groupby("bin")["Target"].mean()
 
-    # 🔥 上位2binに変更
-    good_bins = stats.sort_values().tail(2).index
+    # 🔥 下位2bin（弱い銘柄）
+    good_bins = stats.sort_values().head(2).index
 
-    print("\n=== SCORE BIN OPT ===")
+    print("\n=== SCORE BIN OPT (MEAN REVERSION) ===")
     print(stats)
-    print("USE TOP BINS:", list(good_bins))
+    print("USE LOW BINS:", list(good_bins))
 
     return bins, good_bins
 
@@ -102,7 +101,6 @@ def run_backtest(train_df, test_df):
 
     test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
-    test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
     # bin適用
     test_df["bin"] = pd.cut(
@@ -111,7 +109,7 @@ def run_backtest(train_df, test_df):
         include_lowest=True
     )
 
-    # binランク化
+    # 🔥 低bin優先（逆張り）
     bin_order = {b: i for i, b in enumerate(sorted(good_bins))}
     test_df["bin_rank"] = test_df["bin"].map(bin_order)
 
@@ -151,7 +149,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー
+        # エントリー（🔥純逆張り）
         # =========================
         if i + 1 < len(dates):
 
@@ -162,18 +160,18 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 緩和版ロジック
                 today_f = today[
-                    (today["Regime"] != "up") &        # ←緩和
-                    (today["Return_1"] < -0.005) &     # ←緩和
-                    (today["bin"].isin(good_bins))
+                    (today["Regime"] == "down") &     # 下げ相場限定
+                    (today["Return_1"] < -0.01) &     # 落ちすぎ
+                    (today["bin"].isin(good_bins))    # 弱い銘柄
                 ]
 
                 if len(today_f) > 0:
 
+                    # 🔥 弱い順（より落ちてる方）
                     picks = today_f.sort_values(
                         ["bin_rank", "raw_score"],
-                        ascending=[False, False]
+                        ascending=[True, True]
                     ).head(available)
 
                     capital_per_position = cash / len(picks)
