@@ -24,7 +24,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# FEATURES（完全一致）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -60,11 +60,7 @@ def train_model(train_df):
         random_state=42
     )
 
-    model.fit(
-        train_df[FEATURES],
-        train_df["Target"],
-        group=group
-    )
+    model.fit(train_df[FEATURES], train_df["Target"], group=group)
 
     return model
 
@@ -76,8 +72,6 @@ def run_backtest(train_df, test_df):
     model = train_model(train_df)
 
     test_df = test_df.copy()
-
-    # 🔥 予測 → rank化
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
@@ -95,11 +89,8 @@ def run_backtest(train_df, test_df):
 
         today = grouped[d]
 
-        # =========================
-        # 決済（翌日寄り）
-        # =========================
+        # 決済
         new_positions = []
-
         for pos in positions:
 
             if i == pos["exit_idx"]:
@@ -118,7 +109,8 @@ def run_backtest(train_df, test_df):
                     "entry_date": pos["entry_date"],
                     "exit_date": d,
                     "return": ret,
-                    "capital": pos["capital"]
+                    "capital": pos["capital"],
+                    "Market_Trend": pos["market_trend"]
                 })
 
             else:
@@ -126,9 +118,7 @@ def run_backtest(train_df, test_df):
 
         positions = new_positions
 
-        # =========================
         # エントリー
-        # =========================
         if i + 1 < len(dates):
 
             available = MAX_POSITIONS - len(positions)
@@ -140,20 +130,16 @@ def run_backtest(train_df, test_df):
 
                 today_f = today.copy()
 
-                # 🔥 Marketフィルター
                 if USE_MARKET_FILTER:
                     today_f = today_f[today_f["Market_Trend"] > 0]
 
-                # 🔥 TOP_RATE
                 today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
                 if len(today_f) > 0:
 
                     picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
-                    # 🔥 weight = score × trend
                     weights = picks["score"] * (1 + picks["Trend_5_z"].clip(-1, 1))
-
                     if weights.sum() == 0:
                         continue
 
@@ -162,8 +148,8 @@ def run_backtest(train_df, test_df):
                     for j, row in enumerate(picks.itertuples()):
 
                         ticker = row.Ticker
-
                         next_row = next_data[next_data["Ticker"] == ticker]
+
                         if next_row.empty:
                             continue
 
@@ -179,16 +165,14 @@ def run_backtest(train_df, test_df):
                             "entry_price": next_row["Open"].iloc[0],
                             "entry_date": d,
                             "exit_idx": exit_idx,
-                            "capital": capital
+                            "capital": capital,
+                            "market_trend": row.Market_Trend
                         })
 
                         cash -= capital
 
-        # =========================
         # 評価
-        # =========================
         pos_val = 0
-
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
             if not cur.empty:
@@ -202,14 +186,69 @@ def run_backtest(train_df, test_df):
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
-    if len(equity_curve) < 50:
+    trade_df = pd.DataFrame(trade_logs)
+
+    if len(equity_curve) < 50 or trade_df.empty:
         return None
 
+    # =========================
+    # 基本指標
+    # =========================
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    return CAGR, Sharpe, MaxDD
+    # =========================
+    # 勝ちの質
+    # =========================
+    win_rate = (trade_df["return"] > 0).mean()
+
+    avg_win = trade_df[trade_df["return"] > 0]["return"].mean()
+    avg_loss = trade_df[trade_df["return"] < 0]["return"].mean()
+
+    pf = -avg_win / avg_loss if avg_loss != 0 else np.nan
+
+    expectancy = win_rate * avg_win + (1 - win_rate) * avg_loss
+
+    # =========================
+    # 安定性
+    # =========================
+    trade_count = len(trade_df)
+
+    # 月次
+    equity_df = pd.DataFrame({"Date": dates, "Equity": equity_curve})
+    equity_df["Month"] = equity_df["Date"].dt.to_period("M")
+    monthly = equity_df.groupby("Month")["Equity"].last().pct_change()
+
+    # 連敗
+    losses = (trade_df["return"] < 0).astype(int)
+    streak = (losses.groupby((losses != losses.shift()).cumsum()).cumsum()).max()
+
+    # =========================
+    # 分布
+    # =========================
+    desc = trade_df["return"].describe()
+
+    # =========================
+    # Regime別
+    # =========================
+    regime_perf = trade_df.groupby(
+        trade_df["Market_Trend"] > 0
+    )["return"].mean()
+
+    return {
+        "CAGR": CAGR,
+        "Sharpe": Sharpe,
+        "MaxDD": MaxDD,
+        "WinRate": win_rate,
+        "PF": pf,
+        "Expectancy": expectancy,
+        "Trades": trade_count,
+        "MaxLosingStreak": streak,
+        "ReturnDist": desc,
+        "Monthly": monthly,
+        "Regime": regime_perf
+    }
 
 # =========================
 # 実行
@@ -217,7 +256,6 @@ def run_backtest(train_df, test_df):
 results = []
 
 for y in sorted(df["Date"].dt.year.unique()):
-
     if y < 2022:
         continue
 
@@ -225,20 +263,32 @@ for y in sorted(df["Date"].dt.year.unique()):
     test_df = df[df["Date"].dt.year == y]
 
     res = run_backtest(train_df, test_df)
-
     if res:
         results.append(res)
 
 # =========================
-# 結果
+# 出力
 # =========================
-if results:
+for i, r in enumerate(results):
 
-    cagr = np.mean([r[0] for r in results])
-    sharpe = np.mean([r[1] for r in results])
-    mdd = np.mean([r[2] for r in results])
+    print(f"\n=== YEAR {i} ===")
 
-    print("\n=== RESULT（完全一致版）===")
-    print(f"CAGR  : {cagr:.4f}")
-    print(f"Sharpe: {sharpe:.4f}")
-    print(f"MaxDD : {mdd:.4f}")
+    print("\n--- 基本 ---")
+    print(f"CAGR  : {r['CAGR']:.3f}")
+    print(f"Sharpe: {r['Sharpe']:.3f}")
+    print(f"MaxDD : {r['MaxDD']:.3f}")
+
+    print("\n--- 勝ちの質 ---")
+    print(f"WinRate   : {r['WinRate']:.3f}")
+    print(f"PF        : {r['PF']:.3f}")
+    print(f"Expectancy: {r['Expectancy']:.4f}")
+
+    print("\n--- 安定性 ---")
+    print(f"Trades          : {r['Trades']}")
+    print(f"Max Losing Streak: {r['MaxLosingStreak']}")
+
+    print("\n--- 分布 ---")
+    print(r["ReturnDist"])
+
+    print("\n--- Regime別 ---")
+    print(r["Regime"])
