@@ -5,10 +5,10 @@ import pickle
 from lightgbm import LGBMRanker
 
 # =========================
-# 設定（重要パラメータ）
+# 設定
 # =========================
 TOP_N = 3
-TOP_RATE = 0.1        # ← ここ調整ポイント（0.01〜0.1）
+TOP_RATE = 0.1
 HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
@@ -27,7 +27,7 @@ train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
 # =========================
-# FEATURES（完全一致）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -47,13 +47,18 @@ FEATURES = [
 ]
 
 # =========================
-# ランキング学習用 group 作成
+# 学習データ前処理（🔥ここ重要）
 # =========================
-train_df = train_df.sort_values("Date")
+train_df = train_df.sort_values("Date").copy()
+
+# 🔥 Rankラベル生成
+train_df["TargetRank"] = train_df.groupby("Date")["Target"].rank(method="first")
+
+# group作成
 group = train_df.groupby("Date").size().to_list()
 
 # =========================
-# モデル（🔥 Ranker化）
+# モデル
 # =========================
 model = LGBMRanker(
     n_estimators=1000,
@@ -64,14 +69,16 @@ model = LGBMRanker(
     random_state=42
 )
 
-# 学習
+# 🔥 Target → TargetRankに変更
 model.fit(
     train_df[FEATURES],
-    train_df["Target"],
+    train_df["TargetRank"],
     group=group
 )
 
-# 保存
+# =========================
+# モデル保存
+# =========================
 with open(MODEL_PATH, "wb") as f:
     pickle.dump(model, f)
 
@@ -80,43 +87,44 @@ with open(MODEL_PATH, "wb") as f:
 # =========================
 today = predict_df.copy()
 
-# rawスコア
 today["raw_score"] = model.predict(today[FEATURES])
 
-# rank化（クロスセクション）
+# クロスセクションrank
 today["score"] = today["raw_score"].rank(pct=True)
 
 # =========================
-# 🔥 市場フィルター（DD削減）
+# 市場フィルター
 # =========================
 if USE_MARKET_FILTER:
     today = today[today["Market_Trend"] > 0]
 
 # =========================
-# 🔥 TOP_RATEフィルター
+# TOP_RATEフィルター
 # =========================
 today = today[today["score"] >= (1 - TOP_RATE)]
 
 # =========================
-# 🔥 最終選抜
+# 最終選抜
 # =========================
 today = today.sort_values("score", ascending=False).head(TOP_N)
 
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 🔥 重み（最重要改善）
+# 重み（score × trend）
 # =========================
-# スコア × トレンド
 today["weight_raw"] = today["score"] * (1 + today["Trend_5_z"].clip(-1, 1))
 
-# 正規化
-today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
+# ゼロ除算防止
+if today["weight_raw"].sum() > 0:
+    today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
+else:
+    today["weight"] = 1.0 / len(today)
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（収益化版） ===")
+print("\n=== 今日の銘柄（Ranker最終版） ===")
 print(today[[
     "Ticker","Name",
     "raw_score","score",
