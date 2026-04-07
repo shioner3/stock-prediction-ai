@@ -45,7 +45,7 @@ FEATURES = [
 ]
 
 # =========================
-# 🔥 TargetClass作成（超重要）
+# TargetClass
 # =========================
 def make_target_class(x):
     try:
@@ -72,7 +72,6 @@ def train_model(train_df):
         random_state=42
     )
 
-    # 🔥 Target → TargetClass
     model.fit(
         train_df[FEATURES],
         train_df["TargetClass"],
@@ -106,9 +105,7 @@ def run_backtest(train_df, test_df):
 
         today = grouped[d]
 
-        # =========================
         # 決済
-        # =========================
         new_positions = []
         for pos in positions:
 
@@ -137,9 +134,7 @@ def run_backtest(train_df, test_df):
 
         positions = new_positions
 
-        # =========================
         # エントリー
-        # =========================
         if i + 1 < len(dates):
 
             available = MAX_POSITIONS - len(positions)
@@ -193,9 +188,7 @@ def run_backtest(train_df, test_df):
 
                         cash -= capital
 
-        # =========================
         # 評価
-        # =========================
         pos_val = 0
         for pos in positions:
             cur = today[today["Ticker"] == pos["ticker"]]
@@ -215,9 +208,6 @@ def run_backtest(train_df, test_df):
     if len(equity_curve) < 50 or trade_df.empty:
         return None
 
-    # =========================
-    # 指標
-    # =========================
     CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
@@ -251,5 +241,50 @@ def run_backtest(train_df, test_df):
         "Trades": trade_count,
         "MaxLosingStreak": streak,
         "ReturnDist": desc,
-        "Regime": regime_perf
+        "Regime": regime_perf,
+        "TradeLog": trade_df
     }
+
+# =========================
+# 実行
+# =========================
+results = []
+all_trades = []
+
+for y in sorted(df["Date"].dt.year.unique()):
+    if y < 2022:
+        continue
+
+    train_df = df[df["Date"].dt.year < y]
+    test_df = df[df["Date"].dt.year == y]
+
+    res = run_backtest(train_df, test_df)
+
+    if res:
+        results.append(res)
+        all_trades.append(res["TradeLog"])
+
+# =========================
+# 出力（コンソール）
+# =========================
+for i, r in enumerate(results):
+
+    print(f"\n=== YEAR {i} ===")
+
+    print("\n--- 基本 ---")
+    print(f"CAGR  : {r['CAGR']:.3f}")
+    print(f"Sharpe: {r['Sharpe']:.3f}")
+    print(f"MaxDD : {r['MaxDD']:.3f}")
+
+    print("\n--- 勝ちの質 ---")
+    print(f"WinRate   : {r['WinRate']:.3f}")
+    print(f"PF        : {r['PF']:.3f}")
+    print(f"Expectancy: {r['Expectancy']:.4f}")
+
+    print("\n--- 安定性 ---")
+    print(f"Trades          : {r['Trades']}")
+    print(f"Max Losing Streak: {r['MaxLosingStreak']}")
+
+    print("\n--- Regime別 ---")
+    print(r["Regime"])
+
