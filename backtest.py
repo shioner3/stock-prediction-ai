@@ -60,7 +60,7 @@ def train_model(train_df):
     return model
 
 # =========================
-# スコア帯最適化
+# スコア帯最適化（上位1bin）
 # =========================
 def optimize_score_range(train_df, model):
 
@@ -82,12 +82,12 @@ def optimize_score_range(train_df, model):
 
     stats = df_tmp.groupby("bin")["Target"].mean()
 
-    # 上位2bin
-    good_bins = stats.sort_values().tail(2).index
+    # 🔥 上位1binのみ
+    good_bins = stats.sort_values().tail(1).index
 
     print("\n=== SCORE BIN OPT ===")
     print(stats)
-    print("USE TOP BINS:", list(good_bins))
+    print("USE TOP BIN:", list(good_bins))
 
     return bins, good_bins
 
@@ -162,17 +162,15 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                # 🔥 逆張り + 落ちすぎ + down特化 + 高bin
+                # 🔥 シンプル版（今回の変更）
                 today_f = today[
-                    (today["Trend_5_z"] < 0) &                  # 逆張り
-                    (today["Return_1"] < -0.02) &               # 落ちすぎ
-                    (today["Regime"] == "down") &               # down限定
-                    (today["bin"].isin(good_bins))              # 高期待値
+                    (today["Regime"] == "down") &
+                    (today["Return_1"] < -0.01) &
+                    (today["bin"].isin(good_bins))
                 ]
 
                 if len(today_f) > 0:
 
-                    # bin優先 → raw_score順
                     picks = today_f.sort_values(
                         ["bin_rank", "raw_score"],
                         ascending=[False, False]
