@@ -32,11 +32,15 @@ FEATURES = [
 ]
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df = df.sort_values("Date").reset_index(drop=True)
+
 dates = df["Date"].unique()
+
+# 🔥 日付ごとに分割（高速化）
+date_groups = {d: g for d, g in df.groupby("Date")}
 
 # =========================
 # 状態管理
@@ -47,7 +51,6 @@ equity_curve = []
 positions = []
 model = None
 
-# 分析用ログ
 trade_logs = []
 daily_logs = []
 
@@ -57,6 +60,10 @@ daily_logs = []
 for i in tqdm(range(len(dates))):
 
     current_date = dates[i]
+    today_df = date_groups[current_date]
+
+    # 🔥 ticker辞書（高速lookup）
+    price_dict = dict(zip(today_df["Ticker"], today_df["Close"]))
 
     # =========================
     # ① 決済
@@ -68,19 +75,12 @@ for i in tqdm(range(len(dates))):
         pos["days"] += 1
 
         if pos["days"] >= HOLD_DAYS:
-            exit_row = df[
-                (df["Date"] == current_date) &
-                (df["Ticker"] == pos["Ticker"])
-            ]
-
-            if len(exit_row) > 0:
-                exit_price = exit_row["Close"].values[0]
+            if pos["Ticker"] in price_dict:
+                exit_price = price_dict[pos["Ticker"]]
                 ret = (exit_price / pos["entry_price"]) - 1
-
                 pnl = ret * pos["weight"]
                 daily_return += pnl
 
-                # 🔥 トレードログ
                 trade_logs.append({
                     "EntryDate": pos["entry_date"],
                     "ExitDate": current_date,
@@ -116,6 +116,7 @@ for i in tqdm(range(len(dates))):
     if (model is None) or (i % RETRAIN_SPAN == 0):
 
         train_df = df[df["Date"] < current_date].dropna(subset=FEATURES + ["Target"])
+
         if len(train_df) < 1000:
             continue
 
@@ -128,17 +129,19 @@ for i in tqdm(range(len(dates))):
             colsample_bytree=0.8,
             random_state=42
         )
+
         model.fit(train_df[FEATURES], train_df["Target"])
 
     # =========================
     # ④ 予測
     # =========================
-    today_df = df[df["Date"] == current_date].dropna(subset=FEATURES)
+    today_df = today_df.dropna(subset=FEATURES)
 
     if len(today_df) == 0:
         continue
 
     today_df = today_df.copy()
+
     today_df["raw_score"] = model.predict(today_df[FEATURES])
     today_df["score"] = today_df["raw_score"].rank(pct=True)
 
@@ -175,72 +178,15 @@ cagr = (equity_curve.iloc[-1]) ** (252 / len(equity_curve)) - 1
 sharpe = returns.mean() / returns.std() * np.sqrt(252)
 max_dd = (equity_curve / equity_curve.cummax() - 1).min()
 
-# =========================
-# 🔥 分析
-# =========================
 trades = pd.DataFrame(trade_logs)
 daily = pd.DataFrame(daily_logs)
 
+# =========================
+# 出力
+# =========================
 print("\n===== Backtest Result =====")
 print(f"CAGR: {cagr:.2%}")
 print(f"Sharpe: {sharpe:.2f}")
 print(f"MaxDD: {max_dd:.2%}")
 
-# =========================
-# 勝率・PF
-# =========================
-win_rate = (trades["Return"] > 0).mean()
-avg_win = trades[trades["Return"] > 0]["Return"].mean()
-avg_loss = trades[trades["Return"] <= 0]["Return"].mean()
-pf = trades[trades["Return"] > 0]["Return"].sum() / abs(trades[trades["Return"] <= 0]["Return"].sum())
-
-print("\n=== Trade Stats ===")
-print(f"Trades: {len(trades)}")
-print(f"WinRate: {win_rate:.2%}")
-print(f"AvgWin: {avg_win:.4f}")
-print(f"AvgLoss: {avg_loss:.4f}")
-print(f"PF: {pf:.2f}")
-
-# =========================
-# 最大連敗
-# =========================
-loss_streak = (trades["Return"] <= 0).astype(int)
-max_losing_streak = (loss_streak.groupby((loss_streak != loss_streak.shift()).cumsum()).cumsum()).max()
-
-print("\nMax Losing Streak:", max_losing_streak)
-
-# =========================
-# 月次リターン
-# =========================
-daily["Month"] = pd.to_datetime(daily["Date"]).dt.to_period("M")
-monthly = daily.groupby("Month")["Return"].sum()
-
-print("\n=== Monthly Return ===")
-print(monthly.tail(12))
-
-# =========================
-# スコア別リターン
-# =========================
-trades["score_bin"] = pd.qcut(trades["Score"], 10, labels=False)
-score_analysis = trades.groupby("score_bin")["Return"].mean()
-
-print("\n=== Score別リターン ===")
-print(score_analysis)
-
-# =========================
-# レジーム別
-# =========================
-trades["trend_bin"] = pd.qcut(trades["Trend"], 5, labels=False)
-trend_analysis = trades.groupby("trend_bin")["Return"].mean()
-
-print("\n=== Trend別リターン ===")
-print(trend_analysis)
-
-# =========================
-# DD期間
-# =========================
-dd = equity_curve / equity_curve.cummax() - 1
-dd_duration = (dd < 0).astype(int)
-max_dd_duration = dd_duration.groupby((dd_duration != dd_duration.shift()).cumsum()).cumsum().max()
-
-print("\nMax DD Duration:", max_dd_duration)
+print("\nTrades:", len(trades))
