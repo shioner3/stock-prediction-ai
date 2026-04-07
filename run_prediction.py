@@ -2,13 +2,16 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMRanker
 
 # =========================
-# 設定
+# 設定（重要パラメータ）
 # =========================
 TOP_N = 3
-HOLD_DAYS = 7   # ← feature側と統一（重要）
+TOP_RATE = 0.1        # ← ここ調整ポイント（0.01〜0.1）
+HOLD_DAYS = 7
+
+USE_MARKET_FILTER = True
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -27,48 +30,46 @@ predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 # FEATURES（完全一致）
 # =========================
 FEATURES = [
-    # ベース
     "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
     "Rel_Return_1",
-
-    # トレンド
     "Trend_5_z","Trend_10_z","Trend_diff",
-
-    # 追加
     "Gap",
     "Volatility_change",
     "Momentum_acc",
-
-    # クロスセクション🔥
     "Return_1_rank","Return_3_rank",
     "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
-
-    # 市場
     "Market_Z","Market_Trend",
-
-    # 時間
     "DayOfWeek"
 ]
 
 # =========================
-# モデル
+# ランキング学習用 group 作成
 # =========================
-model = LGBMRegressor(
-    n_estimators=400,
-    learning_rate=0.05,
-    max_depth=-1,
-    num_leaves=31,
+train_df = train_df.sort_values("Date")
+group = train_df.groupby("Date").size().to_list()
+
+# =========================
+# モデル（🔥 Ranker化）
+# =========================
+model = LGBMRanker(
+    n_estimators=1000,
+    learning_rate=0.01,
+    num_leaves=63,
     subsample=0.8,
     colsample_bytree=0.8,
     random_state=42
 )
 
 # 学習
-model.fit(train_df[FEATURES], train_df["Target"])
+model.fit(
+    train_df[FEATURES],
+    train_df["Target"],
+    group=group
+)
 
 # 保存
 with open(MODEL_PATH, "wb") as f:
@@ -79,49 +80,59 @@ with open(MODEL_PATH, "wb") as f:
 # =========================
 today = predict_df.copy()
 
-# 生スコア
+# rawスコア
 today["raw_score"] = model.predict(today[FEATURES])
 
 # rank化（クロスセクション）
 today["score"] = today["raw_score"].rank(pct=True)
 
 # =========================
-# 🔥 改良①：極端値除外（安定化）
+# 🔥 市場フィルター（DD削減）
 # =========================
-today = today[(today["score"] > 0.8)]  # 上位20%だけ残す
+if USE_MARKET_FILTER:
+    today = today[today["Market_Trend"] > 0]
 
 # =========================
-# 🔥 改良②：最終選択
+# 🔥 TOP_RATEフィルター
+# =========================
+today = today[today["score"] >= (1 - TOP_RATE)]
+
+# =========================
+# 🔥 最終選抜
 # =========================
 today = today.sort_values("score", ascending=False).head(TOP_N)
 
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 🔥 改良③：ポジションサイズ用（重要）
+# 🔥 重み（最重要改善）
 # =========================
-# トレンドをそのまま利用
-today["weight"] = 1 + today["Trend_5_z"].clip(-1, 1)
+# スコア × トレンド
+today["weight_raw"] = today["score"] * (1 + today["Trend_5_z"].clip(-1, 1))
 
-# 正規化（合計1）
-today["weight"] = today["weight"] / today["weight"].sum()
+# 正規化
+today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（最終版） ===")
+print("\n=== 今日の銘柄（収益化版） ===")
 print(today[[
     "Ticker","Name",
     "raw_score","score",
-    "Trend_5_z","weight",
+    "Trend_5_z",
+    "weight",
     "PredRank"
 ]])
 
 # =========================
-# デバッグ（重要）
+# デバッグ
 # =========================
 print("\n=== SCORE分布 ===")
 print(today["score"].describe())
+
+print("\n=== 件数 ===")
+print(len(today))
 
 print("\n=== 使用特徴量数 ===")
 print(len(FEATURES))
