@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
+import lightgbm as lgb
 from lightgbm import LGBMRanker
 
 # =========================
@@ -12,7 +13,10 @@ TOP_RATE = 0.1
 HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
-N_CLASS = 30  # ← クラス数
+N_CLASS = 30
+
+# 🔥 追加（高速化）
+TRAIN_START_DATE = "2018-01-01"
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -26,6 +30,9 @@ MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 # =========================
 train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
+
+# 🔥 古いデータ削減（高速化＋精度安定）
+train_df = train_df[train_df["Date"] >= TRAIN_START_DATE].copy()
 
 # =========================
 # FEATURES
@@ -52,48 +59,43 @@ FEATURES = [
 # =========================
 train_df = train_df.sort_values("Date").copy()
 
-# 🔥 日付ごとにqcut（安全版）
+# 🔥 TargetClass（安全版）
 def make_target_class(x):
     try:
-        return pd.qcut(
-            x,
-            q=N_CLASS,
-            labels=False,
-            duplicates="drop"
-        )
+        return pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
     except:
-        # fallback（データ少ない日対策）
-        return pd.cut(
-            x,
-            bins=min(N_CLASS, len(x)),
-            labels=False
-        )
+        return pd.cut(x, bins=min(N_CLASS, len(x)), labels=False)
 
 train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
-
-# 念のためint化
 train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
 # group作成
 group = train_df.groupby("Date").size().to_list()
 
 # =========================
-# モデル
+# 🔥 モデル（高速化版）
 # =========================
 model = LGBMRanker(
-    n_estimators=1000,
-    learning_rate=0.01,
-    num_leaves=63,
+    n_estimators=300,          # ← ①削減
+    learning_rate=0.03,
+    num_leaves=31,
     subsample=0.8,
     colsample_bytree=0.8,
-    random_state=42
+    random_state=42,
+    n_jobs=-1                  # ← ③CPUフル活用
 )
 
-# 🔥 Target → TargetClass
+# =========================
+# 🔥 学習（early stopping）
+# =========================
 model.fit(
     train_df[FEATURES],
     train_df["TargetClass"],
-    group=group
+    group=group,
+    eval_set=[(train_df[FEATURES], train_df["TargetClass"])],
+    eval_group=[group],
+    eval_at=[5],
+    callbacks=[lgb.early_stopping(50)]   # ← ②
 )
 
 # =========================
@@ -143,7 +145,7 @@ else:
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（TargetClass版） ===")
+print("\n=== 今日の銘柄（高速化版） ===")
 print(today[[
     "Ticker","Name",
     "raw_score","score",
