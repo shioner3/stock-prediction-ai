@@ -9,9 +9,10 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 10
-HOLD_DAYS = 10
+HOLD_DAYS = 5
 
 N_BINS = 10
+THRESHOLD = 0.002  # 🔥 重要（調整ポイント）
 
 # =========================
 # データ
@@ -59,59 +60,14 @@ def train_model(train_df):
     return model
 
 # =========================
-# 🔥 逆張り用スコア帯（下位2bin）
-# =========================
-def optimize_score_range(train_df, model):
-
-    df_tmp = train_df.copy()
-    df_tmp["raw_score"] = model.predict(df_tmp[FEATURES])
-
-    _, bins = pd.qcut(
-        df_tmp["raw_score"],
-        N_BINS,
-        retbins=True,
-        duplicates="drop"
-    )
-
-    df_tmp["bin"] = pd.cut(
-        df_tmp["raw_score"],
-        bins=bins,
-        include_lowest=True
-    )
-
-    stats = df_tmp.groupby("bin")["Target"].mean()
-
-    # 🔥 下位2bin（弱い銘柄）
-    good_bins = stats.sort_values().head(2).index
-
-    print("\n=== SCORE BIN OPT (MEAN REVERSION) ===")
-    print(stats)
-    print("USE LOW BINS:", list(good_bins))
-
-    return bins, good_bins
-
-# =========================
 # バックテスト
 # =========================
 def run_backtest(train_df, test_df):
 
     model = train_model(train_df)
 
-    bins, good_bins = optimize_score_range(train_df, model)
-
     test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
-
-    # bin適用
-    test_df["bin"] = pd.cut(
-        test_df["raw_score"],
-        bins=bins,
-        include_lowest=True
-    )
-
-    # 🔥 低bin優先（逆張り）
-    bin_order = {b: i for i, b in enumerate(sorted(good_bins))}
-    test_df["bin_rank"] = test_df["bin"].map(bin_order)
 
     dates = sorted(test_df["Date"].unique())
     grouped = {d: g for d, g in test_df.groupby("Date")}
@@ -149,7 +105,7 @@ def run_backtest(train_df, test_df):
         positions = new_positions
 
         # =========================
-        # エントリー（🔥純逆張り）
+        # エントリー（🔥ハイブリッド）
         # =========================
         if i + 1 < len(dates):
 
@@ -160,19 +116,31 @@ def run_backtest(train_df, test_df):
                 next_day = dates[i + 1]
                 next_data = grouped[next_day]
 
-                today_f = today[
-                    (today["Regime"] == "down") &     # 下げ相場限定
-                    (today["Return_1"] < -0.01) &     # 落ちすぎ
-                    (today["bin"].isin(good_bins))    # 弱い銘柄
+                # =========================
+                # ① 逆張り
+                # =========================
+                mr = today[
+                    (today["Return_1"] < -0.02) &
+                    (today["raw_score"] > THRESHOLD)
                 ]
 
-                if len(today_f) > 0:
+                # =========================
+                # ② 順張り
+                # =========================
+                mom = today[
+                    (today["Return_1"] > 0.01) &
+                    (today["raw_score"] > THRESHOLD)
+                ]
 
-                    # 🔥 弱い順（より落ちてる方）
-                    picks = today_f.sort_values(
-                        ["bin_rank", "raw_score"],
-                        ascending=[True, True]
-                    ).head(available)
+                # =========================
+                # 上位抽出
+                # =========================
+                mr_picks = mr.sort_values("raw_score", ascending=False).head(available // 2)
+                mom_picks = mom.sort_values("raw_score", ascending=False).head(available // 2)
+
+                picks = pd.concat([mr_picks, mom_picks])
+
+                if len(picks) > 0:
 
                     capital_per_position = cash / len(picks)
 
