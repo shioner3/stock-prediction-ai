@@ -11,7 +11,7 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
 TOP_N = 3
-TOP_RATE = 0.01
+TOP_RATE = 0.005   # 🔥 変更
 HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
@@ -64,13 +64,13 @@ def train_model(train_df):
     group = train_df.groupby("Date").size().to_list()
 
     model = LGBMRanker(
-        n_estimators=300,              # 🔥 1000→300
-        learning_rate=0.03,            # 🔥 少し上げる
+        n_estimators=300,
+        learning_rate=0.03,
         num_leaves=63,
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42,
-        n_jobs=-1                      # 🔥 全CPU使用
+        n_jobs=-1
     )
 
     model.fit(
@@ -92,7 +92,6 @@ def run_backtest(train_df, test_df):
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    # 🔥 高速化：事前dict化
     grouped = {d: g.set_index("Ticker") for d, g in test_df.groupby("Date")}
     dates = sorted(grouped.keys())
 
@@ -122,7 +121,6 @@ def run_backtest(train_df, test_df):
                 ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
                 cash += pos["capital"] * (1 + ret)
-
                 trade_logs.append(ret)
 
             else:
@@ -140,16 +138,21 @@ def run_backtest(train_df, test_df):
 
             today_f = today.copy()
 
+            # 🔥 市場フィルター（強化）
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0.001]
+                today_f = today_f[today_f["Market_Trend"] > 0.003]
 
-            today_f = today_f[today_f["Trend_5_z"] > 0.5]
+            # 🔥 トレンド強化
+            today_f = today_f[today_f["Trend_5_z"] > 1.0]
+
+            # 🔥 TOP_RATE（強化）
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
+                # 🔥 ウェイト（そのまま維持）
                 weights = (picks["score"] ** 2) * (1 + picks["Trend_5_z"].clip(0, 2))
 
                 if weights.sum() == 0:
