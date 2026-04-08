@@ -10,8 +10,8 @@ DATA_PATH = "ml_dataset.parquet"
 INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
-TOP_N = 3
-TOP_RATE = 0.005   # 🔥 変更
+TOP_N = 1                  # 🔥 変更
+TOP_RATE = 0.002           # 🔥 変更
 HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
@@ -138,21 +138,20 @@ def run_backtest(train_df, test_df):
 
             today_f = today.copy()
 
-            # 🔥 市場フィルター（強化）
+            # 🔥 市場フィルター（さらに強化）
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0.003]
+                today_f = today_f[today_f["Market_Trend"] > 0.005]
 
             # 🔥 トレンド強化
-            today_f = today_f[today_f["Trend_5_z"] > 1.0]
+            today_f = today_f[today_f["Trend_5_z"] > 1.5]
 
-            # 🔥 TOP_RATE（強化）
+            # 🔥 TOP_RATE（さらに絞る）
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
-                # 🔥 ウェイト（そのまま維持）
                 weights = (picks["score"] ** 2) * (1 + picks["Trend_5_z"].clip(0, 2))
 
                 if weights.sum() == 0:
