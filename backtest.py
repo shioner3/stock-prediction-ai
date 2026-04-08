@@ -18,8 +18,9 @@ N_CLASS = 30
 
 MAX_TICKERS = 1000
 
-# 🔥 ストップロス候補
+# 🔥 最適化パラメータ
 STOP_LOSS_LIST = [-0.03]
+TAKE_PROFIT_LIST = [0.03, 0.05, 0.08, 0.10]
 
 # 🔥 ウォークフォワード設定
 WF_PERIODS = [
@@ -30,7 +31,7 @@ WF_PERIODS = [
 ]
 
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
@@ -72,7 +73,7 @@ def make_target_class(x):
 df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class).astype(int)
 
 # =========================
-# モデル学習
+# モデル
 # =========================
 def train_model(train_df):
     train_df = train_df.sort_values("Date")
@@ -97,9 +98,9 @@ def train_model(train_df):
     return model
 
 # =========================
-# バックテスト
+# バックテスト（SL + TP）
 # =========================
-def run_backtest(model, test_df, STOP_LOSS):
+def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
 
     test_df = test_df.copy()
     test_df["raw_score"] = model.predict(test_df[FEATURES])
@@ -132,7 +133,8 @@ def run_backtest(model, test_df, STOP_LOSS):
             price = today.loc[pos["ticker"], "Close"]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            if ret <= STOP_LOSS or i == pos["exit_idx"]:
+            # 🔥 SL or TP or 期限
+            if ret <= STOP_LOSS or ret >= TAKE_PROFIT or i == pos["exit_idx"]:
 
                 exit_price = today.loc[pos["ticker"], "Open"]
                 final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
@@ -242,22 +244,24 @@ for train_years, test_year in WF_PERIODS:
     model = train_model(train_df)
 
     for STOP_LOSS in STOP_LOSS_LIST:
+        for TAKE_PROFIT in TAKE_PROFIT_LIST:
 
-        res = run_backtest(model, test_df, STOP_LOSS)
+            res = run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT)
 
-        if res is None:
-            continue
+            if res is None:
+                continue
 
-        res["Train"] = str(train_years)
-        res["Test"] = test_year
-        res["STOP_LOSS"] = STOP_LOSS
+            res["Train"] = str(train_years)
+            res["Test"] = test_year
+            res["STOP_LOSS"] = STOP_LOSS
+            res["TAKE_PROFIT"] = TAKE_PROFIT
 
-        results.append(res)
+            results.append(res)
 
 # =========================
 # 結果表示
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== ウォークフォワード結果 ===")
-print(result_df.sort_values(["Test"]))
+print("\n=== ウォークフォワード結果（SL+TP最適化） ===")
+print(result_df.sort_values(["Test", "PF"], ascending=[True, False]))
