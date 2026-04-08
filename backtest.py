@@ -9,9 +9,9 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 
-TOP_N = 3
+TOP_N = 5
 TOP_RATE = 0.005
-HOLD_DAYS = 7
+HOLD_DAYS = 5
 STOP_LOSS = -0.05
 
 USE_MARKET_FILTER = True
@@ -104,19 +104,20 @@ grouped = {d: g.set_index("Ticker") for d, g in test_df.groupby("Date")}
 dates = sorted(grouped.keys())
 
 # =========================
-# バックテスト（SL/TP付き）
+# バックテスト（SL付き）
 # =========================
 equity = INITIAL_CAPITAL
 cash = INITIAL_CAPITAL
 positions = []
-trade_returns = []
+
+trade_logs = []  # 🔥 ここを拡張
 
 for i, d in enumerate(dates):
 
     today = grouped[d]
 
     # =========================
-    # 決済（SL/TP + 期限）
+    # 決済
     # =========================
     new_positions = []
 
@@ -128,14 +129,18 @@ for i, d in enumerate(dates):
         price = today.loc[pos["ticker"], "Close"]
         ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-        # 🔥 強制決済条件
         if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
             exit_price = today.loc[pos["ticker"], "Open"]
             final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
             cash += pos["capital"] * (1 + final_ret)
-            trade_returns.append(final_ret)
+
+            # 🔥 年情報付きで保存
+            trade_logs.append({
+                "return": final_ret,
+                "year": pd.to_datetime(d).year
+            })
 
         else:
             new_positions.append(pos)
@@ -186,13 +191,35 @@ for i, d in enumerate(dates):
 # =========================
 # 結果
 # =========================
-trade_df = pd.Series(trade_returns)
+trade_df = pd.DataFrame(trade_logs)
 
-print("\n=== 簡易バックテスト結果（SL/TPあり） ===")
+print("\n=== 簡易バックテスト結果（SLあり） ===")
 
 print(f"Trades: {len(trade_df)}")
 
 if len(trade_df) > 0:
-    print(f"WinRate: {(trade_df > 0).mean():.3f}")
-    print(f"AvgReturn: {trade_df.mean():.4f}")
-    print(f"PF: {trade_df[trade_df>0].mean() / abs(trade_df[trade_df<0].mean()):.3f}")
+    print(f"WinRate: {(trade_df['return'] > 0).mean():.3f}")
+    print(f"AvgReturn: {trade_df['return'].mean():.4f}")
+    print(f"PF: {trade_df[trade_df['return']>0]['return'].mean() / abs(trade_df[trade_df['return']<0]['return'].mean()):.3f}")
+
+# =========================
+# 🔥 年別PF
+# =========================
+print("\n=== 年別PF ===")
+
+year_pf = {}
+
+for year, g in trade_df.groupby("year"):
+
+    wins = g[g["return"] > 0]["return"]
+    losses = g[g["return"] < 0]["return"]
+
+    if len(wins) == 0 or len(losses) == 0:
+        pf = np.nan
+    else:
+        pf = wins.mean() / abs(losses.mean())
+
+    year_pf[year] = pf
+
+for y, pf in year_pf.items():
+    print(f"{y}: PF = {pf:.3f}")
