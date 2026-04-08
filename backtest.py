@@ -12,25 +12,23 @@ INITIAL_CAPITAL = 1.0
 TOP_N = 3
 TOP_RATE = 0.005
 HOLD_DAYS = 7
+STOP_LOSS = -0.05
+TAKE_PROFIT = 0.08
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
 
-# 🔥 軽量化パラメータ
-USE_YEARS = [2023, 2024]   # ← 直近だけ
-MAX_TICKERS = 1000         # ← 銘柄制限
+USE_YEARS = [2023, 2024]
+MAX_TICKERS = 1000
 
 # =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
-
 df["Date"] = pd.to_datetime(df["Date"])
 
-# 🔥 年フィルタ
 df = df[df["Date"].dt.year.isin(USE_YEARS)]
 
-# 🔥 銘柄削減（上位だけ）
 top_tickers = df["Ticker"].value_counts().head(MAX_TICKERS).index
 df = df[df["Ticker"].isin(top_tickers)]
 
@@ -57,7 +55,7 @@ FEATURES = [
 ]
 
 # =========================
-# TargetClass（そのまま）
+# TargetClass
 # =========================
 def make_target_class(x):
     try:
@@ -68,7 +66,7 @@ def make_target_class(x):
 df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class).astype(int)
 
 # =========================
-# train/test分割（1回だけ）
+# train/test分割
 # =========================
 split_date = df["Date"].quantile(0.7)
 
@@ -76,14 +74,14 @@ train_df = df[df["Date"] < split_date]
 test_df  = df[df["Date"] >= split_date]
 
 # =========================
-# モデル（超軽量）
+# モデル
 # =========================
 group = train_df.groupby("Date").size().to_list()
 
 model = LGBMRanker(
-    n_estimators=150,      # 🔥 半分
-    learning_rate=0.05,    # 🔥 少し上げる
-    num_leaves=31,         # 🔥 半分
+    n_estimators=150,
+    learning_rate=0.05,
+    num_leaves=31,
     subsample=0.8,
     colsample_bytree=0.8,
     n_jobs=-1,
@@ -107,7 +105,7 @@ grouped = {d: g.set_index("Ticker") for d, g in test_df.groupby("Date")}
 dates = sorted(grouped.keys())
 
 # =========================
-# バックテスト（簡易）
+# バックテスト（SL/TP付き）
 # =========================
 equity = INITIAL_CAPITAL
 cash = INITIAL_CAPITAL
@@ -118,21 +116,36 @@ for i, d in enumerate(dates):
 
     today = grouped[d]
 
-    # 決済
+    # =========================
+    # 決済（SL/TP + 期限）
+    # =========================
     new_positions = []
+
     for pos in positions:
-        if i == pos["exit_idx"]:
-            if pos["ticker"] in today.index:
-                exit_price = today.loc[pos["ticker"], "Open"]
-                ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
-                cash += pos["capital"] * (1 + ret)
-                trade_returns.append(ret)
+
+        if pos["ticker"] not in today.index:
+            continue
+
+        price = today.loc[pos["ticker"], "Close"]
+        ret = (price - pos["entry_price"]) / pos["entry_price"]
+
+        # 🔥 強制決済条件
+        if ret <= STOP_LOSS or ret >= TAKE_PROFIT or i == pos["exit_idx"]:
+
+            exit_price = today.loc[pos["ticker"], "Open"]
+            final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
+            cash += pos["capital"] * (1 + final_ret)
+            trade_returns.append(final_ret)
+
         else:
             new_positions.append(pos)
 
     positions = new_positions
 
+    # =========================
     # エントリー
+    # =========================
     if i + 1 < len(dates):
 
         next_data = grouped[dates[i+1]]
@@ -176,7 +189,7 @@ for i, d in enumerate(dates):
 # =========================
 trade_df = pd.Series(trade_returns)
 
-print("\n=== 簡易バックテスト結果 ===")
+print("\n=== 簡易バックテスト結果（SL/TPあり） ===")
 
 print(f"Trades: {len(trade_df)}")
 
