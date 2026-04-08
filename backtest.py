@@ -17,7 +17,7 @@ STOP_LOSS = -0.05
 USE_MARKET_FILTER = True
 N_CLASS = 30
 
-USE_YEARS = [2023, 2024]
+USE_YEARS = [2021,2022,2023, 2024]
 MAX_TICKERS = 1000
 
 # =========================
