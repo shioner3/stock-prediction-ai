@@ -156,7 +156,7 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
             today_f = today.copy()
 
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0.003]
+                today_f = today_f[today_f["Market_Trend"] > 0.005]
 
             today_f = today_f[today_f["Trend_5_z"] > 0.8]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
