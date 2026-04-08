@@ -113,7 +113,7 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
 
     trade_logs = []
     equity_curve = []
-    equity_dates = []  # 🔥 年別用
+    equity_dates = []
 
     for i, d in enumerate(dates):
 
@@ -150,6 +150,12 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
         # =========================
         if i + 1 < len(dates):
 
+            # 🔥 市場弱い日はスキップ
+            if today["Market_Trend"].mean() < 0:
+                equity_curve.append(equity)
+                equity_dates.append(d)
+                continue
+
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
@@ -171,7 +177,6 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
                     if ticker not in next_data.index:
                         continue
 
-                    # 🔥 ポジション上限
                     capital = min(cash * weights.iloc[j], equity * 0.2)
 
                     exit_idx = i + HOLD_DAYS
@@ -199,7 +204,7 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
 
         equity = cash + pos_val
         equity_curve.append(equity)
-        equity_dates.append(d)  # 🔥 日付保存
+        equity_dates.append(d)
 
     # =========================
     # 結果
@@ -224,9 +229,6 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
     drawdown = equity_df["Equity"] / rolling_max - 1
     max_dd = drawdown.min()
 
-    # =========================
-    # 🔥 年別リターン
-    # =========================
     yearly_return = {}
     for year, g in equity_df.groupby("Year"):
         ret = g["Equity"].iloc[-1] / g["Equity"].iloc[0] - 1
