@@ -18,11 +18,9 @@ N_CLASS = 30
 
 MAX_TICKERS = 1000
 
-# 🔥 最適化パラメータ
 STOP_LOSS_LIST = [-0.03]
 TAKE_PROFIT_LIST = [999]
 
-# 🔥 ウォークフォワード設定
 WF_PERIODS = [
     ([2018, 2019, 2020], 2021),
     ([2019, 2020, 2021], 2022),
@@ -115,6 +113,7 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
 
     trade_logs = []
     equity_curve = []
+    equity_dates = []  # 🔥 年別用
 
     for i, d in enumerate(dates):
 
@@ -133,7 +132,6 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
             price = today.loc[pos["ticker"], "Close"]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            # 🔥 SL or TP or 期限
             if ret <= STOP_LOSS or ret >= TAKE_PROFIT or i == pos["exit_idx"]:
 
                 exit_price = today.loc[pos["ticker"], "Open"]
@@ -173,7 +171,8 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
                     if ticker not in next_data.index:
                         continue
 
-                    capital = cash * weights.iloc[j]
+                    # 🔥 ポジション上限
+                    capital = min(cash * weights.iloc[j], equity * 0.2)
 
                     exit_idx = i + HOLD_DAYS
                     if exit_idx >= len(dates):
@@ -200,12 +199,19 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
 
         equity = cash + pos_val
         equity_curve.append(equity)
+        equity_dates.append(d)  # 🔥 日付保存
 
     # =========================
     # 結果
     # =========================
     trade_df = pd.Series(trade_logs)
-    equity_curve = pd.Series(equity_curve)
+
+    equity_df = pd.DataFrame({
+        "Date": equity_dates,
+        "Equity": equity_curve
+    })
+
+    equity_df["Year"] = equity_df["Date"].dt.year
 
     if len(trade_df) == 0:
         return None
@@ -214,20 +220,29 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
     avg_ret = trade_df.mean()
     pf = trade_df[trade_df > 0].mean() / abs(trade_df[trade_df < 0].mean())
 
-    rolling_max = equity_curve.cummax()
-    drawdown = equity_curve / rolling_max - 1
+    rolling_max = equity_df["Equity"].cummax()
+    drawdown = equity_df["Equity"] / rolling_max - 1
     max_dd = drawdown.min()
+
+    # =========================
+    # 🔥 年別リターン
+    # =========================
+    yearly_return = {}
+    for year, g in equity_df.groupby("Year"):
+        ret = g["Equity"].iloc[-1] / g["Equity"].iloc[0] - 1
+        yearly_return[year] = ret
 
     return {
         "Trades": len(trade_df),
         "WinRate": win_rate,
         "AvgReturn": avg_ret,
         "PF": pf,
-        "MaxDD": max_dd
+        "MaxDD": max_dd,
+        "YearlyReturn": yearly_return
     }
 
 # =========================
-# 🔥 ウォークフォワード実行
+# ウォークフォワード
 # =========================
 results = []
 
@@ -259,9 +274,15 @@ for train_years, test_year in WF_PERIODS:
             results.append(res)
 
 # =========================
-# 結果表示
+# 表示
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== ウォークフォワード結果（SL+TP最適化） ===")
-print(result_df.sort_values(["Test", "PF"], ascending=[True, False]))
+print("\n=== ウォークフォワード結果 ===")
+print(result_df.drop(columns=["YearlyReturn"]).sort_values(["Test"]))
+
+print("\n=== 年別リターン ===")
+for _, row in result_df.iterrows():
+    print(f"\nTest {row['Test']}")
+    for y, r in row["YearlyReturn"].items():
+        print(f"{y}: {r:.3f}")
