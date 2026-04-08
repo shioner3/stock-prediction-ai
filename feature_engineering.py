@@ -10,7 +10,7 @@ PARQUET_FILE = "stock_data/prices.parquet"
 TRAIN_SAVE_PATH = "ml_dataset.parquet"
 PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
-HOLD_DAYS = 7
+HOLD_DAYS = 5
 MIN_COUNT = 3000
 Z_WINDOW = 20
 
