@@ -20,7 +20,7 @@ MAX_TICKERS = 1000
 
 # 🔥 最適化パラメータ
 STOP_LOSS_LIST = [-0.03]
-TAKE_PROFIT_LIST = [0.15]
+TAKE_PROFIT_LIST = [0.2]
 
 # 🔥 ウォークフォワード設定
 WF_PERIODS = [
@@ -156,9 +156,9 @@ def run_backtest(model, test_df, STOP_LOSS, TAKE_PROFIT):
             today_f = today.copy()
 
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0.005]
+                today_f = today_f[today_f["Market_Trend"] > 0.008]
 
-            today_f = today_f[today_f["Trend_5_z"] > 0.8]
+            today_f = today_f[today_f["Trend_5_z"] > 1.2]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
