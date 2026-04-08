@@ -20,7 +20,7 @@ MAX_TICKERS = 1000
 
 # 🔥 最適化パラメータ
 STOP_LOSS_LIST = [-0.03]
-TAKE_PROFIT_LIST = [0.2]
+TAKE_PROFIT_LIST = [999]
 
 # 🔥 ウォークフォワード設定
 WF_PERIODS = [
