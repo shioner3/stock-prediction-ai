@@ -11,7 +11,7 @@ INITIAL_CAPITAL = 1.0
 MAX_POSITIONS = 5
 
 TOP_N = 3
-TOP_RATE = 0.05
+TOP_RATE = 0.01
 HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
@@ -56,7 +56,7 @@ def make_target_class(x):
 df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class).astype(int)
 
 # =========================
-# モデル
+# モデル（高速化版）
 # =========================
 def train_model(train_df):
 
@@ -64,12 +64,13 @@ def train_model(train_df):
     group = train_df.groupby("Date").size().to_list()
 
     model = LGBMRanker(
-        n_estimators=1000,
-        learning_rate=0.01,
+        n_estimators=300,              # 🔥 1000→300
+        learning_rate=0.03,            # 🔥 少し上げる
         num_leaves=63,
         subsample=0.8,
         colsample_bytree=0.8,
-        random_state=42
+        random_state=42,
+        n_jobs=-1                      # 🔥 全CPU使用
     )
 
     model.fit(
@@ -81,7 +82,7 @@ def train_model(train_df):
     return model
 
 # =========================
-# バックテスト
+# バックテスト（高速化）
 # =========================
 def run_backtest(train_df, test_df):
 
@@ -91,8 +92,9 @@ def run_backtest(train_df, test_df):
     test_df["raw_score"] = model.predict(test_df[FEATURES])
     test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    dates = sorted(test_df["Date"].unique())
-    grouped = {d: g for d, g in test_df.groupby("Date")}
+    # 🔥 高速化：事前dict化
+    grouped = {d: g.set_index("Ticker") for d, g in test_df.groupby("Date")}
+    dates = sorted(grouped.keys())
 
     equity = INITIAL_CAPITAL
     cash = INITIAL_CAPITAL
@@ -105,95 +107,84 @@ def run_backtest(train_df, test_df):
 
         today = grouped[d]
 
+        # =========================
         # 決済
+        # =========================
         new_positions = []
         for pos in positions:
 
             if i == pos["exit_idx"]:
 
-                cur = today[today["Ticker"] == pos["ticker"]]
-                if cur.empty:
+                if pos["ticker"] not in today.index:
                     continue
 
-                exit_price = cur["Open"].iloc[0]
+                exit_price = today.loc[pos["ticker"], "Open"]
                 ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
                 cash += pos["capital"] * (1 + ret)
 
-                trade_logs.append({
-                    "ticker": pos["ticker"],
-                    "entry_date": pos["entry_date"],
-                    "exit_date": d,
-                    "return": ret,
-                    "capital": pos["capital"],
-                    "Market_Trend": pos["market_trend"]
-                })
+                trade_logs.append(ret)
 
             else:
                 new_positions.append(pos)
 
         positions = new_positions
 
+        # =========================
         # エントリー
+        # =========================
         if i + 1 < len(dates):
 
-            available = MAX_POSITIONS - len(positions)
+            next_day = dates[i + 1]
+            next_data = grouped[next_day]
 
-            if available > 0 and cash > 0:
+            today_f = today.copy()
 
-                next_day = dates[i + 1]
-                next_data = grouped[next_day]
+            if USE_MARKET_FILTER:
+                today_f = today_f[today_f["Market_Trend"] > 0.001]
 
-                today_f = today.copy()
+            today_f = today_f[today_f["Trend_5_z"] > 0.5]
+            today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
-                if USE_MARKET_FILTER:
-                    today_f = today_f[today_f["Market_Trend"] > 0]
+            if len(today_f) > 0:
 
-                today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
+                picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
-                if len(today_f) > 0:
+                weights = (picks["score"] ** 2) * (1 + picks["Trend_5_z"].clip(0, 2))
 
-                    picks = today_f.sort_values("score", ascending=False).head(TOP_N)
+                if weights.sum() == 0:
+                    continue
 
-                    weights = picks["score"] * (1 + picks["Trend_5_z"].clip(-1, 1))
+                weights = weights / weights.sum()
 
-                    if weights.sum() == 0:
+                for j, (ticker, row) in enumerate(picks.iterrows()):
+
+                    if ticker not in next_data.index:
                         continue
 
-                    weights = weights / weights.sum()
+                    capital = cash * weights.iloc[j]
+                    capital = min(capital, equity * 0.2)
 
-                    for j, row in enumerate(picks.itertuples()):
+                    exit_idx = i + HOLD_DAYS
+                    if exit_idx >= len(dates):
+                        continue
 
-                        ticker = row.Ticker
-                        next_row = next_data[next_data["Ticker"] == ticker]
+                    positions.append({
+                        "ticker": ticker,
+                        "entry_price": next_data.loc[ticker, "Open"],
+                        "exit_idx": exit_idx,
+                        "capital": capital
+                    })
 
-                        if next_row.empty:
-                            continue
+                    cash -= capital
 
-                        capital = cash * weights.iloc[j]
-                        capital = min(capital, equity * 0.2)
-
-                        exit_idx = i + HOLD_DAYS
-                        if exit_idx >= len(dates):
-                            continue
-
-                        positions.append({
-                            "ticker": ticker,
-                            "entry_price": next_row["Open"].iloc[0],
-                            "entry_date": d,
-                            "exit_idx": exit_idx,
-                            "capital": capital,
-                            "market_trend": row.Market_Trend
-                        })
-
-                        cash -= capital
-
+        # =========================
         # 評価
+        # =========================
         pos_val = 0
         for pos in positions:
-            cur = today[today["Ticker"] == pos["ticker"]]
-            if not cur.empty:
-                price = cur["Close"].iloc[0]
+            if pos["ticker"] in today.index:
+                price = today.loc[pos["ticker"], "Close"]
                 ret = (price - pos["entry_price"]) / pos["entry_price"]
                 pos_val += pos["capital"] * (1 + ret)
 
@@ -203,7 +194,7 @@ def run_backtest(train_df, test_df):
     equity_curve = pd.Series(equity_curve)
     returns = equity_curve.pct_change().dropna()
 
-    trade_df = pd.DataFrame(trade_logs)
+    trade_df = pd.Series(trade_logs)
 
     if len(equity_curve) < 50 or trade_df.empty:
         return None
@@ -212,24 +203,14 @@ def run_backtest(train_df, test_df):
     Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-    win_rate = (trade_df["return"] > 0).mean()
-
-    avg_win = trade_df[trade_df["return"] > 0]["return"].mean()
-    avg_loss = trade_df[trade_df["return"] < 0]["return"].mean()
+    win_rate = (trade_df > 0).mean()
+    avg_win = trade_df[trade_df > 0].mean()
+    avg_loss = trade_df[trade_df < 0].mean()
 
     pf = -avg_win / avg_loss if avg_loss != 0 else np.nan
     expectancy = win_rate * avg_win + (1 - win_rate) * avg_loss
 
     trade_count = len(trade_df)
-
-    losses = (trade_df["return"] < 0).astype(int)
-    streak = (losses.groupby((losses != losses.shift()).cumsum()).cumsum()).max()
-
-    desc = trade_df["return"].describe()
-
-    regime_perf = trade_df.groupby(
-        trade_df["Market_Trend"] > 0
-    )["return"].mean()
 
     return {
         "CAGR": CAGR,
@@ -238,18 +219,13 @@ def run_backtest(train_df, test_df):
         "WinRate": win_rate,
         "PF": pf,
         "Expectancy": expectancy,
-        "Trades": trade_count,
-        "MaxLosingStreak": streak,
-        "ReturnDist": desc,
-        "Regime": regime_perf,
-        "TradeLog": trade_df
+        "Trades": trade_count
     }
 
 # =========================
 # 実行
 # =========================
 results = []
-all_trades = []
 
 for y in sorted(df["Date"].dt.year.unique()):
     if y < 2022:
@@ -262,10 +238,9 @@ for y in sorted(df["Date"].dt.year.unique()):
 
     if res:
         results.append(res)
-        all_trades.append(res["TradeLog"])
 
 # =========================
-# 出力（コンソール）
+# 出力
 # =========================
 for i, r in enumerate(results):
 
@@ -281,10 +256,5 @@ for i, r in enumerate(results):
     print(f"PF        : {r['PF']:.3f}")
     print(f"Expectancy: {r['Expectancy']:.4f}")
 
-    print("\n--- 安定性 ---")
-    print(f"Trades          : {r['Trades']}")
-    print(f"Max Losing Streak: {r['MaxLosingStreak']}")
-
-    print("\n--- Regime別 ---")
-    print(r["Regime"])
-
+    print("\n--- 取引数 ---")
+    print(f"Trades: {r['Trades']}")
