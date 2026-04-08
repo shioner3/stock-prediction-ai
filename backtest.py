@@ -17,7 +17,7 @@ STOP_LOSS = -0.05
 USE_MARKET_FILTER = True
 N_CLASS = 30
 
-USE_YEARS = [2021,2022,2023, 2024]
+USE_YEARS = [2021,2022,2023,2024]
 MAX_TICKERS = 1000
 
 # =========================
@@ -110,7 +110,8 @@ equity = INITIAL_CAPITAL
 cash = INITIAL_CAPITAL
 positions = []
 
-trade_logs = []  # 🔥 ここを拡張
+trade_logs = []
+equity_curve = []   # 🔥 追加
 
 for i, d in enumerate(dates):
 
@@ -136,10 +137,10 @@ for i, d in enumerate(dates):
 
             cash += pos["capital"] * (1 + final_ret)
 
-            # 🔥 年情報付きで保存
             trade_logs.append({
                 "return": final_ret,
-                "year": pd.to_datetime(d).year
+                "year": pd.to_datetime(d).year,
+                "market": today.loc[pos["ticker"], "Market_Trend"]  # 🔥 追加
             })
 
         else:
@@ -188,10 +189,24 @@ for i, d in enumerate(dates):
 
                 cash -= capital
 
+    # =========================
+    # 🔥 エクイティ更新
+    # =========================
+    pos_val = 0
+    for pos in positions:
+        if pos["ticker"] in today.index:
+            price = today.loc[pos["ticker"], "Close"]
+            ret = (price - pos["entry_price"]) / pos["entry_price"]
+            pos_val += pos["capital"] * (1 + ret)
+
+    equity = cash + pos_val
+    equity_curve.append(equity)
+
 # =========================
 # 結果
 # =========================
 trade_df = pd.DataFrame(trade_logs)
+equity_curve = pd.Series(equity_curve)
 
 print("\n=== 簡易バックテスト結果（SLあり） ===")
 
@@ -207,8 +222,6 @@ if len(trade_df) > 0:
 # =========================
 print("\n=== 年別PF ===")
 
-year_pf = {}
-
 for year, g in trade_df.groupby("year"):
 
     wins = g[g["return"] > 0]["return"]
@@ -219,7 +232,31 @@ for year, g in trade_df.groupby("year"):
     else:
         pf = wins.mean() / abs(losses.mean())
 
-    year_pf[year] = pf
+    print(f"{year}: PF = {pf:.3f}")
 
-for y, pf in year_pf.items():
-    print(f"{y}: PF = {pf:.3f}")
+# =========================
+# 🔥 Regime別PF
+# =========================
+print("\n=== Regime別PF ===")
+
+for cond, g in trade_df.groupby(trade_df["market"] > 0):
+
+    wins = g[g["return"] > 0]["return"]
+    losses = g[g["return"] < 0]["return"]
+
+    if len(wins) == 0 or len(losses) == 0:
+        pf = np.nan
+    else:
+        pf = wins.mean() / abs(losses.mean())
+
+    print(f"Market_Trend > 0 = {cond}: PF = {pf:.3f}")
+
+# =========================
+# 🔥 MaxDD
+# =========================
+rolling_max = equity_curve.cummax()
+drawdown = equity_curve / rolling_max - 1
+max_dd = drawdown.min()
+
+print("\n=== MaxDD ===")
+print(f"Max Drawdown: {max_dd:.3f}")
