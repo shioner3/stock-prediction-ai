@@ -16,19 +16,24 @@ HOLD_DAYS = 5
 USE_MARKET_FILTER = True
 N_CLASS = 30
 
-USE_YEARS = [2021,2022,2023,2024]
 MAX_TICKERS = 1000
 
 # 🔥 ストップロス候補
-STOP_LOSS_LIST = [-0.03, -0.05, -0.07, -0.10]
+STOP_LOSS_LIST = [-0.03]
+
+# 🔥 ウォークフォワード設定
+WF_PERIODS = [
+    ([2018, 2019, 2020], 2021),
+    ([2019, 2020, 2021], 2022),
+    ([2020, 2021, 2022], 2023),
+    ([2021, 2022, 2023], 2024),
+]
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-
-df = df[df["Date"].dt.year.isin(USE_YEARS)]
 
 top_tickers = df["Ticker"].value_counts().head(MAX_TICKERS).index
 df = df[df["Ticker"].isin(top_tickers)]
@@ -67,49 +72,41 @@ def make_target_class(x):
 df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class).astype(int)
 
 # =========================
-# train/test分割
+# モデル学習
 # =========================
-split_date = df["Date"].quantile(0.7)
-train_df = df[df["Date"] < split_date]
-test_df  = df[df["Date"] >= split_date]
+def train_model(train_df):
+    train_df = train_df.sort_values("Date")
+    group = train_df.groupby("Date").size().to_list()
+
+    model = LGBMRanker(
+        n_estimators=150,
+        learning_rate=0.05,
+        num_leaves=31,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        n_jobs=-1,
+        random_state=42
+    )
+
+    model.fit(
+        train_df[FEATURES],
+        train_df["TargetClass"],
+        group=group
+    )
+
+    return model
 
 # =========================
-# モデル
+# バックテスト
 # =========================
-group = train_df.groupby("Date").size().to_list()
+def run_backtest(model, test_df, STOP_LOSS):
 
-model = LGBMRanker(
-    n_estimators=150,
-    learning_rate=0.05,
-    num_leaves=31,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    n_jobs=-1,
-    random_state=42
-)
+    test_df = test_df.copy()
+    test_df["raw_score"] = model.predict(test_df[FEATURES])
+    test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
 
-model.fit(
-    train_df[FEATURES],
-    train_df["TargetClass"],
-    group=group
-)
-
-# =========================
-# 予測
-# =========================
-test_df = test_df.copy()
-test_df["raw_score"] = model.predict(test_df[FEATURES])
-test_df["score"] = test_df.groupby("Date")["raw_score"].rank(pct=True)
-
-grouped = {d: g.set_index("Ticker") for d, g in test_df.groupby("Date")}
-dates = sorted(grouped.keys())
-
-# =========================
-# 🔥 ストップロス最適化ループ
-# =========================
-results = []
-
-for STOP_LOSS in STOP_LOSS_LIST:
+    grouped = {d: g.set_index("Ticker") for d, g in test_df.groupby("Date")}
+    dates = sorted(grouped.keys())
 
     equity = INITIAL_CAPITAL
     cash = INITIAL_CAPITAL
@@ -141,7 +138,6 @@ for STOP_LOSS in STOP_LOSS_LIST:
                 final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
                 cash += pos["capital"] * (1 + final_ret)
-
                 trade_logs.append(final_ret)
 
             else:
@@ -204,13 +200,13 @@ for STOP_LOSS in STOP_LOSS_LIST:
         equity_curve.append(equity)
 
     # =========================
-    # 結果集計
+    # 結果
     # =========================
     trade_df = pd.Series(trade_logs)
     equity_curve = pd.Series(equity_curve)
 
     if len(trade_df) == 0:
-        continue
+        return None
 
     win_rate = (trade_df > 0).mean()
     avg_ret = trade_df.mean()
@@ -220,19 +216,48 @@ for STOP_LOSS in STOP_LOSS_LIST:
     drawdown = equity_curve / rolling_max - 1
     max_dd = drawdown.min()
 
-    results.append({
-        "STOP_LOSS": STOP_LOSS,
+    return {
         "Trades": len(trade_df),
         "WinRate": win_rate,
         "AvgReturn": avg_ret,
         "PF": pf,
         "MaxDD": max_dd
-    })
+    }
 
 # =========================
-# 🔥 結果表示
+# 🔥 ウォークフォワード実行
+# =========================
+results = []
+
+for train_years, test_year in WF_PERIODS:
+
+    print(f"\n=== WF: Train {train_years} → Test {test_year} ===")
+
+    train_df = df[df["Date"].dt.year.isin(train_years)]
+    test_df  = df[df["Date"].dt.year == test_year]
+
+    if len(train_df) == 0 or len(test_df) == 0:
+        continue
+
+    model = train_model(train_df)
+
+    for STOP_LOSS in STOP_LOSS_LIST:
+
+        res = run_backtest(model, test_df, STOP_LOSS)
+
+        if res is None:
+            continue
+
+        res["Train"] = str(train_years)
+        res["Test"] = test_year
+        res["STOP_LOSS"] = STOP_LOSS
+
+        results.append(res)
+
+# =========================
+# 結果表示
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== STOP_LOSS最適化結果 ===")
-print(result_df.sort_values("PF", ascending=False))
+print("\n=== ウォークフォワード結果 ===")
+print(result_df.sort_values(["Test"]))
