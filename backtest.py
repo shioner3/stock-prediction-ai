@@ -13,7 +13,6 @@ TOP_N = 3
 TOP_RATE = 0.005
 HOLD_DAYS = 7
 STOP_LOSS = -0.05
-TAKE_PROFIT = 0.08
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
@@ -130,7 +129,7 @@ for i, d in enumerate(dates):
         ret = (price - pos["entry_price"]) / pos["entry_price"]
 
         # 🔥 強制決済条件
-        if ret <= STOP_LOSS or ret >= TAKE_PROFIT or i == pos["exit_idx"]:
+        if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
             exit_price = today.loc[pos["ticker"], "Open"]
             final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
