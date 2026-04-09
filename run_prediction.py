@@ -10,7 +10,7 @@ from lightgbm import LGBMRanker
 # =========================
 TOP_N = 5
 TOP_RATE = 0.005
-HOLD_DAYS = 10
+HOLD_DAYS = 10  # ベース
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
@@ -30,57 +30,39 @@ MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
-# 古いデータ削減
 train_df = train_df[train_df["Date"] >= TRAIN_START_DATE].copy()
 
 # =========================
-# FEATURES（🔥ここが最重要）
+# FEATURES
 # =========================
 FEATURES = [
-    # ===== 基本 =====
     "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
     "Rel_Return_1",
-
-    # ===== トレンド =====
     "Trend_5_z","Trend_10_z","Trend_diff",
-
-    # ===== ドローダウン系（NEW）★★★★★
     "DD_5","DD_10",
-
-    # ===== トレンド安定性（NEW）★★★★★
     "TrendVol",
-
-    # ===== 出来高Z（NEW）★★★★☆
     "Volume_Z",
-
-    # ===== 追加 =====
     "Gap",
     "Volatility_change",
     "Momentum_acc",
-
-    # ===== クロスセクション =====
     "Return_1_rank","Return_3_rank",
     "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
-
-    # ===== 市場 =====
     "Market_Z","Market_Trend",
-
-    # ===== 時間 =====
     "DayOfWeek"
 ]
 
 # =========================
-# 欠損チェック（安全化）
+# 欠損除去
 # =========================
 train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# 学習データ前処理
+# Target
 # =========================
 train_df = train_df.sort_values("Date").copy()
 
@@ -108,9 +90,6 @@ model = LGBMRanker(
     n_jobs=-1
 )
 
-# =========================
-# 学習
-# =========================
 model.fit(
     train_df[FEATURES],
     train_df["TargetClass"],
@@ -128,6 +107,26 @@ with open(MODEL_PATH, "wb") as f:
     pickle.dump(model, f)
 
 # =========================
+# 🔥 可変ホールド関数
+# =========================
+def calc_hold_days(row):
+    base = HOLD_DAYS
+
+    # トレンド強いほど延長
+    trend_bonus = int(row["Trend_5_z"] * 2)
+
+    # 安定性（低いほど良い）
+    stability_bonus = int((1 - row["TrendVol"]) * 5)
+
+    # DD小さいほど延長
+    dd_bonus = int((row["DD_5"] + 0.1) * 5)
+
+    hold = base + trend_bonus + stability_bonus + dd_bonus
+
+    # 制限
+    return max(5, min(20, hold))
+
+# =========================
 # 予測
 # =========================
 today = predict_df.copy()
@@ -142,17 +141,14 @@ if USE_MARKET_FILTER:
     today = today[today["Market_Trend"] > 0]
 
 # =========================
-# TOP_RATEフィルター
+# TOP_RATE
 # =========================
 today = today[today["score"] >= (1 - TOP_RATE)]
 
 # =========================
-# 🔥 連敗対策（追加するとさらに良い）
+# フィルタ
 # =========================
-# 安定トレンド優先
 today = today[today["TrendVol"] < today["TrendVol"].quantile(0.7)]
-
-# ドローダウン回避
 today = today[today["DD_5"] > -0.05]
 
 # =========================
@@ -162,7 +158,12 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 重み（改良版）
+# 🔥 可変ホールド適用
+# =========================
+today["hold_days"] = today.apply(calc_hold_days, axis=1)
+
+# =========================
+# 重み
 # =========================
 today["weight_raw"] = (
     today["score"]**2 *
@@ -178,11 +179,12 @@ else:
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（最終版） ===")
+print("\n=== 今日の銘柄（可変ホールド版） ===")
 print(today[[
     "Ticker","Name",
     "raw_score","score",
     "Trend_5_z","TrendVol","DD_5",
+    "hold_days",
     "weight",
     "PredRank"
 ]])
@@ -190,11 +192,11 @@ print(today[[
 # =========================
 # デバッグ
 # =========================
+print("\n=== HOLD分布 ===")
+print(today["hold_days"].describe())
+
 print("\n=== SCORE分布 ===")
 print(today["score"].describe())
 
 print("\n=== 件数 ===")
 print(len(today))
-
-print("\n=== 使用特徴量数 ===")
-print(len(FEATURES))
