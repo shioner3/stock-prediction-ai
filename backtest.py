@@ -106,6 +106,7 @@ def calc_hold_days(row):
     trend_bonus = int(row["Trend_5_z"] * 2)
     stability_bonus = int((1 - row["TrendVol"]) * 5)
     dd_bonus = int((row["DD_5"] + 0.1) * 5)
+
     hold = base + trend_bonus + stability_bonus + dd_bonus
     return max(5, min(20, hold))
 
@@ -163,11 +164,21 @@ def run_backtest(model, data_df):
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
+            # =========================
+            # 🔥 フィルタ（今回の指定）
+            # =========================
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0]
+                today_f = today_f[today_f["Market_Trend"] > 0.005]
 
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
+
+            # 🔥 安定性フィルタ
+            today_f = today_f[today_f["TrendVol"] < 0.7]
+
+            # 🔥 ドローダウン回避
+            today_f = today_f[today_f["DD_5"] > -0.05]
+            # =========================
 
             if len(today_f) > 0:
 
@@ -245,7 +256,6 @@ all_years = sorted(df["Date"].dt.year.unique())
 
 for i in range(N_TRIALS):
 
-    # ランダムに期間選択
     train_years = random.sample(list(all_years[:-1]), 3)
     test_year = random.choice([y for y in all_years if y not in train_years])
 
