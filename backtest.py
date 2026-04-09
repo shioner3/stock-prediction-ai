@@ -16,7 +16,6 @@ HOLD_DAYS = 10
 USE_MARKET_FILTER = True
 N_CLASS = 30
 
-# 🔥 現実強化
 MAX_TICKERS = 300
 STOP_LOSS = -0.02
 COST_RATE = 0.0025
@@ -40,7 +39,7 @@ df = df[df["Ticker"].isin(top_tickers)]
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# FEATURES（完全整合）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -98,6 +97,20 @@ def train_model(train_df):
 
     model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
     return model
+
+# =========================
+# 🔥 可変ホールド（完全一致）
+# =========================
+def calc_hold_days(row):
+    base = HOLD_DAYS
+
+    trend_bonus = int(row["Trend_5_z"] * 2)
+    stability_bonus = int((1 - row["TrendVol"]) * 5)
+    dd_bonus = int((row["DD_5"] + 0.1) * 5)
+
+    hold = base + trend_bonus + stability_bonus + dd_bonus
+
+    return max(5, min(20, hold))
 
 # =========================
 # 連敗計算
@@ -176,31 +189,26 @@ def run_backtest(model, data_df):
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
-            # =========================
-            # 🔥 フィルタ（変更部分）
-            # =========================
-
-            # 市場
+            # ===== run_predictionと完全一致 =====
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0.008]
+                today_f = today_f[today_f["Market_Trend"] > 0]
 
-            # トレンドのみ
-            today_f = today_f[today_f["Trend_5_z"] > 1.1]
+            today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
-            # スコア（緩め）
-            today_f = today_f[today_f["score"] >= (1 - 0.01)]
+            today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
+            today_f = today_f[today_f["DD_5"] > -0.05]
 
-            # =========================
+            # ===================================
 
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
                 weights = (
-                    (picks["score"] ** 2)
-                    * (1 + picks["Trend_5_z"].clip(0, 2))
+                    picks["score"]**2 *
+                    (1 + picks["Trend_5_z"].clip(0, 2)) *
+                    (1 - picks["TrendVol"].clip(0, 1))
                 )
-
                 weights = weights / weights.sum()
 
                 for j, (ticker, row) in enumerate(picks.iterrows()):
@@ -210,7 +218,10 @@ def run_backtest(model, data_df):
 
                     capital = min(cash * weights.iloc[j], equity * 0.2)
 
-                    exit_idx = i + HOLD_DAYS
+                    # 🔥 可変ホールド適用
+                    hold_days = calc_hold_days(row)
+                    exit_idx = i + hold_days
+
                     if exit_idx >= len(dates):
                         continue
 
@@ -303,13 +314,14 @@ for train_years, test_year in WF_PERIODS:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終結果（フィルタ変更版） ===")
+print("\n=== 最終結果（可変ホールド完全一致版） ===")
 print(result_df)
 
 print("\n平均DD:", result_df["MaxDD"].mean())
 print("平均CAGR:", result_df["CAGR"].mean())
 print("平均Sharpe:", result_df["Sharpe"].mean())
 print("最大連敗平均:", result_df["MaxLosingStreak"].mean())
+
 print("\n=== 取引統計 ===")
 print("総取引数:", result_df["Trades"].sum())
 print("平均取引数:", result_df["Trades"].mean())
