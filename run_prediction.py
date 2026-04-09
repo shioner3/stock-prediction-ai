@@ -8,9 +8,9 @@ from lightgbm import LGBMRanker
 # =========================
 # 設定
 # =========================
-TOP_N = 3
+TOP_N = 5
 TOP_RATE = 0.1
-HOLD_DAYS = 10
+HOLD_DAYS = 7
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
