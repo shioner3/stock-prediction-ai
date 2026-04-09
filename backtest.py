@@ -16,10 +16,11 @@ HOLD_DAYS = 10
 USE_MARKET_FILTER = True
 N_CLASS = 30
 
-MAX_TICKERS = 1000
-
+# 🔥 現実強化
+MAX_TICKERS = 300
 STOP_LOSS = -0.02
-COST_RATE = 0.0015
+COST_RATE = 0.0025
+SLIPPAGE = 0.002
 
 WF_PERIODS = [
     ([2018, 2019, 2020], 2021),
@@ -36,7 +37,6 @@ df["Date"] = pd.to_datetime(df["Date"])
 
 top_tickers = df["Ticker"].value_counts().head(MAX_TICKERS).index
 df = df[df["Ticker"].isin(top_tickers)]
-
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
@@ -87,16 +87,27 @@ def train_model(train_df):
         random_state=42
     )
 
-    model.fit(
-        train_df[FEATURES],
-        train_df["TargetClass"],
-        group=group
-    )
-
+    model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
     return model
 
 # =========================
-# バックテスト（完全版）
+# 🔥 連敗計算
+# =========================
+def calc_max_losing_streak(trades):
+    streak = 0
+    max_streak = 0
+
+    for r in trades:
+        if r < 0:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+
+    return max_streak
+
+# =========================
+# バックテスト
 # =========================
 def run_backtest(model, data_df):
 
@@ -133,9 +144,9 @@ def run_backtest(model, data_df):
 
             if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
-                exit_price = today.loc[pos["ticker"], "Open"]
-                final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
+                exit_price = today.loc[pos["ticker"], "Open"] * (1 - SLIPPAGE)
 
+                final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
                 final_ret -= COST_RATE * 2
 
                 cash += pos["capital"] * (1 + final_ret)
@@ -182,9 +193,11 @@ def run_backtest(model, data_df):
                     if exit_idx >= len(dates):
                         continue
 
+                    entry_price = next_data.loc[ticker, "Open"] * (1 + SLIPPAGE + COST_RATE)
+
                     positions.append({
                         "ticker": ticker,
-                        "entry_price": next_data.loc[ticker, "Open"] * (1 + COST_RATE),
+                        "entry_price": entry_price,
                         "exit_idx": exit_idx,
                         "capital": capital
                     })
@@ -205,7 +218,7 @@ def run_backtest(model, data_df):
         equity_curve.append(equity)
 
     # =========================
-    # 指標計算（ここに集約）
+    # 指標
     # =========================
     trade_df = pd.Series(trade_logs)
     equity_df = pd.DataFrame({"Equity": equity_curve})
@@ -215,32 +228,30 @@ def run_backtest(model, data_df):
 
     equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
 
-    # PF
     pf = trade_df[trade_df > 0].mean() / abs(trade_df[trade_df < 0].mean())
 
-    # DD
     peak = equity_df["Equity"].cummax()
     dd = equity_df["Equity"] / peak - 1
     max_dd = dd.min()
 
-    # CAGR
     days = len(equity_df)
     years = days / 252
     final_equity = equity_df["Equity"].iloc[-1]
     cagr = final_equity ** (1 / years) - 1 if years > 0 else 0
 
-    # Sharpe
     sharpe = (
         equity_df["Return"].mean() / equity_df["Return"].std()
     ) * np.sqrt(252) if equity_df["Return"].std() != 0 else 0
+
+    max_ls = calc_max_losing_streak(trade_logs)
 
     return {
         "PF": pf,
         "Trades": len(trade_df),
         "MaxDD": max_dd,
-        "FinalEquity": final_equity,
         "CAGR": cagr,
-        "Sharpe": sharpe
+        "Sharpe": sharpe,
+        "MaxLosingStreak": max_ls
     }
 
 # =========================
@@ -272,9 +283,10 @@ for train_years, test_year in WF_PERIODS:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終結果（完全版） ===")
+print("\n=== 最終結果（現実寄せMAX） ===")
 print(result_df)
 
-print("\n=== 平均DD ===", result_df["MaxDD"].mean())
-print("=== 平均CAGR ===", result_df["CAGR"].mean())
-print("=== 平均Sharpe ===", result_df["Sharpe"].mean())
+print("\n平均DD:", result_df["MaxDD"].mean())
+print("平均CAGR:", result_df["CAGR"].mean())
+print("平均Sharpe:", result_df["Sharpe"].mean())
+print("最大連敗平均:", result_df["MaxLosingStreak"].mean())
