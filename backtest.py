@@ -40,22 +40,42 @@ df = df[df["Ticker"].isin(top_tickers)]
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# FEATURES
+# FEATURES（🔥完全整合）
 # =========================
 FEATURES = [
+    # ===== 基本 =====
     "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
     "HL_range",
     "Rel_Return_1",
+
+    # ===== トレンド =====
     "Trend_5_z","Trend_10_z","Trend_diff",
+
+    # ===== ドローダウン系（NEW）
+    "DD_5","DD_10",
+
+    # ===== トレンド安定性（NEW）
+    "TrendVol",
+
+    # ===== 出来高Z（NEW）
+    "Volume_Z",
+
+    # ===== 追加 =====
     "Gap",
     "Volatility_change",
     "Momentum_acc",
+
+    # ===== クロスセクション =====
     "Return_1_rank","Return_3_rank",
     "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
+
+    # ===== 市場 =====
     "Market_Z","Market_Trend",
+
+    # ===== 時間 =====
     "DayOfWeek"
 ]
 
@@ -91,7 +111,7 @@ def train_model(train_df):
     return model
 
 # =========================
-# 🔥 連敗計算
+# 連敗計算
 # =========================
 def calc_max_losing_streak(trades):
     streak = 0
@@ -112,6 +132,8 @@ def calc_max_losing_streak(trades):
 def run_backtest(model, data_df):
 
     data_df = data_df.copy()
+    data_df = data_df.dropna(subset=FEATURES)
+
     data_df["raw_score"] = model.predict(data_df[FEATURES])
     data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
@@ -172,14 +194,23 @@ def run_backtest(model, data_df):
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0.008]
 
+            # 🔥 精度強化フィルター（連敗対策）
             today_f = today_f[today_f["Trend_5_z"] > 1.2]
+            today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
+            today_f = today_f[today_f["DD_5"] > -0.05]
+
+            # スコア
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("score", ascending=False).head(TOP_N)
 
-                weights = (picks["score"] ** 2) * (1 + picks["Trend_5_z"].clip(0, 2))
+                weights = (
+                    (picks["score"] ** 2)
+                    * (1 + picks["Trend_5_z"].clip(0, 2))
+                    * (1 - picks["TrendVol"].clip(0, 1))
+                )
                 weights = weights / weights.sum()
 
                 for j, (ticker, row) in enumerate(picks.iterrows()):
@@ -283,7 +314,7 @@ for train_years, test_year in WF_PERIODS:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終結果（現実寄せMAX） ===")
+print("\n=== 最終結果（完全整合版） ===")
 print(result_df)
 
 print("\n平均DD:", result_df["MaxDD"].mean())
