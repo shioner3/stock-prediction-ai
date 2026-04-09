@@ -10,7 +10,6 @@ DATA_PATH = "ml_dataset.parquet"
 INITIAL_CAPITAL = 1.0
 
 TOP_N = 5
-TOP_RATE = 0.005
 HOLD_DAYS = 10
 
 USE_MARKET_FILTER = True
@@ -27,6 +26,12 @@ WF_PERIODS = [
     ([2020, 2021, 2022], 2023),
     ([2021, 2022, 2023], 2024),
 ]
+
+# =========================
+# 🔥 パラメータ候補
+# =========================
+TREND_LIST = [0.8, 1.0, 1.2]
+TOP_RATE_LIST = [0.01, 0.02, 0.03]
 
 # =========================
 # データ
@@ -99,42 +104,36 @@ def train_model(train_df):
     return model
 
 # =========================
-# 🔥 可変ホールド（完全一致）
+# 可変ホールド
 # =========================
 def calc_hold_days(row):
     base = HOLD_DAYS
-
     trend_bonus = int(row["Trend_5_z"] * 2)
     stability_bonus = int((1 - row["TrendVol"]) * 5)
     dd_bonus = int((row["DD_5"] + 0.1) * 5)
-
     hold = base + trend_bonus + stability_bonus + dd_bonus
-
     return max(5, min(20, hold))
 
 # =========================
-# 連敗計算
+# 連敗
 # =========================
 def calc_max_losing_streak(trades):
     streak = 0
     max_streak = 0
-
     for r in trades:
         if r < 0:
             streak += 1
             max_streak = max(max_streak, streak)
         else:
             streak = 0
-
     return max_streak
 
 # =========================
-# バックテスト
+# バックテスト（パラメータ対応）
 # =========================
-def run_backtest(model, data_df):
+def run_backtest(model, data_df, trend_th, top_rate):
 
-    data_df = data_df.copy()
-    data_df = data_df.dropna(subset=FEATURES)
+    data_df = data_df.copy().dropna(subset=FEATURES)
 
     data_df["raw_score"] = model.predict(data_df[FEATURES])
     data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
@@ -153,11 +152,8 @@ def run_backtest(model, data_df):
 
         today = grouped[d]
 
-        # =========================
-        # 決済
-        # =========================
+        # ===== 決済 =====
         new_positions = []
-
         for pos in positions:
 
             if pos["ticker"] not in today.index:
@@ -169,7 +165,6 @@ def run_backtest(model, data_df):
             if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
                 exit_price = today.loc[pos["ticker"], "Open"] * (1 - SLIPPAGE)
-
                 final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
                 final_ret -= COST_RATE * 2
 
@@ -181,24 +176,17 @@ def run_backtest(model, data_df):
 
         positions = new_positions
 
-        # =========================
-        # エントリー
-        # =========================
+        # ===== エントリー =====
         if i + 1 < len(dates):
 
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
-            # ===== run_predictionと完全一致 =====
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0]
 
-            today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
-
-            today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
-            today_f = today_f[today_f["DD_5"] > -0.05]
-
-            # ===================================
+            today_f = today_f[today_f["Trend_5_z"] > trend_th]
+            today_f = today_f[today_f["score"] >= (1 - top_rate)]
 
             if len(today_f) > 0:
 
@@ -206,8 +194,7 @@ def run_backtest(model, data_df):
 
                 weights = (
                     picks["score"]**2 *
-                    (1 + picks["Trend_5_z"].clip(0, 2)) *
-                    (1 - picks["TrendVol"].clip(0, 1))
+                    (1 + picks["Trend_5_z"].clip(0, 2))
                 )
                 weights = weights / weights.sum()
 
@@ -218,7 +205,6 @@ def run_backtest(model, data_df):
 
                     capital = min(cash * weights.iloc[j], equity * 0.2)
 
-                    # 🔥 可変ホールド適用
                     hold_days = calc_hold_days(row)
                     exit_idx = i + hold_days
 
@@ -236,9 +222,7 @@ def run_backtest(model, data_df):
 
                     cash -= capital
 
-        # =========================
-        # エクイティ
-        # =========================
+        # ===== エクイティ =====
         pos_val = 0
         for pos in positions:
             if pos["ticker"] in today.index:
@@ -249,14 +233,12 @@ def run_backtest(model, data_df):
         equity = cash + pos_val
         equity_curve.append(equity)
 
-    # =========================
-    # 指標
-    # =========================
+    # ===== 指標 =====
+    if len(trade_logs) < 50:
+        return None  # 過剰最適化防止
+
     trade_df = pd.Series(trade_logs)
     equity_df = pd.DataFrame({"Equity": equity_curve})
-
-    if len(trade_df) == 0:
-        return None
 
     equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
 
@@ -266,8 +248,7 @@ def run_backtest(model, data_df):
     dd = equity_df["Equity"] / peak - 1
     max_dd = dd.min()
 
-    days = len(equity_df)
-    years = days / 252
+    years = len(equity_df) / 252
     final_equity = equity_df["Equity"].iloc[-1]
     cagr = final_equity ** (1 / years) - 1 if years > 0 else 0
 
@@ -283,47 +264,66 @@ def run_backtest(model, data_df):
         "MaxDD": max_dd,
         "CAGR": cagr,
         "Sharpe": sharpe,
-        "MaxLosingStreak": max_ls
+        "LosingStreak": max_ls
     }
 
 # =========================
-# WF
+# 🔥 グリッド探索
 # =========================
-results = []
+all_results = []
 
-for train_years, test_year in WF_PERIODS:
+for trend_th in TREND_LIST:
+    for top_rate in TOP_RATE_LIST:
 
-    print(f"\n=== WF: Train {train_years} → Test {test_year} ===")
+        print(f"\n=== TEST Trend>{trend_th}, TOP_RATE={top_rate} ===")
 
-    train_df = df[df["Date"].dt.year.isin(train_years)]
-    test_df  = df[df["Date"].dt.year == test_year]
+        wf_results = []
 
-    model = train_model(train_df)
-    res = run_backtest(model, test_df)
+        for train_years, test_year in WF_PERIODS:
 
-    if res is None:
-        continue
+            train_df = df[df["Date"].dt.year.isin(train_years)]
+            test_df  = df[df["Date"].dt.year == test_year]
 
-    res["Train"] = str(train_years)
-    res["Test"] = test_year
+            model = train_model(train_df)
 
-    results.append(res)
+            res = run_backtest(model, test_df, trend_th, top_rate)
+
+            if res is None:
+                continue
+
+            wf_results.append(res)
+
+        if len(wf_results) == 0:
+            continue
+
+        r = pd.DataFrame(wf_results)
+
+        all_results.append({
+            "Trend_TH": trend_th,
+            "TOP_RATE": top_rate,
+            "CAGR": r["CAGR"].mean(),
+            "Sharpe": r["Sharpe"].mean(),
+            "MaxDD": r["MaxDD"].mean(),
+            "LosingStreak": r["LosingStreak"].mean(),
+            "Trades": r["Trades"].mean()
+        })
 
 # =========================
 # 結果
 # =========================
-result_df = pd.DataFrame(results)
+result_all_df = pd.DataFrame(all_results)
 
-print("\n=== 最終結果（可変ホールド完全一致版） ===")
-print(result_df)
+print("\n=== 全結果 ===")
+print(result_all_df.sort_values("Sharpe", ascending=False))
 
-print("\n平均DD:", result_df["MaxDD"].mean())
-print("平均CAGR:", result_df["CAGR"].mean())
-print("平均Sharpe:", result_df["Sharpe"].mean())
-print("最大連敗平均:", result_df["MaxLosingStreak"].mean())
+# =========================
+# 🎯 最適ゾーン抽出
+# =========================
+good = result_all_df[
+    (result_all_df["Trades"] > 80) &
+    (result_all_df["LosingStreak"] < 15) &
+    (result_all_df["CAGR"] > 0.2)
+]
 
-print("\n=== 取引統計 ===")
-print("総取引数:", result_df["Trades"].sum())
-print("平均取引数:", result_df["Trades"].mean())
-print("最大取引数:", result_df["Trades"].max())
-print("最小取引数:", result_df["Trades"].min())
+print("\n=== 最適ゾーン ===")
+print(good.sort_values("Sharpe", ascending=False))
