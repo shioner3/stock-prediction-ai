@@ -18,11 +18,8 @@ N_CLASS = 30
 
 MAX_TICKERS = 1000
 
-# 🔥 固定損切り（ここが最終形）
 STOP_LOSS = -0.02
-
-# 🔥 コスト（超重要）
-COST_RATE = 0.0015  # 0.15%片道想定
+COST_RATE = 0.0015
 
 WF_PERIODS = [
     ([2018, 2019, 2020], 2021),
@@ -134,14 +131,11 @@ def run_backtest(model, data_df):
             price = today.loc[pos["ticker"], "Close"]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
-            # 🔥 損切り or 時間決済
             if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
                 exit_price = today.loc[pos["ticker"], "Open"]
-
                 final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
 
-                # 🔥 コスト反映（売買両方）
                 final_ret -= COST_RATE * 2
 
                 cash += pos["capital"] * (1 + final_ret)
@@ -211,16 +205,15 @@ def run_backtest(model, data_df):
         equity_curve.append(equity)
 
     # =========================
-    # 指標計算
+    # 指標計算（ここに集約）
     # =========================
     trade_df = pd.Series(trade_logs)
-
-    equity_df = pd.DataFrame({
-        "Equity": equity_curve
-    })
+    equity_df = pd.DataFrame({"Equity": equity_curve})
 
     if len(trade_df) == 0:
         return None
+
+    equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
 
     # PF
     pf = trade_df[trade_df > 0].mean() / abs(trade_df[trade_df < 0].mean())
@@ -230,11 +223,24 @@ def run_backtest(model, data_df):
     dd = equity_df["Equity"] / peak - 1
     max_dd = dd.min()
 
+    # CAGR
+    days = len(equity_df)
+    years = days / 252
+    final_equity = equity_df["Equity"].iloc[-1]
+    cagr = final_equity ** (1 / years) - 1 if years > 0 else 0
+
+    # Sharpe
+    sharpe = (
+        equity_df["Return"].mean() / equity_df["Return"].std()
+    ) * np.sqrt(252) if equity_df["Return"].std() != 0 else 0
+
     return {
         "PF": pf,
         "Trades": len(trade_df),
         "MaxDD": max_dd,
-        "FinalEquity": equity_df["Equity"].iloc[-1]
+        "FinalEquity": final_equity,
+        "CAGR": cagr,
+        "Sharpe": sharpe
     }
 
 # =========================
@@ -262,70 +268,13 @@ for train_years, test_year in WF_PERIODS:
     results.append(res)
 
 # =========================
-# 指標計算
-# =========================
-trade_df = pd.Series(trade_logs)
-
-equity_df = pd.DataFrame({
-    "Equity": equity_curve
-})
-
-if len(trade_df) == 0:
-    return None
-
-# 🔥 日次リターン
-equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
-
-# =========================
-# PF
-# =========================
-pf = trade_df[trade_df > 0].mean() / abs(trade_df[trade_df < 0].mean())
-
-# =========================
-# DD
-# =========================
-peak = equity_df["Equity"].cummax()
-dd = equity_df["Equity"] / peak - 1
-max_dd = dd.min()
-
-# =========================
-# 🔥 CAGR（年率）
-# =========================
-days = len(equity_df)
-years = days / 252  # 営業日ベース
-final_equity = equity_df["Equity"].iloc[-1]
-
-cagr = final_equity ** (1 / years) - 1 if years > 0 else 0
-
-# =========================
-# 🔥 Sharpe
-# =========================
-sharpe = (
-    equity_df["Return"].mean() / equity_df["Return"].std()
-) * np.sqrt(252) if equity_df["Return"].std() != 0 else 0
-
-return {
-    "PF": pf,
-    "Trades": len(trade_df),
-    "MaxDD": max_dd,
-    "FinalEquity": final_equity,
-    "CAGR": cagr,
-    "Sharpe": sharpe
-}
-
-# =========================
 # 結果
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終結果（コスト込み・DD付き・固定SL） ===")
+print("\n=== 最終結果（完全版） ===")
 print(result_df)
 
-print("\n=== 平均DD ===")
-print(result_df["MaxDD"].mean())
-
-print("\n=== 平均CAGR ===")
-print(result_df["CAGR"].mean())
-
-print("\n=== 平均Sharpe ===")
-print(result_df["Sharpe"].mean())
+print("\n=== 平均DD ===", result_df["MaxDD"].mean())
+print("=== 平均CAGR ===", result_df["CAGR"].mean())
+print("=== 平均Sharpe ===", result_df["Sharpe"].mean())
