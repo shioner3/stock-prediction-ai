@@ -11,7 +11,7 @@ INITIAL_CAPITAL = 1.0
 
 TOP_N = 5
 TOP_RATE = 0.005
-HOLD_DAYS = 7
+HOLD_DAYS = 15
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
@@ -185,10 +185,10 @@ def run_backtest(model, data_df):
                 today_f = today_f[today_f["Market_Trend"] > 0.008]
 
             # トレンドのみ
-            today_f = today_f[today_f["Trend_5_z"] > 1.0]
+            today_f = today_f[today_f["Trend_5_z"] > 1.1]
 
             # スコア（緩め）
-            today_f = today_f[today_f["score"] >= (1 - 0.02)]
+            today_f = today_f[today_f["score"] >= (1 - 0.01)]
 
             # =========================
 
