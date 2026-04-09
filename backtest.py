@@ -18,10 +18,12 @@ N_CLASS = 30
 
 MAX_TICKERS = 1000
 
-# 🔥 最適化対象（ここが重要）
-STOP_LOSS_CANDIDATES = [-0.02, -0.03, -0.04, -0.05]
+# 🔥 固定損切り（ここが最終形）
+STOP_LOSS = -0.02
 
-# 🔥 WF設定
+# 🔥 コスト（超重要）
+COST_RATE = 0.0015  # 0.15%片道想定
+
 WF_PERIODS = [
     ([2018, 2019, 2020], 2021),
     ([2019, 2020, 2021], 2022),
@@ -97,9 +99,9 @@ def train_model(train_df):
     return model
 
 # =========================
-# バックテスト
+# バックテスト（完全版）
 # =========================
-def run_backtest(model, data_df, STOP_LOSS):
+def run_backtest(model, data_df):
 
     data_df = data_df.copy()
     data_df["raw_score"] = model.predict(data_df[FEATURES])
@@ -132,10 +134,15 @@ def run_backtest(model, data_df, STOP_LOSS):
             price = today.loc[pos["ticker"], "Close"]
             ret = (price - pos["entry_price"]) / pos["entry_price"]
 
+            # 🔥 損切り or 時間決済
             if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
                 exit_price = today.loc[pos["ticker"], "Open"]
+
                 final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
+                # 🔥 コスト反映（売買両方）
+                final_ret -= COST_RATE * 2
 
                 cash += pos["capital"] * (1 + final_ret)
                 trade_logs.append(final_ret)
@@ -150,7 +157,6 @@ def run_backtest(model, data_df, STOP_LOSS):
         # =========================
         if i + 1 < len(dates):
 
-            # 🔥 市場フィルター（最重要）
             if today["Market_Trend"].mean() < 0:
                 equity_curve.append(equity)
                 continue
@@ -176,7 +182,6 @@ def run_backtest(model, data_df, STOP_LOSS):
                     if ticker not in next_data.index:
                         continue
 
-                    # 🔥 実運用制約（超重要）
                     capital = min(cash * weights.iloc[j], equity * 0.2)
 
                     exit_idx = i + HOLD_DAYS
@@ -185,7 +190,7 @@ def run_backtest(model, data_df, STOP_LOSS):
 
                     positions.append({
                         "ticker": ticker,
-                        "entry_price": next_data.loc[ticker, "Open"],
+                        "entry_price": next_data.loc[ticker, "Open"] * (1 + COST_RATE),
                         "exit_idx": exit_idx,
                         "capital": capital
                     })
@@ -193,7 +198,7 @@ def run_backtest(model, data_df, STOP_LOSS):
                     cash -= capital
 
         # =========================
-        # エクイティ更新
+        # エクイティ
         # =========================
         pos_val = 0
         for pos in positions:
@@ -205,20 +210,35 @@ def run_backtest(model, data_df, STOP_LOSS):
         equity = cash + pos_val
         equity_curve.append(equity)
 
+    # =========================
+    # 指標計算
+    # =========================
     trade_df = pd.Series(trade_logs)
+
+    equity_df = pd.DataFrame({
+        "Equity": equity_curve
+    })
 
     if len(trade_df) == 0:
         return None
 
+    # PF
     pf = trade_df[trade_df > 0].mean() / abs(trade_df[trade_df < 0].mean())
+
+    # DD
+    peak = equity_df["Equity"].cummax()
+    dd = equity_df["Equity"] / peak - 1
+    max_dd = dd.min()
 
     return {
         "PF": pf,
-        "Trades": len(trade_df)
+        "Trades": len(trade_df),
+        "MaxDD": max_dd,
+        "FinalEquity": equity_df["Equity"].iloc[-1]
     }
 
 # =========================
-# 🔥 ウォークフォワード（内側最適化あり）
+# WF
 # =========================
 results = []
 
@@ -231,43 +251,23 @@ for train_years, test_year in WF_PERIODS:
 
     model = train_model(train_df)
 
-    # =========================
-    # 🔥 内側最適化（train内でSL選択）
-    # =========================
-    best_pf = -np.inf
-    best_sl = None
+    res = run_backtest(model, test_df)
 
-    for sl in STOP_LOSS_CANDIDATES:
-
-        res = run_backtest(model, train_df, sl)
-
-        if res is None:
-            continue
-
-        if res["PF"] > best_pf:
-            best_pf = res["PF"]
-            best_sl = sl
-
-    print(f"Best SL: {best_sl} (PF={best_pf:.2f})")
-
-    # =========================
-    # 🔥 テスト（未来データ）
-    # =========================
-    test_res = run_backtest(model, test_df, best_sl)
-
-    if test_res is None:
+    if res is None:
         continue
 
-    test_res["Train"] = str(train_years)
-    test_res["Test"] = test_year
-    test_res["Best_SL"] = best_sl
+    res["Train"] = str(train_years)
+    res["Test"] = test_year
 
-    results.append(test_res)
+    results.append(res)
 
 # =========================
 # 結果
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終WF結果（完全版） ===")
+print("\n=== 最終結果（コスト込み・DD付き・固定SL） ===")
 print(result_df)
+
+print("\n=== 平均DD ===")
+print(result_df["MaxDD"].mean())
