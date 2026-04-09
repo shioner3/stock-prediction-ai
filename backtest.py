@@ -22,6 +22,9 @@ STOP_LOSS = -0.02
 COST_RATE = 0.0025
 SLIPPAGE = 0.002
 
+# 🔥 連敗対策
+COOLDOWN_DAYS = 3
+
 WF_PERIODS = [
     ([2018, 2019, 2020], 2021),
     ([2019, 2020, 2021], 2022),
@@ -91,22 +94,6 @@ def train_model(train_df):
     return model
 
 # =========================
-# 🔥 連敗計算
-# =========================
-def calc_max_losing_streak(trades):
-    streak = 0
-    max_streak = 0
-
-    for r in trades:
-        if r < 0:
-            streak += 1
-            max_streak = max(max_streak, streak)
-        else:
-            streak = 0
-
-    return max_streak
-
-# =========================
 # バックテスト
 # =========================
 def run_backtest(model, data_df):
@@ -124,6 +111,10 @@ def run_backtest(model, data_df):
 
     trade_logs = []
     equity_curve = []
+
+    # 🔥 状態管理
+    losing_streak = 0
+    cooldown = 0
 
     for i, d in enumerate(dates):
 
@@ -145,12 +136,18 @@ def run_backtest(model, data_df):
             if ret <= STOP_LOSS or i == pos["exit_idx"]:
 
                 exit_price = today.loc[pos["ticker"], "Open"] * (1 - SLIPPAGE)
-
                 final_ret = (exit_price - pos["entry_price"]) / pos["entry_price"]
                 final_ret -= COST_RATE * 2
 
                 cash += pos["capital"] * (1 + final_ret)
                 trade_logs.append(final_ret)
+
+                # 🔥 連敗管理
+                if final_ret < 0:
+                    losing_streak += 1
+                    cooldown = COOLDOWN_DAYS
+                else:
+                    losing_streak = 0
 
             else:
                 new_positions.append(pos)
@@ -162,6 +159,12 @@ def run_backtest(model, data_df):
         # =========================
         if i + 1 < len(dates):
 
+            # 🔥 クールダウン中は取引しない
+            if cooldown > 0:
+                cooldown -= 1
+                equity_curve.append(equity)
+                continue
+
             if today["Market_Trend"].mean() < 0:
                 equity_curve.append(equity)
                 continue
@@ -172,7 +175,10 @@ def run_backtest(model, data_df):
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0.008]
 
-            today_f = today_f[today_f["Trend_5_z"] > 1.2]
+            # 🔥 連敗時はフィルター強化
+            trend_th = 1.2 if losing_streak < 3 else 1.5
+
+            today_f = today_f[today_f["Trend_5_z"] > trend_th]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
@@ -182,12 +188,21 @@ def run_backtest(model, data_df):
                 weights = (picks["score"] ** 2) * (1 + picks["Trend_5_z"].clip(0, 2))
                 weights = weights / weights.sum()
 
+                # 🔥 ロット調整
+                if losing_streak >= 5:
+                    size_factor = 0.25
+                elif losing_streak >= 3:
+                    size_factor = 0.5
+                else:
+                    size_factor = 1.0
+
                 for j, (ticker, row) in enumerate(picks.iterrows()):
 
                     if ticker not in next_data.index:
                         continue
 
                     capital = min(cash * weights.iloc[j], equity * 0.2)
+                    capital *= size_factor
 
                     exit_idx = i + HOLD_DAYS
                     if exit_idx >= len(dates):
@@ -255,35 +270,40 @@ def run_backtest(model, data_df):
     }
 
 # =========================
+# 連敗計算
+# =========================
+def calc_max_losing_streak(trades):
+    streak = 0
+    max_streak = 0
+    for r in trades:
+        if r < 0:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+    return max_streak
+
+# =========================
 # WF
 # =========================
 results = []
 
 for train_years, test_year in WF_PERIODS:
 
-    print(f"\n=== WF: Train {train_years} → Test {test_year} ===")
-
     train_df = df[df["Date"].dt.year.isin(train_years)]
     test_df  = df[df["Date"].dt.year == test_year]
 
     model = train_model(train_df)
-
     res = run_backtest(model, test_df)
 
-    if res is None:
-        continue
+    if res:
+        res["Train"] = str(train_years)
+        res["Test"] = test_year
+        results.append(res)
 
-    res["Train"] = str(train_years)
-    res["Test"] = test_year
-
-    results.append(res)
-
-# =========================
-# 結果
-# =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終結果（現実寄せMAX） ===")
+print("\n=== 最終結果（連敗対策あり） ===")
 print(result_df)
 
 print("\n平均DD:", result_df["MaxDD"].mean())
