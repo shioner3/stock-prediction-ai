@@ -40,10 +40,9 @@ df = df[df["Ticker"].isin(top_tickers)]
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# FEATURES（🔥完全整合）
+# FEATURES（完全整合）
 # =========================
 FEATURES = [
-    # ===== 基本 =====
     "Return_1","Return_3",
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
@@ -51,31 +50,21 @@ FEATURES = [
     "HL_range",
     "Rel_Return_1",
 
-    # ===== トレンド =====
     "Trend_5_z","Trend_10_z","Trend_diff",
 
-    # ===== ドローダウン系（NEW）
     "DD_5","DD_10",
-
-    # ===== トレンド安定性（NEW）
     "TrendVol",
-
-    # ===== 出来高Z（NEW）
     "Volume_Z",
 
-    # ===== 追加 =====
     "Gap",
     "Volatility_change",
     "Momentum_acc",
 
-    # ===== クロスセクション =====
     "Return_1_rank","Return_3_rank",
     "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
 
-    # ===== 市場 =====
     "Market_Z","Market_Trend",
 
-    # ===== 時間 =====
     "DayOfWeek"
 ]
 
@@ -184,23 +173,24 @@ def run_backtest(model, data_df):
         # =========================
         if i + 1 < len(dates):
 
-            if today["Market_Trend"].mean() < 0:
-                equity_curve.append(equity)
-                continue
-
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
+            # =========================
+            # 🔥 フィルタ（変更部分）
+            # =========================
+
+            # 市場
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0.008]
 
-            # 🔥 精度強化フィルター（連敗対策）
-            today_f = today_f[today_f["Trend_5_z"] > 1.2]
-            today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
-            today_f = today_f[today_f["DD_5"] > -0.05]
+            # トレンドのみ
+            today_f = today_f[today_f["Trend_5_z"] > 1.0]
 
-            # スコア
-            today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
+            # スコア（緩め）
+            today_f = today_f[today_f["score"] >= (1 - 0.02)]
+
+            # =========================
 
             if len(today_f) > 0:
 
@@ -209,8 +199,8 @@ def run_backtest(model, data_df):
                 weights = (
                     (picks["score"] ** 2)
                     * (1 + picks["Trend_5_z"].clip(0, 2))
-                    * (1 - picks["TrendVol"].clip(0, 1))
                 )
+
                 weights = weights / weights.sum()
 
                 for j, (ticker, row) in enumerate(picks.iterrows()):
@@ -298,7 +288,6 @@ for train_years, test_year in WF_PERIODS:
     test_df  = df[df["Date"].dt.year == test_year]
 
     model = train_model(train_df)
-
     res = run_backtest(model, test_df)
 
     if res is None:
@@ -314,10 +303,15 @@ for train_years, test_year in WF_PERIODS:
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== 最終結果（完全整合版） ===")
+print("\n=== 最終結果（フィルタ変更版） ===")
 print(result_df)
 
 print("\n平均DD:", result_df["MaxDD"].mean())
 print("平均CAGR:", result_df["CAGR"].mean())
 print("平均Sharpe:", result_df["Sharpe"].mean())
 print("最大連敗平均:", result_df["MaxLosingStreak"].mean())
+print("\n=== 取引統計 ===")
+print("総取引数:", result_df["Trades"].sum())
+print("平均取引数:", result_df["Trades"].mean())
+print("最大取引数:", result_df["Trades"].max())
+print("最小取引数:", result_df["Trades"].min())
