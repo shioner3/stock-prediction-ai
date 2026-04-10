@@ -13,7 +13,6 @@ INITIAL_CAPITAL = 1.0
 TOP_N = 5
 HOLD_DAYS = 10
 
-# 🔥 固定パラメータ
 TREND_TH = 1.0
 TOP_RATE = 0.014
 
@@ -47,22 +46,16 @@ FEATURES = [
     "Volume_change","Volume_ratio",
     "HL_range",
     "Rel_Return_1",
-
     "Trend_5_z","Trend_10_z","Trend_diff",
-
     "DD_5","DD_10",
     "TrendVol",
     "Volume_Z",
-
     "Gap",
     "Volatility_change",
     "Momentum_acc",
-
     "Return_1_rank","Return_3_rank",
     "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
-
     "Market_Z","Market_Trend",
-
     "DayOfWeek"
 ]
 
@@ -108,6 +101,20 @@ def calc_hold_days(row):
 
     hold = base + trend_bonus + stability_bonus + dd_bonus
     return max(5, min(20, hold))
+
+# =========================
+# 最大連敗
+# =========================
+def calc_max_losing_streak(trades):
+    streak = 0
+    max_streak = 0
+    for r in trades:
+        if r < 0:
+            streak += 1
+            max_streak = max(max_streak, streak)
+        else:
+            streak = 0
+    return max_streak
 
 # =========================
 # バックテスト
@@ -163,14 +170,13 @@ def run_backtest(model, data_df):
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
-            # ===== 最小フィルタ =====
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0]
 
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
-            # ===== スコア統合 =====
+            # スコア統合
             today_f["adjusted_score"] = (
                 today_f["score"]
                 * (1 + today_f["Trend_5_z"].clip(0, 2))
@@ -183,7 +189,6 @@ def run_backtest(model, data_df):
 
                 picks = today_f.sort_values("adjusted_score", ascending=False).head(TOP_N)
 
-                # ===== 🔥 修正済みウェイト =====
                 weights = picks["adjusted_score"]
 
                 if weights.sum() > 0:
@@ -234,17 +239,29 @@ def run_backtest(model, data_df):
 
     equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
 
+    # ===== MaxDD =====
+    peak = equity_df["Equity"].cummax()
+    dd = equity_df["Equity"] / peak - 1
+    max_dd = dd.min()
+
+    # ===== CAGR =====
     years = len(equity_df) / 252
     final_equity = equity_df["Equity"].iloc[-1]
     cagr = final_equity ** (1 / years) - 1 if years > 0 else 0
 
+    # ===== Sharpe =====
     sharpe = (
         equity_df["Return"].mean() / equity_df["Return"].std()
     ) * np.sqrt(252) if equity_df["Return"].std() != 0 else 0
 
+    # ===== 最大連敗 =====
+    max_ls = calc_max_losing_streak(trade_logs)
+
     return {
         "CAGR": cagr,
         "Sharpe": sharpe,
+        "MaxDD": max_dd,
+        "LosingStreak": max_ls,
         "Trades": len(trade_df)
     }
 
@@ -286,4 +303,6 @@ print(result_df)
 
 print("\n平均CAGR:", result_df["CAGR"].mean())
 print("平均Sharpe:", result_df["Sharpe"].mean())
+print("平均MaxDD:", result_df["MaxDD"].mean())
+print("平均連敗数:", result_df["LosingStreak"].mean())
 print("平均Trades:", result_df["Trades"].mean())
