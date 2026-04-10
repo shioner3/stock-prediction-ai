@@ -15,7 +15,7 @@ HOLD_DAYS = 10
 
 # 🔥 固定パラメータ
 TREND_TH = 1.0
-TOP_RATE = 0.01
+TOP_RATE = 0.015
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
