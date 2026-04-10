@@ -146,10 +146,6 @@ today = today[today["DD_5"] > -0.05]
 today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
-# =========================
-# 🔥 可変ホールド適用
-# =========================
-today["hold_days"] = today.apply(calc_hold_days, axis=1)
 
 # =========================
 # 重み
