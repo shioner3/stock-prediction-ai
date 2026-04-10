@@ -25,7 +25,6 @@ STOP_LOSS = -0.02
 COST_RATE = 0.0025
 SLIPPAGE = 0.002
 
-# 🔥 ランダム検証回数
 N_TRIALS = 10
 
 # =========================
@@ -165,30 +164,41 @@ def run_backtest(model, data_df):
             today_f = today.copy()
 
             # =========================
-            # 🔥 フィルタ（今回の指定）
+            # 🔥 フィルタ最小化
             # =========================
             if USE_MARKET_FILTER:
-                today_f = today_f[today_f["Market_Trend"] > 0.005]
+                today_f = today_f[today_f["Market_Trend"] > 0]
 
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
-            # 🔥 安定性フィルタ
-            today_f = today_f[today_f["TrendVol"] < 0.7]
-
-            # 🔥 ドローダウン回避
-            today_f = today_f[today_f["DD_5"] > -0.05]
             # =========================
+            # 🔥 スコア統合（超重要）
+            # =========================
+            today_f["adjusted_score"] = (
+                today_f["score"]
+                * (1 + today_f["Trend_5_z"].clip(0, 2))
+                * (1 - today_f["TrendVol"].clip(0, 1))
+                * (1 + today_f["DD_5"].clip(-0.2, 0.2))
+                * (1 + today_f["Market_Trend"].clip(0, 0.02))
+            )
 
+            # =========================
+            # 🔥 並び替え変更
+            # =========================
             if len(today_f) > 0:
 
-                picks = today_f.sort_values("score", ascending=False).head(TOP_N)
+                picks = today_f.sort_values("adjusted_score", ascending=False).head(TOP_N)
 
-                weights = (
-                    picks["score"]**2 *
-                    (1 + picks["Trend_5_z"].clip(0, 2))
-                )
-                weights = weights / weights.sum()
+                # =========================
+                # 🔥 ウェイト一致
+                # =========================
+                weights = picks["adjusted_score"]
+
+                if weights.sum() > 0:
+                    weights = weights / weights.sum()
+                else:
+                    weights = np.ones(len(weights)) / len(weights)
 
                 for j, (ticker, row) in enumerate(picks.iterrows()):
 
@@ -248,7 +258,7 @@ def run_backtest(model, data_df):
     }
 
 # =========================
-# 🔥 ランダム期間検証
+# ランダム検証
 # =========================
 results = []
 
