@@ -163,12 +163,14 @@ def run_backtest(model, data_df):
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
+            # ===== 最小フィルタ =====
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0]
 
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
+            # ===== スコア統合 =====
             today_f["adjusted_score"] = (
                 today_f["score"]
                 * (1 + today_f["Trend_5_z"].clip(0, 2))
@@ -181,26 +183,20 @@ def run_backtest(model, data_df):
 
                 picks = today_f.sort_values("adjusted_score", ascending=False).head(TOP_N)
 
-                # ===== 安全ウェイト =====
+                # ===== 🔥 修正済みウェイト =====
                 weights = picks["adjusted_score"]
 
                 if weights.sum() > 0:
-                    weights = weights / weights.sum()
+                    weights = (weights / weights.sum()).values
                 else:
-                    weights = pd.Series(
-                        np.ones(len(weights)) / len(weights),
-                        index=weights.index
-                    )
+                    weights = np.ones(len(weights)) / len(weights)
 
-                for ticker, row in picks.iterrows():
+                for j, (ticker, row) in enumerate(picks.iterrows()):
 
                     if ticker not in next_data.index:
                         continue
 
-                    w = weights.loc[ticker]
-
-                    # 🔥 ここが今回の変更
-                    capital = min(cash * w * 0.8, equity * 0.15)
+                    capital = min(cash * weights[j], equity * 0.2)
 
                     hold_days = calc_hold_days(row)
                     exit_idx = i + hold_days
