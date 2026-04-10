@@ -114,12 +114,9 @@ def run_backtest(model, data_df):
 
     data_df = data_df.dropna(subset=FEATURES).copy()
 
-    data_df["score"] = (
-        data_df.groupby("Date")[FEATURES]
-        .apply(lambda x: model.predict(x))
-        .reset_index(level=0, drop=True)
-    )
-    data_df["score"] = data_df.groupby("Date")["score"].rank(pct=True)
+    # ✅ 安定スコア計算（超重要）
+    data_df["raw_score"] = model.predict(data_df[FEATURES])
+    data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
     dates = sorted(grouped.keys())
@@ -265,12 +262,15 @@ for i in range(3, len(years)):
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== Yearly Performance ===")
-print(result_df[["Year","CAGR","Sharpe","MaxDD"]])
+if len(result_df) == 0:
+    print("⚠️ 結果なし（条件が厳しすぎる可能性）")
+else:
+    print("\n=== Yearly Performance ===")
+    print(result_df[["Year","CAGR","Sharpe","MaxDD"]])
 
-print("\n=== Summary ===")
-print(f"CAGR        : {result_df['CAGR'].mean():.3f}")
-print(f"Sharpe      : {result_df['Sharpe'].mean():.3f}")
-print(f"MaxDD       : {result_df['MaxDD'].mean():.3f}")
-print(f"LosingStreak: {result_df['LosingStreak'].mean():.1f}")
-print(f"Trades      : {result_df['Trades'].mean():.1f}")
+    print("\n=== Summary ===")
+    print(f"CAGR        : {result_df['CAGR'].mean():.3f}")
+    print(f"Sharpe      : {result_df['Sharpe'].mean():.3f}")
+    print(f"MaxDD       : {result_df['MaxDD'].mean():.3f}")
+    print(f"LosingStreak: {result_df['LosingStreak'].mean():.1f}")
+    print(f"Trades      : {result_df['Trades'].mean():.1f}")
