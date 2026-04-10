@@ -106,25 +106,6 @@ model.fit(
 with open(MODEL_PATH, "wb") as f:
     pickle.dump(model, f)
 
-# =========================
-# 🔥 可変ホールド関数
-# =========================
-def calc_hold_days(row):
-    base = HOLD_DAYS
-
-    # トレンド強いほど延長
-    trend_bonus = int(row["Trend_5_z"] * 2)
-
-    # 安定性（低いほど良い）
-    stability_bonus = int((1 - row["TrendVol"]) * 5)
-
-    # DD小さいほど延長
-    dd_bonus = int((row["DD_5"] + 0.1) * 5)
-
-    hold = base + trend_bonus + stability_bonus + dd_bonus
-
-    # 制限
-    return max(5, min(20, hold))
 
 # =========================
 # 予測
@@ -132,7 +113,15 @@ def calc_hold_days(row):
 today = predict_df.copy()
 
 today["raw_score"] = model.predict(today[FEATURES])
-today["score"] = today["raw_score"].rank(pct=True)
+
+# 🔥 前日シグナルにする
+today["raw_score_shift"] = today.groupby("Ticker")["raw_score"].shift(1)
+
+# ランク化
+today["score"] = today["raw_score_shift"].rank(pct=True)
+
+# シフトでNaN消す
+today = today.dropna(subset=["score"])
 
 # =========================
 # 市場フィルター
