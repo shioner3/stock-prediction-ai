@@ -18,8 +18,11 @@ STOP_LOSS = -0.02
 COST_RATE = 0.0025
 SLIPPAGE = 0.002
 
+MAX_POSITIONS = 5
+MAX_WEIGHT = 0.15
+
 # =========================
-# データ読み込み
+# データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
@@ -44,7 +47,7 @@ FEATURES = [
 ]
 
 # =========================
-# Target（未来リターンを使う前提）
+# Target
 # =========================
 def make_target_class(x):
     try:
@@ -58,7 +61,6 @@ df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class).as
 # モデル
 # =========================
 def train_model(train_df):
-    train_df = train_df.sort_values("Date")
     group = train_df.groupby("Date").size().to_list()
 
     model = LGBMRanker(
@@ -74,7 +76,7 @@ def train_model(train_df):
     return model
 
 # =========================
-# 可変ホールド
+# ホールド日数
 # =========================
 def calc_hold_days(row):
     hold = (
@@ -86,33 +88,20 @@ def calc_hold_days(row):
     return max(5, min(20, hold))
 
 # =========================
-# 最大連敗
-# =========================
-def calc_max_losing_streak(trades):
-    streak = max_streak = 0
-    for r in trades:
-        if r < 0:
-            streak += 1
-            max_streak = max(max_streak, streak)
-        else:
-            streak = 0
-    return max_streak
-
-# =========================
-# バックテスト（完全再現版）
+# バックテスト（完全リアル）
 # =========================
 def run_backtest(model, data_df):
 
     data_df = data_df.dropna(subset=FEATURES).copy()
 
-    # ⚠️ 当日で完結（未来見ない）
+    # スコア（当日終値後に計算）
     data_df["raw_score"] = model.predict(data_df[FEATURES])
     data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
     dates = sorted(grouped.keys())
 
-    equity = cash = INITIAL_CAPITAL
+    cash = INITIAL_CAPITAL
     positions = []
 
     trade_logs = []
@@ -123,7 +112,7 @@ def run_backtest(model, data_df):
         today = grouped[d]
 
         # =========================
-        # 決済（当日寄りで約定）
+        # 決済（当日寄り）
         # =========================
         new_positions = []
 
@@ -135,7 +124,6 @@ def run_backtest(model, data_df):
             open_price = today.loc[pos["ticker"], "Open"]
             close_price = today.loc[pos["ticker"], "Close"]
 
-            # 前日終値ベースで損切り判定（現実寄せ）
             ret_close = (close_price - pos["entry_price"]) / pos["entry_price"]
 
             if ret_close <= STOP_LOSS or i >= pos["exit_idx"]:
@@ -171,27 +159,26 @@ def run_backtest(model, data_df):
                     * (1 + today_f["Trend_5_z"].clip(0, 2))
                     * (1 - today_f["TrendVol"].clip(0, 1))
                     * (1 + today_f["DD_5"].clip(-0.2, 0.2))
-                    * (1 + today_f["Market_Trend"].clip(0, 0.02))
                 )
 
-                picks = today_f.sort_values("adj_score", ascending=False).head(TOP_N)
-
-                weights = picks["adj_score"]
-                weights = (
-                    (weights / weights.sum()).values
-                    if weights.sum() > 0
-                    else np.ones(len(weights)) / len(weights)
-                )
+                picks = today_f.sort_values("adj_score", ascending=False)
 
                 next_data = grouped[dates[i+1]]
 
-                for j, (ticker, row) in enumerate(picks.iterrows()):
+                for ticker, row in picks.iterrows():
+
+                    # 最大保有数制限
+                    if len(positions) >= MAX_POSITIONS:
+                        break
 
                     if ticker not in next_data.index:
                         continue
 
-                    # ⚠️ ポジションサイズ制御
-                    capital = min(cash * weights[j], equity * 0.15)
+                    # キャッシュのみで制御
+                    capital = cash * MAX_WEIGHT
+
+                    if capital <= 0:
+                        break
 
                     hold_days = calc_hold_days(row)
                     exit_idx = i + hold_days
@@ -211,7 +198,7 @@ def run_backtest(model, data_df):
                     cash -= capital
 
         # =========================
-        # 評価額（当日終値）
+        # 評価額
         # =========================
         pos_val = 0
 
@@ -237,57 +224,12 @@ def run_backtest(model, data_df):
     cagr = equity_df["Equity"].iloc[-1] ** (1 / years) - 1
 
     sharpe = (
-        equity_df["Return"].mean()
-        / equity_df["Return"].std()
-        * np.sqrt(252)
+        equity_df["Return"].mean() / equity_df["Return"].std() * np.sqrt(252)
     ) if equity_df["Return"].std() != 0 else 0
 
     return {
         "CAGR": cagr,
         "Sharpe": sharpe,
         "MaxDD": max_dd,
-        "LosingStreak": calc_max_losing_streak(trade_logs),
         "Trades": len(trade_logs)
     }
-
-# =========================
-# ウォークフォワード（完全OOS）
-# =========================
-results = []
-
-years = sorted(df["Date"].dt.year.unique())
-
-for i in range(3, len(years)):
-
-    train_years = years[:i]
-    test_year = years[i]
-
-    print(f"Train {train_years} → Test {test_year}")
-
-    train_df = df[df["Date"].dt.year.isin(train_years)]
-    test_df  = df[df["Date"].dt.year == test_year]
-
-    model = train_model(train_df)
-    res = run_backtest(model, test_df)
-
-    if res:
-        res["Year"] = test_year
-        results.append(res)
-
-# =========================
-# 結果
-# =========================
-result_df = pd.DataFrame(results)
-
-if len(result_df) == 0:
-    print("⚠️ 結果なし")
-else:
-    print("\n=== Yearly Performance ===")
-    print(result_df[["Year","CAGR","Sharpe","MaxDD"]])
-
-    print("\n=== Summary ===")
-    print(f"CAGR        : {result_df['CAGR'].mean():.3f}")
-    print(f"Sharpe      : {result_df['Sharpe'].mean():.3f}")
-    print(f"MaxDD       : {result_df['MaxDD'].mean():.3f}")
-    print(f"LosingStreak: {result_df['LosingStreak'].mean():.1f}")
-    print(f"Trades      : {result_df['Trades'].mean():.1f}")
