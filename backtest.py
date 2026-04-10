@@ -163,18 +163,14 @@ def run_backtest(model, data_df):
             next_data = grouped[dates[i+1]]
             today_f = today.copy()
 
-            # =========================
-            # 🔥 フィルタ最小化
-            # =========================
+            # ===== 最小フィルタ =====
             if USE_MARKET_FILTER:
                 today_f = today_f[today_f["Market_Trend"] > 0]
 
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
-            # =========================
-            # 🔥 スコア統合（超重要）
-            # =========================
+            # ===== スコア統合 =====
             today_f["adjusted_score"] = (
                 today_f["score"]
                 * (1 + today_f["Trend_5_z"].clip(0, 2))
@@ -183,20 +179,15 @@ def run_backtest(model, data_df):
                 * (1 + today_f["Market_Trend"].clip(0, 0.02))
             )
 
-            # =========================
-            # 🔥 並び替え変更
-            # =========================
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("adjusted_score", ascending=False).head(TOP_N)
 
-                # =========================
-                # 🔥 ウェイト一致
-                # =========================
+                # ===== 🔥 修正済みウェイト =====
                 weights = picks["adjusted_score"]
 
                 if weights.sum() > 0:
-                    weights = weights / weights.sum()
+                    weights = (weights / weights.sum()).values
                 else:
                     weights = np.ones(len(weights)) / len(weights)
 
@@ -205,7 +196,7 @@ def run_backtest(model, data_df):
                     if ticker not in next_data.index:
                         continue
 
-                    capital = min(cash * weights.iloc[j], equity * 0.2)
+                    capital = min(cash * weights[j], equity * 0.2)
 
                     hold_days = calc_hold_days(row)
                     exit_idx = i + hold_days
