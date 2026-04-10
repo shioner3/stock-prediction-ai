@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMRanker
-import random
 
 # =========================
 # 設定
@@ -24,8 +23,6 @@ STOP_LOSS = -0.02
 COST_RATE = 0.0025
 SLIPPAGE = 0.002
 
-N_TRIALS = 10
-
 # =========================
 # データ
 # =========================
@@ -44,15 +41,11 @@ FEATURES = [
     "MA3_ratio","MA5_ratio","MA10_ratio",
     "Volatility",
     "Volume_change","Volume_ratio",
-    "HL_range",
-    "Rel_Return_1",
+    "HL_range","Rel_Return_1",
     "Trend_5_z","Trend_10_z","Trend_diff",
     "DD_5","DD_10",
-    "TrendVol",
-    "Volume_Z",
-    "Gap",
-    "Volatility_change",
-    "Momentum_acc",
+    "TrendVol","Volume_Z",
+    "Gap","Volatility_change","Momentum_acc",
     "Return_1_rank","Return_3_rank",
     "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
     "Market_Z","Market_Trend",
@@ -176,7 +169,6 @@ def run_backtest(model, data_df):
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
             today_f = today_f[today_f["score"] >= (1 - TOP_RATE)]
 
-            # スコア統合
             today_f["adjusted_score"] = (
                 today_f["score"]
                 * (1 + today_f["Trend_5_z"].clip(0, 2))
@@ -239,22 +231,18 @@ def run_backtest(model, data_df):
 
     equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
 
-    # ===== MaxDD =====
     peak = equity_df["Equity"].cummax()
     dd = equity_df["Equity"] / peak - 1
     max_dd = dd.min()
 
-    # ===== CAGR =====
     years = len(equity_df) / 252
     final_equity = equity_df["Equity"].iloc[-1]
     cagr = final_equity ** (1 / years) - 1 if years > 0 else 0
 
-    # ===== Sharpe =====
     sharpe = (
         equity_df["Return"].mean() / equity_df["Return"].std()
     ) * np.sqrt(252) if equity_df["Return"].std() != 0 else 0
 
-    # ===== 最大連敗 =====
     max_ls = calc_max_losing_streak(trade_logs)
 
     return {
@@ -266,21 +254,21 @@ def run_backtest(model, data_df):
     }
 
 # =========================
-# ランダム検証
+# 🔥 OOS（ウォークフォワード）
 # =========================
 results = []
 
-all_years = sorted(df["Date"].dt.year.unique())
+years = sorted(df["Date"].dt.year.unique())
 
-for i in range(N_TRIALS):
+for i in range(3, len(years)):
 
-    train_years = random.sample(list(all_years[:-1]), 3)
-    test_year = random.choice([y for y in all_years if y not in train_years])
+    train_years = years[:i]      # 過去すべて
+    test_year = years[i]         # 未来1年
 
     train_df = df[df["Date"].dt.year.isin(train_years)]
     test_df  = df[df["Date"].dt.year == test_year]
 
-    print(f"\nTrial {i+1}: Train {train_years} → Test {test_year}")
+    print(f"\nTrain {train_years} → Test {test_year}")
 
     model = train_model(train_df)
     res = run_backtest(model, test_df)
@@ -298,7 +286,7 @@ for i in range(N_TRIALS):
 # =========================
 result_df = pd.DataFrame(results)
 
-print("\n=== ランダム検証結果 ===")
+print("\n=== OOS結果 ===")
 print(result_df)
 
 print("\n平均CAGR:", result_df["CAGR"].mean())
