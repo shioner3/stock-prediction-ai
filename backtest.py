@@ -99,19 +99,20 @@ def calc_max_losing_streak(trades):
     return max_streak
 
 # =========================
-# バックテスト（完全実運用再現）
+# バックテスト
 # =========================
 def run_backtest(model, data_df):
 
     data_df = data_df.dropna(subset=FEATURES).copy()
 
     # =========================
-    # スコア（rank廃止）
+    # 🔥 正しいスコア処理（rank → shift）
     # =========================
     data_df["raw_score"] = model.predict(data_df[FEATURES])
+    data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    # 🔥 1日遅延（超重要）
-    data_df["raw_score_shift"] = data_df.groupby("Ticker")["raw_score"].shift(1)
+    # 🔥 1日遅延（リーク防止）
+    data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
     dates = sorted(grouped.keys())
@@ -127,7 +128,7 @@ def run_backtest(model, data_df):
         today = grouped[d]
 
         # =========================
-        # 決済（厳格ストップロス）
+        # 決済（intradayストップロス）
         # =========================
         new_positions = []
 
@@ -139,7 +140,6 @@ def run_backtest(model, data_df):
             open_p = today.loc[pos["ticker"], "Open"]
             low_p  = today.loc[pos["ticker"], "Low"]
 
-            # 🔥 intradayストップロス
             stop_price = pos["entry_price"] * (1 + STOP_LOSS)
 
             if low_p <= stop_price or i >= pos["exit_idx"]:
@@ -157,27 +157,26 @@ def run_backtest(model, data_df):
         positions = new_positions
 
         # =========================
-        # エントリー（昨日シグナル）
+        # エントリー（昨日スコア）
         # =========================
         if i + 1 < len(dates):
 
             today_f = today.copy()
 
             # 🔥 遅延スコア使用
-            today_f = today_f.dropna(subset=["raw_score_shift"])
+            today_f = today_f.dropna(subset=["score_shift"])
 
             # フィルタ
             today_f = today_f[today_f["Market_Trend"] > 0]
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
 
-            # 上位率（rankなし → quantile）
-            threshold = today_f["raw_score_shift"].quantile(1 - TOP_RATE)
-            today_f = today_f[today_f["raw_score_shift"] >= threshold]
+            # 🔥 上位率（rank復活）
+            today_f = today_f[today_f["score_shift"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
 
                 today_f["adj_score"] = (
-                    today_f["raw_score_shift"]
+                    today_f["score_shift"]
                     * (1 + today_f["Trend_5_z"].clip(0, 2))
                     * (1 - today_f["TrendVol"].clip(0, 1))
                     * (1 + today_f["DD_5"].clip(-0.2, 0.2))
@@ -259,7 +258,7 @@ def run_backtest(model, data_df):
     }
 
 # =========================
-# フルOOS（ウォークフォワード）
+# ウォークフォワード
 # =========================
 results = []
 
