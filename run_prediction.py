@@ -10,7 +10,7 @@ from lightgbm import LGBMRanker
 # =========================
 TOP_N = 5
 TOP_RATE = 0.05
-HOLD_DAYS = 3  # ベース
+HOLD_DAYS = 3
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
@@ -106,7 +106,6 @@ model.fit(
 with open(MODEL_PATH, "wb") as f:
     pickle.dump(model, f)
 
-
 # =========================
 # 予測
 # =========================
@@ -114,14 +113,8 @@ today = predict_df.copy()
 
 today["raw_score"] = model.predict(today[FEATURES])
 
-# 🔥 前日シグナルにする
-today["raw_score_shift"] = today.groupby("Ticker")["raw_score"].shift(1)
-
-# ランク化
-today["score"] = today["raw_score_shift"].rank(pct=True)
-
-# シフトでNaN消す
-today = today.dropna(subset=["score"])
+# ✅ 修正（shift削除）
+today["score"] = today["raw_score"].rank(pct=True)
 
 # =========================
 # 市場フィルター
@@ -146,13 +139,15 @@ today = today[today["DD_5"] > -0.05]
 today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
-
 # =========================
 # 重み
 # =========================
 today["weight_raw"] = today["score"]
 
-today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
+if today["weight_raw"].sum() > 0:
+    today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
+else:
+    today["weight"] = 1.0 / len(today)
 
 # =========================
 # 出力
