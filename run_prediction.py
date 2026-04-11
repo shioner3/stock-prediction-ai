@@ -133,11 +133,7 @@ today["score"] = (score - score.mean()) / (score.std() + 1e-9)
 # =========================
 # フィルタ
 # =========================
-if USE_MARKET_FILTER:
-    today = today[today["Market_Trend"] > 0]
 
-today = today[today["TrendVol"] < today["TrendVol"].quantile(0.7)]
-today = today[today["DD_5"] > -0.05]
 
 # =========================
 # 最終選抜
