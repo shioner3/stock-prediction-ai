@@ -9,7 +9,6 @@ from lightgbm import LGBMRanker
 # 設定
 # =========================
 TOP_N = 5
-TOP_RATE = 0.05
 HOLD_DAYS = 3
 
 USE_MARKET_FILTER = True
@@ -61,9 +60,7 @@ FEATURES = [
 train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
-# =========================
-# Target
-# =========================
+
 # =========================
 # Target Class（完全安定版）
 # =========================
@@ -132,10 +129,6 @@ today["score"] = today["raw_score"].rank(pct=True)
 if USE_MARKET_FILTER:
     today = today[today["Market_Trend"] > 0]
 
-# =========================
-# TOP_RATE
-# =========================
-today = today[today["score"] >= (1 - TOP_RATE)]
 
 # =========================
 # フィルタ
