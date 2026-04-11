@@ -162,7 +162,6 @@ print(today[[
     "Ticker","Name",
     "raw_score","score",
     "Trend_5_z","TrendVol","DD_5",
-    "hold_days",
     "weight",
     "PredRank"
 ]])
