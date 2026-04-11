@@ -14,6 +14,10 @@ HOLD_DAYS = 3
 MIN_COUNT = 3000
 Z_WINDOW = 20
 
+# 🔥 追加（安定化）
+MIN_PRICE = 50        # 低位株除外
+TARGET_CLIP = 0.3     # リターン制限
+
 # =========================
 # データ読み込み
 # =========================
@@ -34,6 +38,11 @@ FROM '{PARQUET_FILE}'
 
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+
+# =========================
+# 🔥 低価格株フィルター（超重要）
+# =========================
+df = df[df["Close"] > MIN_PRICE].copy()
 
 # =========================
 # 日付フィルター
@@ -135,7 +144,7 @@ df["Market_Trend"] = df.groupby("Date")["Trend_5"].transform("mean")
 df["DayOfWeek"] = df["Date"].dt.dayofweek
 
 # =========================
-# Target（リーク修正済み）
+# 🔥 Target（完全修正版）
 # =========================
 future_mean = (
     df.groupby("Ticker")["Close"]
@@ -143,6 +152,9 @@ future_mean = (
 )
 
 df["Target"] = future_mean / df["Close"] - 1
+
+# 🔥 異常値カット（必須）
+df["Target"] = df["Target"].clip(-TARGET_CLIP, TARGET_CLIP)
 
 # =========================
 # FEATURES
@@ -174,7 +186,7 @@ latest_date = df["Date"].max()
 predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
 
 # =========================
-# 🔍 軽量データ健全性チェック（追加部分）
+# 🔍 データ健全性チェック
 # =========================
 print("\n=== DATA VALIDATION ===")
 
@@ -188,7 +200,7 @@ print("\n銘柄数:", df["Ticker"].nunique())
 print("日付数:", df["Date"].nunique())
 
 # =========================
-# 既存デバッグ
+# デバッグ
 # =========================
 print("\n=== TARGET CHECK ===")
 print(train_df["Target"].describe())
@@ -203,4 +215,4 @@ print("Predict:", latest_date)
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（リーク修正版＋健全性チェック）")
+print("\n保存完了（完全安定版）")
