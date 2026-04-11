@@ -238,7 +238,6 @@ def run_backtest(model, data_df):
         "CAGR": cagr,
         "Sharpe": sharpe,
         "MaxDD": max_dd,
-        "LosingStreak": calc_max_losing_streak(trade_logs),
         "Trades": len(trade_logs)
     }
 
