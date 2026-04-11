@@ -73,7 +73,6 @@ def train_model(train_df):
     model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
     return model
 
-
 # =========================
 # 最大連敗
 # =========================
@@ -98,7 +97,7 @@ def run_backtest(model, data_df):
     data_df["raw_score"] = model.predict(data_df[FEATURES])
     data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    # 1日遅延（リーク防止）
+    # 1日遅延
     data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
@@ -115,7 +114,7 @@ def run_backtest(model, data_df):
         today = grouped[d]
 
         # =========================
-        # 決済（intradayストップロス）
+        # 決済
         # =========================
         new_positions = []
 
@@ -144,20 +143,17 @@ def run_backtest(model, data_df):
         positions = new_positions
 
         # =========================
-        # エントリー（昨日スコア）
+        # エントリー
         # =========================
         if i + 1 < len(dates):
 
             today_f = today.copy()
 
-            # 遅延スコア
             today_f = today_f.dropna(subset=["score_shift"])
 
             # フィルタ
             today_f = today_f[today_f["Market_Trend"] > 0]
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
-
-            # 🔥 追加フィルタ
             today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
             today_f = today_f[today_f["DD_5"] > -0.05]
 
@@ -168,7 +164,7 @@ def run_backtest(model, data_df):
 
                 picks = today_f.sort_values("score_shift", ascending=False).head(TOP_N)
 
-                # 🔥 weight変更（シンプル版）
+                # weight（シンプル）
                 weights = picks["score_shift"]
 
                 if weights.sum() > 0:
@@ -185,6 +181,8 @@ def run_backtest(model, data_df):
 
                     capital = min(cash * weights[j], equity * 0.15)
 
+                    # 🔥 固定ホールド
+                    exit_idx = i + HOLD_DAYS
                     if exit_idx >= len(dates):
                         continue
 
@@ -277,5 +275,4 @@ else:
     print(f"CAGR        : {result_df['CAGR'].mean():.3f}")
     print(f"Sharpe      : {result_df['Sharpe'].mean():.3f}")
     print(f"MaxDD       : {result_df['MaxDD'].mean():.3f}")
-    print(f"LosingStreak: {result_df['LosingStreak'].mean():.1f}")
     print(f"Trades      : {result_df['Trades'].mean():.1f}")
