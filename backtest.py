@@ -94,7 +94,8 @@ def run_backtest(model, data_df):
 
     # スコア
     data_df["raw_score"] = model.predict(data_df[FEATURES])
-    data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
+    rank = data_df.groupby("Date")["raw_score"].rank(pct=True)
+    data_df["score"] = 1 - rank
 
     # 1日遅延
     data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
