@@ -60,7 +60,6 @@ FEATURES = [
 train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
-
 # =========================
 # Target Class（完全安定版）
 # =========================
@@ -81,7 +80,7 @@ train_df = train_df.dropna(subset=["TargetClass"])
 # int変換
 train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
-# 🔥 ここで group 作る（重要）
+# group（重要）
 group = train_df.groupby("Date").size().to_list()
 
 # =========================
@@ -118,21 +117,25 @@ with open(MODEL_PATH, "wb") as f:
 # =========================
 today = predict_df.copy()
 
+# モデルスコア
 today["raw_score"] = model.predict(today[FEATURES])
 
-# ✅ 修正（shift削除）
-today["score"] = today["raw_score"].rank(pct=True)
+# 🔥 前日シグナル化
+today["raw_score_shift"] = today.groupby("Ticker")["raw_score"].shift(1)
 
-# =========================
-# 市場フィルター
-# =========================
-if USE_MARKET_FILTER:
-    today = today[today["Market_Trend"] > 0]
+# NaN除去
+today = today.dropna(subset=["raw_score_shift"])
 
+# 🔥 スコア改善（ここが最重要）
+score = today["raw_score_shift"]
+today["score"] = (score - score.mean()) / (score.std() + 1e-9)
 
 # =========================
 # フィルタ
 # =========================
+if USE_MARKET_FILTER:
+    today = today[today["Market_Trend"] > 0]
+
 today = today[today["TrendVol"] < today["TrendVol"].quantile(0.7)]
 today = today[today["DD_5"] > -0.05]
 
@@ -143,14 +146,11 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 重み
+# 重み（改良版）
 # =========================
-today["weight_raw"] = today["score"]
+today["weight_raw"] = np.exp(today["score"])  # ←ここも強化
 
-if today["weight_raw"].sum() > 0:
-    today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
-else:
-    today["weight"] = 1.0 / len(today)
+today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 
 # =========================
 # 出力
