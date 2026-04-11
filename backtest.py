@@ -12,7 +12,6 @@ TOP_N = 5
 HOLD_DAYS = 3
 
 TREND_TH = 1.0
-TOP_RATE = 0.05
 
 STOP_LOSS = -0.02
 COST_RATE = 0.0025
@@ -148,7 +147,6 @@ def run_backtest(model, data_df):
         if i + 1 < len(dates):
 
             today_f = today.copy()
-
             today_f = today_f.dropna(subset=["score_shift"])
 
             # フィルタ
@@ -157,20 +155,18 @@ def run_backtest(model, data_df):
             today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
             today_f = today_f[today_f["DD_5"] > -0.05]
 
-            # 上位率
-            today_f = today_f[today_f["score_shift"] >= (1 - TOP_RATE)]
-
             if len(today_f) > 0:
 
+                # 🔥 ノートレ日
+                if today_f["score_shift"].max() < 0.8:
+                    continue
+
+                # 上位5
                 picks = today_f.sort_values("score_shift", ascending=False).head(TOP_N)
 
-                # weight（シンプル）
-                weights = picks["score_shift"]
-
-                if weights.sum() > 0:
-                    weights = (weights / weights.sum()).values
-                else:
-                    weights = np.ones(len(weights)) / len(weights)
+                # 🔥 weight強化
+                weights = np.exp((picks["score_shift"] * 5).clip(-5, 5))
+                weights = weights / weights.sum()
 
                 next_data = grouped[dates[i+1]]
 
@@ -179,9 +175,8 @@ def run_backtest(model, data_df):
                     if ticker not in next_data.index:
                         continue
 
-                    capital = min(cash * weights[j], equity * 0.15)
+                    capital = min(cash * weights[j], equity * 0.2)
 
-                    # 🔥 固定ホールド
                     exit_idx = i + HOLD_DAYS
                     if exit_idx >= len(dates):
                         continue
