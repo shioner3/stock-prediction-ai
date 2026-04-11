@@ -144,17 +144,14 @@ df["Market_Trend"] = df.groupby("Date")["Trend_5"].transform("mean")
 df["DayOfWeek"] = df["Date"].dt.dayofweek
 
 # =========================
-# 🔥 Target（完全修正版）
+# 🎯 Target（順張り・5日リターン）
 # =========================
-future_mean = (
-    df.groupby("Ticker")["Close"]
-    .transform(lambda x: x.shift(-1).rolling(3).mean())
+df["Target"] = (
+    df.groupby("Ticker")["Close"].shift(-5) / df["Close"] - 1
 )
 
-df["Target"] = future_mean / df["Close"] - 1
-
-# 🔥 異常値カット（必須）
-df["Target"] = df["Target"].clip(-TARGET_CLIP, TARGET_CLIP)
+# 異常値カット（必須）
+df["Target"] = df["Target"].clip(-0.2, 0.2)
 
 # =========================
 # FEATURES
