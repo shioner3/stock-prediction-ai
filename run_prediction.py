@@ -2,18 +2,13 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
-import lightgbm as lgb
 from lightgbm import LGBMRanker
 
 # =========================
 # 設定
 # =========================
 TOP_N = 5
-
-USE_MARKET_FILTER = True
 N_CLASS = 30
-
-TRAIN_START_DATE = "2018-01-01"
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -23,12 +18,10 @@ PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
 # =========================
-# データ読み込み
+# データ
 # =========================
 train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
-
-train_df = train_df[train_df["Date"] >= TRAIN_START_DATE].copy()
 
 # =========================
 # FEATURES
@@ -54,24 +47,21 @@ FEATURES = [
 ]
 
 # =========================
-# 欠損除去
+# 前処理
 # =========================
-train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
-predict_df = predict_df.dropna(subset=FEATURES).copy()
+train_df = train_df.dropna(subset=FEATURES + ["Target"])
+predict_df = predict_df.dropna(subset=FEATURES)
 
 # =========================
-# Target Class
+# TargetClass
 # =========================
 def make_target_class(x):
-    if len(x) < N_CLASS:
-        return pd.Series([np.nan]*len(x), index=x.index)
     try:
         return pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
     except:
-        return pd.Series([np.nan]*len(x), index=x.index)
+        return pd.cut(x, bins=min(N_CLASS, len(x)), labels=False)
 
 train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
-
 train_df = train_df.dropna(subset=["TargetClass"])
 train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
@@ -86,25 +76,10 @@ model = LGBMRanker(
     num_leaves=31,
     subsample=0.8,
     colsample_bytree=0.8,
-    random_state=42,
-    n_jobs=-1
+    random_state=42
 )
 
-model.fit(
-    train_df[FEATURES],
-    train_df["TargetClass"],
-    group=group,
-    eval_set=[(train_df[FEATURES], train_df["TargetClass"])],
-    eval_group=[group],
-    eval_at=[5],
-    callbacks=[lgb.early_stopping(50)]
-)
-
-# =========================
-# 保存
-# =========================
-with open(MODEL_PATH, "wb") as f:
-    pickle.dump(model, f)
+model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
 
 # =========================
 # 予測
@@ -113,62 +88,24 @@ today = predict_df.copy()
 
 today["raw_score"] = model.predict(today[FEATURES])
 
-# 正規化
-score = today["raw_score"]
-rank = today["raw_score"].rank(pct=True)
-today["score"] = 1 - rank
+# 🔥 rankが最強
+today["score"] = today.groupby("Date")["raw_score"].rank(pct=True)
 
 # =========================
-# 🔥 フィルタ強化
-# =========================
-
-# ① 市場
-if USE_MARKET_FILTER:
-    today = today[today["Market_Trend"] > 0]
-
-# ② トレンド
-today = today[today["Trend_5_z"] > 0.5]
-
-# ③ ボラティリティ制御
-vol_th = today["TrendVol"].quantile(0.7)
-today = today[today["TrendVol"] < vol_th]
-
-# ④ DD制限
-today = today[today["DD_5"] > -0.08]
-
-# ⑤ スコア上位だけ
-score_th = today["score"].quantile(0.7)
-today = today[today["score"] > score_th]
-
-# =========================
-# 最終選抜
+# 上位抽出
 # =========================
 today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 重み
+# weight（均等でOK）
 # =========================
-today["weight_raw"] = np.exp(today["score"].clip(-2, 2))
-today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
+today["weight"] = 1 / len(today)
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（フィルタ強化版） ===")
 print(today[[
     "Ticker","Name",
-    "raw_score","score",
-    "Trend_5_z","TrendVol","DD_5",
-    "weight",
-    "PredRank"
+    "score","PredRank","weight"
 ]])
-
-# =========================
-# デバッグ
-# =========================
-print("\n=== SCORE分布 ===")
-print(today["score"].describe())
-
-print("\n=== 件数 ===")
-print(len(today))
