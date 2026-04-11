@@ -60,7 +60,7 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# Target Class（安定版）
+# Target Class
 # =========================
 def make_target_class(x):
     if len(x) < N_CLASS:
@@ -72,13 +72,9 @@ def make_target_class(x):
 
 train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
 
-# NaN削除
 train_df = train_df.dropna(subset=["TargetClass"])
-
-# int変換
 train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
-# group
 group = train_df.groupby("Date").size().to_list()
 
 # =========================
@@ -111,24 +107,37 @@ with open(MODEL_PATH, "wb") as f:
     pickle.dump(model, f)
 
 # =========================
-# 予測（🔥 修正ポイント）
+# 予測
 # =========================
 today = predict_df.copy()
 
-# スコア
 today["raw_score"] = model.predict(today[FEATURES])
 
-# 🔥 shiftは使わない（ここが最重要修正）
+# 正規化
 score = today["raw_score"]
-
-# 正規化（安定化）
 today["score"] = (score - score.mean()) / (score.std() + 1e-9)
 
 # =========================
-# フィルタ（任意）
+# 🔥 フィルタ強化
 # =========================
+
+# ① 市場
 if USE_MARKET_FILTER:
     today = today[today["Market_Trend"] > 0]
+
+# ② トレンド
+today = today[today["Trend_5_z"] > 0.5]
+
+# ③ ボラティリティ制御
+vol_th = today["TrendVol"].quantile(0.7)
+today = today[today["TrendVol"] < vol_th]
+
+# ④ DD制限
+today = today[today["DD_5"] > -0.08]
+
+# ⑤ スコア上位だけ
+score_th = today["score"].quantile(0.7)
+today = today[today["score"] > score_th]
 
 # =========================
 # 最終選抜
@@ -137,16 +146,15 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 重み（安定版）
+# 重み
 # =========================
 today["weight_raw"] = np.exp(today["score"].clip(-2, 2))
-
 today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄 ===")
+print("\n=== 今日の銘柄（フィルタ強化版） ===")
 print(today[[
     "Ticker","Name",
     "raw_score","score",
