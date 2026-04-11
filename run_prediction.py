@@ -86,10 +86,27 @@ model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
 # =========================
 today = predict_df.copy()
 
+# スコア
 today["raw_score"] = model.predict(today[FEATURES])
 
-# 🔥 rankが最強
-today["score"] = today.groupby("Date")["raw_score"].rank(pct=True)
+# rank（バックテストと一致）
+today["score"] = today["raw_score"].rank(pct=True)
+
+# =========================
+# 🔥 バックテスト完全一致フィルタ
+# =========================
+today = today[
+    (today["Market_Trend"] > 0) &
+    (today["Trend_5_z"] > 1.0) &
+    (today["score"] > 0.97)
+]
+
+# =========================
+# 🔥 ノートレ対応
+# =========================
+if len(today) == 0:
+    print("⚠️ ノートレ（条件満たす銘柄なし）")
+    exit()
 
 # =========================
 # 上位抽出
@@ -98,14 +115,22 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# weight（均等でOK）
+# 🔥 weight（バックテスト一致）
 # =========================
-today["weight"] = 1 / len(today)
+today["weight_raw"] = np.exp(today["score"] * 5)
+today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 
 # =========================
 # 出力
 # =========================
+print("\n=== 今日の銘柄（実運用） ===")
 print(today[[
     "Ticker","Name",
-    "score","PredRank","weight"
+    "score",
+    "Trend_5_z","TrendVol","DD_5",
+    "weight",
+    "PredRank"
 ]])
+
+print("\n=== 件数 ===")
+print(len(today))
