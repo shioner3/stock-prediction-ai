@@ -185,8 +185,6 @@ def run_backtest(model, data_df):
 
                     capital = min(cash * weights[j], equity * 0.15)
 
-                    exit_idx = i + hold_days
-
                     if exit_idx >= len(dates):
                         continue
 
