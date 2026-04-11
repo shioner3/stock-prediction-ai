@@ -9,11 +9,11 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 TOP_N = 5
-HOLD_DAYS = 5   # 🔥 Targetと一致させる
+HOLD_DAYS = 3
 
-STOP_LOSS = -0.05   # 緩める
-COST_RATE = 0.0015  # 現実寄り
-SLIPPAGE = 0.001
+STOP_LOSS = -0.03
+COST_RATE = 0.0025
+SLIPPAGE = 0.002
 
 # =========================
 # データ
@@ -23,7 +23,14 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# FEATURES
+# Target（🔥重要：戦略と一致）
+# =========================
+df["Target"] = (
+    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
+).clip(-0.2, 0.2)
+
+# =========================
+# Features
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -40,6 +47,8 @@ FEATURES = [
     "DayOfWeek"
 ]
 
+df = df.dropna(subset=FEATURES + ["Target"])
+
 # =========================
 # TargetClass
 # =========================
@@ -47,9 +56,11 @@ def make_target_class(x):
     try:
         return pd.qcut(x, q=30, labels=False, duplicates="drop")
     except:
-        return pd.cut(x, bins=min(30, len(x)), labels=False)
+        return pd.Series([np.nan]*len(x), index=x.index)
 
-df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class).astype(int)
+df["TargetClass"] = df.groupby("Date")["Target"].transform(make_target_class)
+df = df.dropna(subset=["TargetClass"])
+df["TargetClass"] = df["TargetClass"].astype(int)
 
 # =========================
 # モデル
@@ -58,9 +69,9 @@ def train_model(train_df):
     group = train_df.groupby("Date").size().to_list()
 
     model = LGBMRanker(
-        n_estimators=150,
+        n_estimators=200,
         learning_rate=0.05,
-        num_leaves=31,
+        num_leaves=63,
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42
@@ -74,16 +85,19 @@ def train_model(train_df):
 # =========================
 def run_backtest(model, data_df):
 
-    data_df = data_df.dropna(subset=FEATURES).copy()
+    data_df = data_df.copy()
 
     data_df["raw_score"] = model.predict(data_df[FEATURES])
     data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
+
+    data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
     dates = sorted(grouped.keys())
 
     equity = cash = INITIAL_CAPITAL
     positions = []
+
     equity_curve = []
 
     for i, d in enumerate(dates):
@@ -119,18 +133,33 @@ def run_backtest(model, data_df):
         if i + 1 < len(dates):
 
             today_f = today.copy()
+            today_f = today_f.dropna(subset=["score_shift"])
 
-            # 🔥 フィルタ削除（これが重要）
-            picks = today_f.sort_values("score", ascending=False).head(TOP_N)
+            # 🔥 強フィルタ
+            today_f = today_f[
+                (today_f["Market_Trend"] > 0) &
+                (today_f["Trend_5_z"] > 1.0) &
+                (today_f["score_shift"] > 0.97)
+            ]
+
+            # 🔥 ノートレ
+            if len(today_f) == 0:
+                equity_curve.append(cash)
+                continue
+
+            picks = today_f.sort_values("score_shift", ascending=False).head(TOP_N)
+
+            weights = np.exp(picks["score_shift"] * 5)
+            weights = weights / weights.sum()
 
             next_data = grouped[dates[i+1]]
 
-            for ticker, row in picks.iterrows():
+            for j, (ticker, row) in enumerate(picks.iterrows()):
 
                 if ticker not in next_data.index:
                     continue
 
-                capital = cash / TOP_N
+                capital = cash * weights.iloc[j]
 
                 exit_idx = i + HOLD_DAYS
                 if exit_idx >= len(dates):
@@ -158,13 +187,7 @@ def run_backtest(model, data_df):
         equity = cash + pos_val
         equity_curve.append(equity)
 
-    equity_df = pd.DataFrame({"Equity": equity_curve})
-    equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
-
-    cagr = equity_df["Equity"].iloc[-1] ** (252/len(equity_df)) - 1
-    sharpe = equity_df["Return"].mean() / equity_df["Return"].std() * np.sqrt(252)
-
-    return cagr, sharpe
+    return equity_curve
 
 # =========================
 # 実行
@@ -172,10 +195,13 @@ def run_backtest(model, data_df):
 years = sorted(df["Date"].dt.year.unique())
 
 for i in range(3, len(years)):
-    train = df[df["Date"].dt.year.isin(years[:i])]
+
+    train = df[df["Date"].dt.year < years[i]]
     test  = df[df["Date"].dt.year == years[i]]
 
     model = train_model(train)
-    cagr, sharpe = run_backtest(model, test)
+    curve = run_backtest(model, test)
 
-    print(years[i], "CAGR:", round(cagr,3), "Sharpe:", round(sharpe,3))
+    if len(curve) > 10:
+        ret = curve[-1]
+        print(f"{years[i]} CAGR: {ret:.3f}")
