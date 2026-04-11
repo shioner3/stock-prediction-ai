@@ -73,17 +73,7 @@ def train_model(train_df):
     model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
     return model
 
-# =========================
-# 可変ホールド
-# =========================
-def calc_hold_days(row):
-    hold = (
-        HOLD_DAYS
-        + int(row["Trend_5_z"] * 2)
-        + int((1 - row["TrendVol"]) * 5)
-        + int((row["DD_5"] + 0.1) * 5)
-    )
-    return max(5, min(20, hold))
+
 
 # =========================
 # 最大連敗
