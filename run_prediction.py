@@ -64,18 +64,25 @@ predict_df = predict_df.dropna(subset=FEATURES).copy()
 # =========================
 # Target
 # =========================
-train_df = train_df.sort_values("Date").copy()
-
+# =========================
+# Target Class（完全安定版）
+# =========================
 def make_target_class(x):
+    if len(x) < N_CLASS:
+        return pd.Series([np.nan]*len(x), index=x.index)
+
     try:
         return pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
     except:
-        return pd.cut(x, bins=min(N_CLASS, len(x)), labels=False)
+        return pd.Series([np.nan]*len(x), index=x.index)
 
 train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
-train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
-group = train_df.groupby("Date").size().to_list()
+# 🔥 NaN削除
+train_df = train_df.dropna(subset=["TargetClass"])
+
+# int変換
+train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
 # =========================
 # モデル
