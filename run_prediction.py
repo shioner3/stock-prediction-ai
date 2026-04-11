@@ -10,7 +10,7 @@ from lightgbm import LGBMRanker
 # =========================
 TOP_N = 5
 TOP_RATE = 0.014
-HOLD_DAYS = 5  # ベース
+HOLD_DAYS = 3  # ベース
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
