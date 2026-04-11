@@ -74,7 +74,6 @@ def train_model(train_df):
     return model
 
 
-
 # =========================
 # 最大連敗
 # =========================
@@ -95,13 +94,11 @@ def run_backtest(model, data_df):
 
     data_df = data_df.dropna(subset=FEATURES).copy()
 
-    # =========================
-    # 🔥 正しいスコア処理（rank → shift）
-    # =========================
+    # スコア
     data_df["raw_score"] = model.predict(data_df[FEATURES])
     data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
-    # 🔥 1日遅延（リーク防止）
+    # 1日遅延（リーク防止）
     data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
@@ -153,33 +150,31 @@ def run_backtest(model, data_df):
 
             today_f = today.copy()
 
-            # 🔥 遅延スコア使用
+            # 遅延スコア
             today_f = today_f.dropna(subset=["score_shift"])
 
             # フィルタ
             today_f = today_f[today_f["Market_Trend"] > 0]
             today_f = today_f[today_f["Trend_5_z"] > TREND_TH]
 
-            # 🔥 上位率（rank復活）
+            # 🔥 追加フィルタ
+            today_f = today_f[today_f["TrendVol"] < today_f["TrendVol"].quantile(0.7)]
+            today_f = today_f[today_f["DD_5"] > -0.05]
+
+            # 上位率
             today_f = today_f[today_f["score_shift"] >= (1 - TOP_RATE)]
 
             if len(today_f) > 0:
 
-                today_f["adj_score"] = (
-                    today_f["score_shift"]
-                    * (1 + today_f["Trend_5_z"].clip(0, 2))
-                    * (1 - today_f["TrendVol"].clip(0, 1))
-                    * (1 + today_f["DD_5"].clip(-0.2, 0.2))
-                )
+                picks = today_f.sort_values("score_shift", ascending=False).head(TOP_N)
 
-                picks = today_f.sort_values("adj_score", ascending=False).head(TOP_N)
+                # 🔥 weight変更（シンプル版）
+                weights = picks["score_shift"]
 
-                weights = picks["adj_score"]
-                weights = (
-                    (weights / weights.sum()).values
-                    if weights.sum() > 0
-                    else np.ones(len(weights)) / len(weights)
-                )
+                if weights.sum() > 0:
+                    weights = (weights / weights.sum()).values
+                else:
+                    weights = np.ones(len(weights)) / len(weights)
 
                 next_data = grouped[dates[i+1]]
 
