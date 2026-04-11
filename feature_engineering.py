@@ -10,7 +10,7 @@ PARQUET_FILE = "stock_data/prices.parquet"
 TRAIN_SAVE_PATH = "ml_dataset.parquet"
 PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
-HOLD_DAYS = 10
+HOLD_DAYS = 5
 MIN_COUNT = 3000
 Z_WINDOW = 20
 
@@ -149,14 +149,14 @@ df["Market_Trend"] = df.groupby("Date")["Trend_5"].transform("mean").shift(1)
 df["DayOfWeek"] = df["Date"].dt.dayofweek
 
 # =========================
-# 🎯 ターゲット
+# 🎯 ターゲット（平滑化）
 # =========================
-df["FutureReturn"] = (
-    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
+df["Target"] = (
+    df.groupby("Ticker")["Close"]
+    .pct_change(1)
+    .rolling(3)
+    .mean()
 )
-
-df["FutureReturn"] = df["FutureReturn"].clip(-0.2, 0.2)
-df["Target"] = df["FutureReturn"]
 
 # =========================
 # FEATURES
