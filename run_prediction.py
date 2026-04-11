@@ -170,9 +170,6 @@ print(today[[
 # =========================
 # デバッグ
 # =========================
-print("\n=== HOLD分布 ===")
-print(today["hold_days"].describe())
-
 print("\n=== SCORE分布 ===")
 print(today["score"].describe())
 
