@@ -1,0 +1,98 @@
+name: Prediction Pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 11 * * 1-5'   # 平日20時（日本時間）
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+
+    steps:
+      # =========================
+      # 1️⃣ リポジトリ取得
+      # =========================
+      - uses: actions/checkout@v3
+
+      # =========================
+      # 2️⃣ Python環境
+      # =========================
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # =========================
+      # 3️⃣ キャッシュ復元
+      # =========================
+      - name: Restore price cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data/prices.parquet
+          key: price-cache-v1
+          restore-keys: |
+            price-cache-
+
+      # =========================
+      # 4️⃣ 依存関係
+      # =========================
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements_ai.txt
+
+      # =========================
+      # 5️⃣ データ取得
+      # =========================
+      - name: Download prices
+        run: |
+          python download_prices.py
+
+      # =========================
+      # 6️⃣ 特徴量作成
+      # =========================
+      - name: Feature Engineering
+        run: |
+          python feature_engineering.py
+
+      # =========================
+      # 7️⃣ 予測（メイン）
+      # =========================
+      - name: Run Prediction
+        run: |
+          python run_prediction.py
+
+      # =========================
+      # 8️⃣ キャッシュ保存
+      # =========================
+      - name: Save price cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data/prices.parquet
+          key: price-cache-v1
+
+      # =========================
+      # 9️⃣ 出力確認
+      # =========================
+      - name: Check outputs
+        run: |
+          echo "===== FILES ====="
+          ls -l
+
+          echo "===== PREDICTIONS ====="
+          cat predictions.csv || echo "no predictions file"
+
+      # =========================
+      # 🔟 結果保存
+      # =========================
+      - name: Commit prediction results
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add predictions.csv || true
+          git add model.pkl || true
+
+          git commit -m "update predictions [skip ci]" || echo "no change"
+          git push origin HEAD:main
