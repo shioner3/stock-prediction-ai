@@ -78,11 +78,14 @@ def make_target_class(x):
 
 train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
 
-# 🔥 NaN削除
+# NaN削除
 train_df = train_df.dropna(subset=["TargetClass"])
 
 # int変換
 train_df["TargetClass"] = train_df["TargetClass"].astype(int)
+
+# 🔥 ここで group 作る（重要）
+group = train_df.groupby("Date").size().to_list()
 
 # =========================
 # モデル
