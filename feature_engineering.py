@@ -10,7 +10,7 @@ PARQUET_FILE = "stock_data/prices.parquet"
 TRAIN_SAVE_PATH = "ml_dataset.parquet"
 PREDICT_SAVE_PATH = "ml_dataset_latest.parquet"
 
-HOLD_DAYS = 5
+HOLD_DAYS = 3
 MIN_COUNT = 3000
 Z_WINDOW = 20
 
@@ -151,7 +151,7 @@ df["DayOfWeek"] = df["Date"].dt.dayofweek
 # =========================
 # 🎯 ターゲット（平滑化）
 # =========================
-df["Target"] = (
+df["Target"] = -(
     df.groupby("Ticker")["Close"]
     .pct_change(1)
     .rolling(3)
