@@ -115,7 +115,8 @@ today["raw_score"] = model.predict(today[FEATURES])
 
 # 正規化
 score = today["raw_score"]
-today["score"] = (score - score.mean()) / (score.std() + 1e-9)
+rank = today["raw_score"].rank(pct=True)
+today["score"] = 1 - rank
 
 # =========================
 # 🔥 フィルタ強化
