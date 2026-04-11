@@ -9,7 +9,6 @@ from lightgbm import LGBMRanker
 # 設定
 # =========================
 TOP_N = 5
-HOLD_DAYS = 3
 
 USE_MARKET_FILTER = True
 N_CLASS = 30
@@ -61,12 +60,11 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# Target Class（完全安定版）
+# Target Class（安定版）
 # =========================
 def make_target_class(x):
     if len(x) < N_CLASS:
         return pd.Series([np.nan]*len(x), index=x.index)
-
     try:
         return pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
     except:
@@ -80,7 +78,7 @@ train_df = train_df.dropna(subset=["TargetClass"])
 # int変換
 train_df["TargetClass"] = train_df["TargetClass"].astype(int)
 
-# group（重要）
+# group
 group = train_df.groupby("Date").size().to_list()
 
 # =========================
@@ -113,27 +111,24 @@ with open(MODEL_PATH, "wb") as f:
     pickle.dump(model, f)
 
 # =========================
-# 予測
+# 予測（🔥 修正ポイント）
 # =========================
 today = predict_df.copy()
 
-# モデルスコア
+# スコア
 today["raw_score"] = model.predict(today[FEATURES])
 
-# 🔥 前日シグナル化
-today["raw_score_shift"] = today.groupby("Ticker")["raw_score"].shift(1)
+# 🔥 shiftは使わない（ここが最重要修正）
+score = today["raw_score"]
 
-# NaN除去
-today = today.dropna(subset=["raw_score_shift"])
-
-# 🔥 スコア改善（ここが最重要）
-score = today["raw_score_shift"]
+# 正規化（安定化）
 today["score"] = (score - score.mean()) / (score.std() + 1e-9)
 
 # =========================
-# フィルタ
+# フィルタ（任意）
 # =========================
-
+if USE_MARKET_FILTER:
+    today = today[today["Market_Trend"] > 0]
 
 # =========================
 # 最終選抜
@@ -142,9 +137,9 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["PredRank"] = range(1, len(today)+1)
 
 # =========================
-# 重み（改良版）
+# 重み（安定版）
 # =========================
-today["weight_raw"] = np.exp(today["score"])  # ←ここも強化
+today["weight_raw"] = np.exp(today["score"].clip(-2, 2))
 
 today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 
