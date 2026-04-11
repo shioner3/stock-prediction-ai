@@ -9,7 +9,7 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 TOP_N = 5
-HOLD_DAYS = 3
+HOLD_DAYS = 5
 
 STOP_LOSS = -0.03
 COST_RATE = 0.0025
