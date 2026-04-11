@@ -151,11 +151,11 @@ df["DayOfWeek"] = df["Date"].dt.dayofweek
 # =========================
 # 🎯 ターゲット（平滑化）
 # =========================
-df["Target"] = -(
+df["Target"] = (
     df.groupby("Ticker")["Close"]
-    .pct_change(1)
+    .shift(-1)
     .rolling(3)
-    .mean()
+    .mean() / df["Close"] - 1
 )
 
 # =========================
