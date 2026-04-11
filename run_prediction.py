@@ -150,16 +150,9 @@ today["PredRank"] = range(1, len(today)+1)
 # =========================
 # 重み
 # =========================
-today["weight_raw"] = (
-    today["score"]**2 *
-    (1 + today["Trend_5_z"].clip(0, 2)) *
-    (1 - today["TrendVol"].clip(0, 1))
-)
+today["weight_raw"] = today["score"]
 
-if today["weight_raw"].sum() > 0:
-    today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
-else:
-    today["weight"] = 1.0 / len(today)
+today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
 
 # =========================
 # 出力
