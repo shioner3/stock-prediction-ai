@@ -7,8 +7,9 @@ from lightgbm import LGBMRanker
 # 設定
 # =========================
 TOP_N = 3
-CANDIDATE_N = 10   # ← TOP10生成用
+CANDIDATE_N = 10
 N_CLASS = 30
+DIVERSITY_BUCKETS = 3  # ← 追加（重要）
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -47,7 +48,7 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# Ranker用Target（qcut）
+# Ranker用Target
 # =========================
 train_df["TargetRank"] = train_df.groupby("Date")["Target"].transform(
     lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
@@ -59,7 +60,6 @@ train_df["TargetRank"] = train_df["TargetRank"].astype(int)
 train_df = train_df.sort_values("Date")
 group = train_df.groupby("Date").size().tolist()
 
-# safety check
 assert train_df["TargetRank"].max() < N_CLASS
 
 # =========================
@@ -84,15 +84,14 @@ model.fit(
 # 予測
 # =========================
 today = predict_df.copy()
-
 today["score_raw"] = model.predict(today[FEATURES])
 
 # =========================
-# ① FILTER（戦略制約）
+# ① FILTER（弱め）
 # =========================
+# 強トレンド依存を削除 → ノイズ許容
 today = today[
-    (today["Trend_5_z"] > 0) &
-    (today["TrendVol"] > 0)
+    today["TrendVol"] > -1.0
 ].copy()
 
 # =========================
@@ -101,33 +100,40 @@ today = today[
 today["score"] = today["score_raw"]
 
 # =========================
-# ③ TOP10候補抽出
+# ③ TOP10候補
 # =========================
 candidates = today.sort_values("score", ascending=False).head(CANDIDATE_N).copy()
 
 # =========================
-# ④ DIVERSITY制御
-# （セクター無し簡易版：銘柄バラけさせる）
+# ④ DIVERSITY（数値分割追加）
 # =========================
 
-# score順にしつつ、同一銘柄偏り回避（簡易版）
-candidates = candidates.sort_values(
-    ["Trend_5_z", "score"],
-    ascending=[False, False]
+# TrendVolで分割（低・中・高ボラ）
+candidates["vol_bucket"] = pd.qcut(
+    candidates["TrendVol"],
+    q=min(DIVERSITY_BUCKETS, len(candidates)),
+    labels=False,
+    duplicates="drop"
 )
 
-# 上位からユニーク優先（今回はTicker重複は基本ないが保険）
+# bucket → score優先で並べる
+candidates = candidates.sort_values(
+    ["vol_bucket", "score"],
+    ascending=[True, False]
+)
+
+# 重複除去（安全）
 candidates = candidates.drop_duplicates(subset=["Ticker"])
 
 # =========================
-# ⑤ TOP3最終選定
+# ⑤ TOP3選定
 # =========================
 final = candidates.head(TOP_N).copy()
 
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
-# weight（安定版）
+# weight
 # =========================
 final["weight"] = np.exp(final["score"])
 final["weight"] /= final["weight"].sum()
@@ -143,6 +149,7 @@ print(final[[
     "Trend_5_z",
     "TrendVol",
     "DD_5",
+    "vol_bucket",
     "weight",
     "rank"
 ]])
