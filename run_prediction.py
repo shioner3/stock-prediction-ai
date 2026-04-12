@@ -47,17 +47,28 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# 🔥 Ranker用TargetRank（完全修正版）
+# 🔥 Ranker用TargetRank（完全安定版）
 # =========================
 
-# ① 時系列・銘柄整列
+# ① 時系列・銘柄整列（超重要）
 train_df = train_df.sort_values(["Date", "Target"])
 
-# ② group内順位を0〜N-1化（これが重要）
+# ② group内順位（0〜N-1）
 train_df["TargetRank"] = train_df.groupby("Date").cumcount()
 
 # ③ groupサイズ
 group = train_df.groupby("Date").size().tolist()
+
+# =========================
+# 🔥 safety check（必須）
+# =========================
+max_label = train_df.groupby("Date")["TargetRank"].max().max()
+max_group = max(group)
+
+print("max_label:", max_label)
+print("max_group:", max_group)
+
+assert max_label < max_group, "Ranker label mismatch detected!"
 
 # =========================
 # モデル
