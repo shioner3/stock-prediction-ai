@@ -9,7 +9,7 @@ from lightgbm import LGBMRanker
 TOP_N = 3
 CANDIDATE_N = 10
 N_CLASS = 30
-DIVERSITY_BUCKETS = 3  # ← 追加（重要）
+DIVERSITY_BUCKETS = 3
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -89,7 +89,6 @@ today["score_raw"] = model.predict(today[FEATURES])
 # =========================
 # ① FILTER（弱め）
 # =========================
-# 強トレンド依存を削除 → ノイズ許容
 today = today[
     today["TrendVol"] > -1.0
 ].copy()
@@ -105,10 +104,11 @@ today["score"] = today["score_raw"]
 candidates = today.sort_values("score", ascending=False).head(CANDIDATE_N).copy()
 
 # =========================
-# ④ DIVERSITY（数値分割追加）
+# ④ DIVERSITY（本質修正）
+# bucket → 各bucketから1銘柄ずつ選ぶ
 # =========================
 
-# TrendVolで分割（低・中・高ボラ）
+# 全体でbucket作成（←ここが重要）
 candidates["vol_bucket"] = pd.qcut(
     candidates["TrendVol"],
     q=min(DIVERSITY_BUCKETS, len(candidates)),
@@ -116,20 +116,29 @@ candidates["vol_bucket"] = pd.qcut(
     duplicates="drop"
 )
 
-# bucket → score優先で並べる
-candidates = candidates.sort_values(
-    ["vol_bucket", "score"],
-    ascending=[True, False]
-)
+selected = []
 
-# 重複除去（安全）
-candidates = candidates.drop_duplicates(subset=["Ticker"])
+# bucketごとに1銘柄選択
+for b in sorted(candidates["vol_bucket"].dropna().unique()):
+    tmp = candidates[candidates["vol_bucket"] == b]
+    if len(tmp) > 0:
+        best = tmp.sort_values("score", ascending=False).iloc[0]
+        selected.append(best)
+
+selected = pd.DataFrame(selected)
 
 # =========================
-# ⑤ TOP3選定
+# 不足分補充（重要）
 # =========================
-final = candidates.head(TOP_N).copy()
+if len(selected) < TOP_N:
+    remain = candidates[~candidates.index.isin(selected.index)]
+    remain = remain.sort_values("score", ascending=False)
+    selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
 
+# =========================
+# ⑤ TOP3最終選定
+# =========================
+final = selected.head(TOP_N).copy()
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
