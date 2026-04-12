@@ -7,6 +7,7 @@ from lightgbm import LGBMRanker
 # 設定
 # =========================
 TOP_N = 3
+N_CLASS = 30  # ← Ranker制約対策（超重要）
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -47,28 +48,29 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# 🔥 Ranker用TargetRank（完全安定版）
+# 🔥 Ranker用Target（qcut版）
 # =========================
+train_df["TargetRank"] = train_df.groupby("Date")["Target"].transform(
+    lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
+)
 
-# ① 時系列・銘柄整列（超重要）
-train_df = train_df.sort_values(["Date", "Target"])
+# NaN削除（qcut失敗行）
+train_df = train_df.dropna(subset=["TargetRank"])
 
-# ② group内順位（0〜N-1）
-train_df["TargetRank"] = train_df.groupby("Date").cumcount()
+# int化
+train_df["TargetRank"] = train_df["TargetRank"].astype(int)
 
-# ③ groupサイズ
+# group作成（qcut後に必ずやる）
+train_df = train_df.sort_values("Date")
 group = train_df.groupby("Date").size().tolist()
 
 # =========================
-# 🔥 safety check（必須）
+# 🔥 safety check
 # =========================
-max_label = train_df.groupby("Date")["TargetRank"].max().max()
-max_group = max(group)
-
+max_label = train_df["TargetRank"].max()
 print("max_label:", max_label)
-print("max_group:", max_group)
 
-assert max_label < max_group, "Ranker label mismatch detected!"
+assert max_label < N_CLASS, "Label exceeds Ranker class limit!"
 
 # =========================
 # モデル
@@ -95,7 +97,7 @@ today = predict_df.copy()
 
 today["score_raw"] = model.predict(today[FEATURES])
 
-# 日内ランキング（クロスセクション正規化）
+# 日内ランキング（クロスセクション）
 today["score"] = today.groupby("Date")["score_raw"].rank(pct=True)
 
 # =========================
@@ -105,7 +107,7 @@ today = today.sort_values("score", ascending=False).head(TOP_N)
 today["rank"] = range(1, len(today) + 1)
 
 # =========================
-# weight（安定版）
+# weight
 # =========================
 today["weight"] = today["score"] / today["score"].sum()
 
