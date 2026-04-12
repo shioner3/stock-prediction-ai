@@ -15,10 +15,12 @@ DIVERSITY_BUCKETS = 3
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-# 🔥 最適パラ固定
 W_TRENDVOL = 0.6
 
 DATA_PATH = "ml_dataset.parquet"
+
+# 🔥 OOS分割
+TRAIN_END = "2022-12-31"
 
 # =========================
 # データ
@@ -27,7 +29,7 @@ df = pd.read_parquet(DATA_PATH)
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 df["Date"] = pd.to_datetime(df["Date"])
-df["Year"] = df["Date"].dt.year  # ← 年別用
+df["Year"] = df["Date"].dt.year
 
 FEATURES = [
     "Return_1","Return_3","MA3_ratio","MA5_ratio","MA10_ratio",
@@ -52,9 +54,15 @@ df = df.dropna(subset=["TargetRank"])
 df["TargetRank"] = df["TargetRank"].astype(int)
 
 # =========================
-# モデル
+# 🔥 Train / Test 分割
 # =========================
-group = df.groupby("Date").size().tolist()
+train_df = df[df["Date"] <= TRAIN_END].copy()
+test_df  = df[df["Date"] > TRAIN_END].copy()
+
+# =========================
+# モデル（Trainのみ）
+# =========================
+group = train_df.groupby("Date").size().tolist()
 
 model = LGBMRanker(
     n_estimators=200,
@@ -66,23 +74,23 @@ model = LGBMRanker(
     n_jobs=-1
 )
 
-model.fit(df[FEATURES], df["TargetRank"], group=group)
+model.fit(train_df[FEATURES], train_df["TargetRank"], group=group)
 
 # =========================
-# スコア
+# 🔥 Testにスコア付与
 # =========================
-df["score"] = model.predict(df[FEATURES])
+test_df["score"] = model.predict(test_df[FEATURES])
 
-dates = sorted(df["Date"].unique())
-date_groups = dict(tuple(df.groupby("Date")))
+dates = sorted(test_df["Date"].unique())
+date_groups = dict(tuple(test_df.groupby("Date")))
 
 price_open = {
     (row.Date, row.Ticker): row.Open
-    for row in df.itertuples()
+    for row in test_df.itertuples()
 }
 
 # =========================
-# バックテスト
+# バックテスト（OOS）
 # =========================
 capital = INITIAL_CAPITAL
 equity_curve = []
@@ -98,7 +106,7 @@ for i in range(len(dates) - HOLD_DAYS - 1):
     today_df = date_groups[today].copy()
 
     # =========================
-    # 🔥 final_score（確定版）
+    # final_score
     # =========================
     today_df["filter_score"] = today_df["TrendVol"].rank(pct=True)
     today_df["final_score"] = today_df["score"] * (1 + W_TRENDVOL * today_df["filter_score"])
@@ -195,9 +203,9 @@ equity_df["Return"] = equity_df["Equity"].pct_change().fillna(0)
 equity_df["Year"] = equity_df["Date"].dt.year
 
 # =========================
-# 年別Sharpe
+# 年別
 # =========================
-print("\n=== Yearly Performance ===")
+print("\n=== OOS Yearly Performance ===")
 
 yearly = []
 
@@ -216,11 +224,10 @@ for y, g in equity_df.groupby("Year"):
         "MaxDD": mdd
     })
 
-yearly_df = pd.DataFrame(yearly)
-print(yearly_df)
+print(pd.DataFrame(yearly))
 
 # =========================
-# 全体
+# TOTAL（OOS）
 # =========================
 returns = equity_df["Return"]
 
@@ -228,7 +235,7 @@ CAGR = equity_df["Equity"].iloc[-1] ** (252 / len(equity_df)) - 1
 Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
 MaxDD = (equity_df["Equity"] / equity_df["Equity"].cummax() - 1).min()
 
-print("\n=== TOTAL ===")
+print("\n=== OOS TOTAL ===")
 print(f"CAGR  : {CAGR:.4f}")
 print(f"Sharpe: {Sharpe:.4f}")
 print(f"MaxDD : {MaxDD:.4f}")
