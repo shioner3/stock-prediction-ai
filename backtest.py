@@ -15,7 +15,7 @@ STOP_LOSS = -0.03
 COST_RATE = 0.0025
 SLIPPAGE = 0.002
 
-MAX_POSITION_RATIO = 0.2  # 1銘柄最大20%
+MAX_POSITION_RATIO = 0.2
 
 # =========================
 # データ
@@ -25,13 +25,12 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# Target（リーク対策）
+# Target（戦略と一致）
 # =========================
 df["Target"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 ).clip(-0.2, 0.2)
 
-# Target生成後に削除（ここ重要）
 df = df.dropna(subset=["Target"])
 
 # =========================
@@ -96,9 +95,16 @@ def run_backtest(model, data_df):
 
     data_df = data_df.copy()
 
-    # スコア
+    # =========================
+    # 🔥 スコア（反転）
+    # =========================
     data_df["raw_score"] = model.predict(data_df[FEATURES])
-    data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
+    rank = data_df.groupby("Date")["raw_score"].rank(pct=True)
+
+    # 🔥 ここが超重要（方向修正）
+    data_df["score"] = 1 - rank
+
+    # 1日遅延
     data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
 
     grouped = {d: g.set_index("Ticker") for d, g in data_df.groupby("Date")}
@@ -151,20 +157,28 @@ def run_backtest(model, data_df):
             today_f = today.copy()
             today_f = today_f.dropna(subset=["score_shift"])
 
-            # フィルタ
+            # =========================
+            # 🔥 フィルタ弱化（超重要）
+            # =========================
             today_f = today_f[
-                (today_f["Market_Trend"] > 0) &
-                (today_f["Trend_5_z"] > 1.0) &
-                (today_f["score_shift"] > 0.97)
+                (today_f["Market_Trend"] > -0.5) &   # 緩める
+                (today_f["Trend_5_z"] > 0.0) &       # 弱トレンドOK
+                (today_f["score_shift"] > 0.8)       # 広く取る
             ]
 
-            # ノートレ
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("score_shift", ascending=False).head(TOP_N)
 
-                weights = np.exp(picks["score_shift"] * 5)
-                weights = weights / weights.sum()
+                # =========================
+                # 🔥 weight弱化（安定）
+                # =========================
+                weights = picks["score_shift"]
+
+                if weights.sum() > 0:
+                    weights = (weights / weights.sum()).values
+                else:
+                    weights = np.ones(len(weights)) / len(weights)
 
                 next_data = grouped[dates[i+1]]
 
@@ -173,7 +187,7 @@ def run_backtest(model, data_df):
                     if ticker not in next_data.index:
                         continue
 
-                    capital = min(cash * weights.iloc[j], equity * MAX_POSITION_RATIO)
+                    capital = min(cash * weights[j], equity * MAX_POSITION_RATIO)
 
                     if capital <= 0:
                         continue
@@ -211,7 +225,6 @@ def run_backtest(model, data_df):
     # 指標
     # =========================
     equity_series = pd.Series(equity_curve)
-
     returns = equity_series.pct_change().fillna(0)
 
     years = len(equity_series) / 252
