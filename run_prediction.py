@@ -7,14 +7,13 @@ from lightgbm import LGBMRanker
 # 設定
 # =========================
 TOP_N = 3
-N_CLASS = 30  # ← Ranker制約対策（超重要）
+CANDIDATE_N = 10   # ← TOP10生成用
+N_CLASS = 30
 
 BASE_DIR = os.path.dirname(__file__)
 
 TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
 PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
-
-MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
 # =========================
 # データ読み込み
@@ -48,29 +47,20 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# 🔥 Ranker用Target（qcut版）
+# Ranker用Target（qcut）
 # =========================
 train_df["TargetRank"] = train_df.groupby("Date")["Target"].transform(
     lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
 )
 
-# NaN削除（qcut失敗行）
 train_df = train_df.dropna(subset=["TargetRank"])
-
-# int化
 train_df["TargetRank"] = train_df["TargetRank"].astype(int)
 
-# group作成（qcut後に必ずやる）
 train_df = train_df.sort_values("Date")
 group = train_df.groupby("Date").size().tolist()
 
-# =========================
-# 🔥 safety check
-# =========================
-max_label = train_df["TargetRank"].max()
-print("max_label:", max_label)
-
-assert max_label < N_CLASS, "Label exceeds Ranker class limit!"
+# safety check
+assert train_df["TargetRank"].max() < N_CLASS
 
 # =========================
 # モデル
@@ -98,37 +88,56 @@ today = predict_df.copy()
 today["score_raw"] = model.predict(today[FEATURES])
 
 # =========================
-# 🔥 フィルタ（ここに入れる）
+# ① FILTER（戦略制約）
 # =========================
 today = today[
     (today["Trend_5_z"] > 0) &
     (today["TrendVol"] > 0)
-]
+].copy()
 
 # =========================
-# スコア（そのまま使う）
+# ② SCORE
 # =========================
 today["score"] = today["score_raw"]
 
 # =========================
-# TOP選択
+# ③ TOP10候補抽出
 # =========================
-today = today.sort_values("score", ascending=False).head(TOP_N)
-
-today["rank"] = range(1, len(today) + 1)
+candidates = today.sort_values("score", ascending=False).head(CANDIDATE_N).copy()
 
 # =========================
-# weight
+# ④ DIVERSITY制御
+# （セクター無し簡易版：銘柄バラけさせる）
 # =========================
-today["weight"] = np.exp(today["score"])
-today["weight"] /= today["weight"].sum()
+
+# score順にしつつ、同一銘柄偏り回避（簡易版）
+candidates = candidates.sort_values(
+    ["Trend_5_z", "score"],
+    ascending=[False, False]
+)
+
+# 上位からユニーク優先（今回はTicker重複は基本ないが保険）
+candidates = candidates.drop_duplicates(subset=["Ticker"])
+
+# =========================
+# ⑤ TOP3最終選定
+# =========================
+final = candidates.head(TOP_N).copy()
+
+final["rank"] = range(1, len(final) + 1)
+
+# =========================
+# weight（安定版）
+# =========================
+final["weight"] = np.exp(final["score"])
+final["weight"] /= final["weight"].sum()
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄 ===")
+print("\n=== 今日の銘柄（FINAL） ===")
 
-print(today[[
+print(final[[
     "Ticker",
     "score",
     "Trend_5_z",
@@ -138,4 +147,4 @@ print(today[[
     "rank"
 ]])
 
-print("\n件数:", len(today))
+print("\n件数:", len(final))
