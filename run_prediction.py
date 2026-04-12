@@ -1,14 +1,12 @@
 import pandas as pd
 import numpy as np
 import os
-import pickle
 from lightgbm import LGBMRanker
 
 # =========================
 # 設定
 # =========================
-TOP_N = 5
-N_CLASS = 30
+TOP_N = 3
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -24,7 +22,7 @@ train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
 # =========================
-# FEATURES
+# FEATURES（featureと完全一致）
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -34,16 +32,12 @@ FEATURES = [
     "HL_range",
     "Rel_Return_1",
     "Trend_5_z","Trend_10_z","Trend_diff",
+    "Gap","Volatility_change","Momentum_acc",
     "DD_5","DD_10",
-    "TrendVol",
-    "Volume_Z",
-    "Gap",
-    "Volatility_change",
-    "Momentum_acc",
-    "Return_1_rank","Return_3_rank",
-    "Volume_ratio_rank","Trend_5_z_rank","HL_range_rank",
-    "Market_Z","Market_Trend",
-    "DayOfWeek"
+    "TrendVol","Volume_Z",
+    "Return_1_rank","Volume_ratio_rank",
+    "Trend_5_z_rank","TrendVol_rank",
+    "Market_Z","Market_Trend"
 ]
 
 # =========================
@@ -53,23 +47,10 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"])
 predict_df = predict_df.dropna(subset=FEATURES)
 
 # =========================
-# TargetClass
+# Ranker（シンプル化）
 # =========================
-def make_target_class(x):
-    try:
-        return pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
-    except:
-        return pd.cut(x, bins=min(N_CLASS, len(x)), labels=False)
+group = train_df.groupby("Date").size().values.tolist()
 
-train_df["TargetClass"] = train_df.groupby("Date")["Target"].transform(make_target_class)
-train_df = train_df.dropna(subset=["TargetClass"])
-train_df["TargetClass"] = train_df["TargetClass"].astype(int)
-
-group = train_df.groupby("Date").size().to_list()
-
-# =========================
-# モデル
-# =========================
 model = LGBMRanker(
     n_estimators=300,
     learning_rate=0.03,
@@ -79,58 +60,42 @@ model = LGBMRanker(
     random_state=42
 )
 
-model.fit(train_df[FEATURES], train_df["TargetClass"], group=group)
+model.fit(train_df[FEATURES], train_df["Target"], group=group)
 
 # =========================
 # 予測
 # =========================
 today = predict_df.copy()
 
-# スコア
-today["raw_score"] = model.predict(today[FEATURES])
+today["score_raw"] = model.predict(today[FEATURES])
 
-# rank（バックテストと一致）
-today["score"] = today["raw_score"].rank(pct=True)
-
-# =========================
-# 🔥 バックテスト完全一致フィルタ
-# =========================
-today = today[
-    (today["Market_Trend"] > 0) &
-    (today["Trend_5_z"] > 1.0) &
-    (today["score"] > 0.97)
-]
+# 日内ランキング（重要）
+today["score"] = today.groupby("Date")["score_raw"].rank(pct=True)
 
 # =========================
-# 🔥 ノートレ対応
-# =========================
-if len(today) == 0:
-    print("⚠️ ノートレ（条件満たす銘柄なし）")
-    exit()
-
-# =========================
-# 上位抽出
+# TOP選択（ここだけが戦略）
 # =========================
 today = today.sort_values("score", ascending=False).head(TOP_N)
-today["PredRank"] = range(1, len(today)+1)
+today["rank"] = range(1, len(today) + 1)
 
 # =========================
-# 🔥 weight（バックテスト一致）
+# weight（シンプルで安定）
 # =========================
-today["weight_raw"] = np.exp(today["score"] * 5)
-today["weight"] = today["weight_raw"] / today["weight_raw"].sum()
+today["weight"] = today["score"] / today["score"].sum()
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（実運用） ===")
+print("\n=== 今日の銘柄 ===")
+
 print(today[[
-    "Ticker","Name",
+    "Ticker",
     "score",
-    "Trend_5_z","TrendVol","DD_5",
+    "Trend_5_z",
+    "TrendVol",
+    "DD_5",
     "weight",
-    "PredRank"
+    "rank"
 ]])
 
-print("\n=== 件数 ===")
-print(len(today))
+print("\n件数:", len(today))
