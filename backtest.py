@@ -16,7 +16,7 @@ DATA_PATH = "ml_dataset.parquet"
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
-RETRAIN_INTERVAL = 20  # ← 高速化
+RETRAIN_INTERVAL = 100  # ← 修正（高速化）
 
 # =========================
 # データ
@@ -73,21 +73,23 @@ for i in range(100, len(dates) - HOLD_DAYS - 1):
     next_day = dates[i + 1]
 
     # =========================
-    # 🔥 学習（過去のみ）
+    # 🔥 学習（過去のみ + 直近制限）
     # =========================
     if model is None or i % RETRAIN_INTERVAL == 0:
 
-        train_df = df[df["Date"] < today]
+        # ← 修正ポイント（直近のみ）
+        train_df = df[df["Date"] < today].tail(500_000)
 
         group = train_df.groupby("Date").size().tolist()
 
         model = LGBMRanker(
-            n_estimators=200,
+            n_estimators=100,          # ← ついでに軽量化
             learning_rate=0.05,
             num_leaves=31,
             subsample=0.8,
             colsample_bytree=0.8,
-            random_state=42
+            random_state=42,
+            n_jobs=-1                  # ← 並列化
         )
 
         model.fit(
@@ -107,7 +109,7 @@ for i in range(100, len(dates) - HOLD_DAYS - 1):
     today_df["score"] = model.predict(today_df[FEATURES])
 
     # =========================
-    # FILTER
+    # FILTER（弱め）
     # =========================
     today_df = today_df[today_df["TrendVol"] > -1.0]
 
@@ -208,7 +210,7 @@ CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
 Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
 MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-print("\n=== RESULT（リーク除去版） ===")
+print("\n=== RESULT（高速＋リーク除去版） ===")
 print(f"CAGR  : {CAGR:.4f}")
 print(f"Sharpe: {Sharpe:.4f}")
 print(f"MaxDD : {MaxDD:.4f}")
