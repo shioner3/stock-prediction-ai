@@ -16,13 +16,13 @@ PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
 # =========================
-# FEATURES（featureと完全一致）
+# FEATURES
 # =========================
 FEATURES = [
     "Return_1","Return_3",
@@ -43,14 +43,21 @@ FEATURES = [
 # =========================
 # 前処理
 # =========================
-train_df = train_df.dropna(subset=FEATURES + ["Target"])
-predict_df = predict_df.dropna(subset=FEATURES)
+train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
+predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# Ranker（シンプル化）
+# 🔥 Ranker用 TargetRank作成（重要修正）
 # =========================
-group = train_df.groupby("Date").size().values.tolist()
+train_df["TargetRank"] = train_df.groupby("Date")["Target"].rank()
 
+# groupはDate単位でOK（順序依存なのでsort推奨）
+train_df = train_df.sort_values("Date")
+group = train_df.groupby("Date").size().tolist()
+
+# =========================
+# モデル
+# =========================
 model = LGBMRanker(
     n_estimators=300,
     learning_rate=0.03,
@@ -60,7 +67,11 @@ model = LGBMRanker(
     random_state=42
 )
 
-model.fit(train_df[FEATURES], train_df["Target"], group=group)
+model.fit(
+    train_df[FEATURES],
+    train_df["TargetRank"],
+    group=group
+)
 
 # =========================
 # 予測
@@ -69,17 +80,17 @@ today = predict_df.copy()
 
 today["score_raw"] = model.predict(today[FEATURES])
 
-# 日内ランキング（重要）
+# 日内ランキング（クロスセクション整合）
 today["score"] = today.groupby("Date")["score_raw"].rank(pct=True)
 
 # =========================
-# TOP選択（ここだけが戦略）
+# TOP選択
 # =========================
 today = today.sort_values("score", ascending=False).head(TOP_N)
 today["rank"] = range(1, len(today) + 1)
 
 # =========================
-# weight（シンプルで安定）
+# weight（安定版）
 # =========================
 today["weight"] = today["score"] / today["score"].sum()
 
