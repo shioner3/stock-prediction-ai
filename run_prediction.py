@@ -47,12 +47,16 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# 🔥 Ranker用 TargetRank作成（重要修正）
+# 🔥 Ranker用TargetRank（完全修正版）
 # =========================
-train_df["TargetRank"] = train_df.groupby("Date")["Target"].rank()
 
-# groupはDate単位でOK（順序依存なのでsort推奨）
-train_df = train_df.sort_values("Date")
+# ① 時系列・銘柄整列
+train_df = train_df.sort_values(["Date", "Target"])
+
+# ② group内順位を0〜N-1化（これが重要）
+train_df["TargetRank"] = train_df.groupby("Date").cumcount()
+
+# ③ groupサイズ
 group = train_df.groupby("Date").size().tolist()
 
 # =========================
@@ -80,7 +84,7 @@ today = predict_df.copy()
 
 today["score_raw"] = model.predict(today[FEATURES])
 
-# 日内ランキング（クロスセクション整合）
+# 日内ランキング（クロスセクション正規化）
 today["score"] = today.groupby("Date")["score_raw"].rank(pct=True)
 
 # =========================
