@@ -97,19 +97,31 @@ today = predict_df.copy()
 
 today["score_raw"] = model.predict(today[FEATURES])
 
-# 日内ランキング（クロスセクション）
-today["score"] = today.groupby("Date")["score_raw"].rank(pct=True)
+# =========================
+# 🔥 フィルタ（ここに入れる）
+# =========================
+today = today[
+    (today["Trend_5_z"] > 0) &
+    (today["TrendVol"] > 0)
+]
+
+# =========================
+# スコア（そのまま使う）
+# =========================
+today["score"] = today["score_raw"]
 
 # =========================
 # TOP選択
 # =========================
 today = today.sort_values("score", ascending=False).head(TOP_N)
+
 today["rank"] = range(1, len(today) + 1)
 
 # =========================
 # weight
 # =========================
-today["weight"] = today["score"] / today["score"].sum()
+today["weight"] = np.exp(today["score"])
+today["weight"] /= today["weight"].sum()
 
 # =========================
 # 出力
