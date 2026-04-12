@@ -42,9 +42,6 @@ FEATURES = [
     "Market_Z","Market_Trend"
 ]
 
-# =========================
-# 前処理
-# =========================
 df = df.dropna(subset=FEATURES + ["Target"]).copy()
 
 # =========================
@@ -53,15 +50,13 @@ df = df.dropna(subset=FEATURES + ["Target"]).copy()
 df["TargetRank"] = df.groupby("Date")["Target"].transform(
     lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
 )
-
 df = df.dropna(subset=["TargetRank"])
 df["TargetRank"] = df["TargetRank"].astype(int)
 
 # =========================
-# モデル学習
+# モデル
 # =========================
-train_df = df.copy()
-group = train_df.groupby("Date").size().tolist()
+group = df.groupby("Date").size().tolist()
 
 model = LGBMRanker(
     n_estimators=300,
@@ -72,23 +67,20 @@ model = LGBMRanker(
     random_state=42
 )
 
-model.fit(train_df[FEATURES], train_df["TargetRank"], group=group)
+model.fit(df[FEATURES], df["TargetRank"], group=group)
 
 # =========================
-# 🔥 高速化①：一括predict
+# スコア一括
 # =========================
 df["score"] = model.predict(df[FEATURES])
 
 # =========================
-# 🔥 高速化②：Date辞書
+# 日付・価格辞書
 # =========================
 date_groups = dict(tuple(df.groupby("Date")))
 dates = sorted(date_groups.keys())
 
-# =========================
-# 🔥 高速化③：価格辞書
-# =========================
-price_dict = {
+price_open = {
     (row.Date, row.Ticker): row.Open
     for row in df.itertuples()
 }
@@ -98,9 +90,8 @@ price_dict = {
 # =========================
 capital = INITIAL_CAPITAL
 equity_curve = []
-positions = []
-
-trade_count = 0  # 🔥 追加
+positions = []  # ← 各ポジションは独立管理
+trade_count = 0
 
 for i in range(len(dates) - HOLD_DAYS - 2):
 
@@ -110,7 +101,7 @@ for i in range(len(dates) - HOLD_DAYS - 2):
     today_df = date_groups[today]
 
     # =========================
-    # ① FILTER
+    # FILTER（弱め）
     # =========================
     today_df = today_df[today_df["TrendVol"] > -1.0]
 
@@ -119,75 +110,75 @@ for i in range(len(dates) - HOLD_DAYS - 2):
         continue
 
     # =========================
-    # ② TOP候補
+    # 候補生成
     # =========================
-    candidates = today_df.sort_values("score", ascending=False).head(CANDIDATE_N)
+    candidates = today_df.sort_values("score", ascending=False).head(CANDIDATE_N).copy()
 
     # =========================
-    # ③ DIVERSITY
+    # DIVERSITY（bucketごと）
     # =========================
-    candidates = candidates.copy()
-
-    candidates["vol_bucket"] = pd.qcut(
+    candidates["bucket"] = pd.qcut(
         candidates["TrendVol"],
         q=min(DIVERSITY_BUCKETS, len(candidates)),
         labels=False,
         duplicates="drop"
     )
 
-    selected = []
+    selected_list = []
 
-    for b in sorted(candidates["vol_bucket"].dropna().unique()):
-        group_df = candidates[candidates["vol_bucket"] == b]
-        pick = group_df.sort_values("score", ascending=False).head(1)
-        selected.append(pick)
+    for b in sorted(candidates["bucket"].dropna().unique()):
+        tmp = candidates[candidates["bucket"] == b]
+        pick = tmp.sort_values("score", ascending=False).head(1)
+        selected_list.append(pick)
 
-    selected = pd.concat(selected).sort_values("score", ascending=False)
-
-    # =========================
-    # ④ TOP3
-    # =========================
+    selected = pd.concat(selected_list).sort_values("score", ascending=False)
     selected = selected.head(TOP_N)
 
     # =========================
-    # ⑤ EXIT
+    # EXIT（重要：個別に資産反映）
     # =========================
-    realized_returns = []
     new_positions = []
 
     for pos in positions:
+
         if i >= pos["exit_idx"]:
 
-            exit_price = price_dict.get((next_day, pos["Ticker"]))
+            exit_price = price_open.get((next_day, pos["Ticker"]))
+            if exit_price is None:
+                continue
 
-            if exit_price is not None:
-                ret = exit_price / pos["entry_price"] - 1
-                ret -= FEE
-                realized_returns.append(ret)
+            ret = (exit_price / pos["entry_price"] - 1) - FEE
 
-                trade_count += 1  # 🔥 カウント
+            # 🔥 個別ポジションで資産更新（超重要）
+            capital *= (1 + ret * pos["weight"])
+
+            trade_count += 1
 
         else:
             new_positions.append(pos)
 
     positions = new_positions
 
-    # ポートフォリオ反映
-    if len(realized_returns) > 0:
-        capital *= (1 + np.mean(realized_returns))
-
     # =========================
-    # ⑥ ENTRY
+    # ENTRY
     # =========================
     slots = MAX_POSITIONS - len(positions)
 
     if slots > 0:
+
         entries = selected.head(slots)
 
-        for _, row in entries.iterrows():
+        # weight（合計1に正規化）
+        weights = np.exp(entries["score"])
+        weights /= weights.sum()
 
-            entry_price = price_dict.get((next_day, row["Ticker"]))
+        for (_, row), w in zip(entries.iterrows(), weights):
 
+            # 🔥 同銘柄重複禁止
+            if any(p["Ticker"] == row["Ticker"] for p in positions):
+                continue
+
+            entry_price = price_open.get((next_day, row["Ticker"]))
             if entry_price is None:
                 continue
 
@@ -196,7 +187,8 @@ for i in range(len(dates) - HOLD_DAYS - 2):
             positions.append({
                 "Ticker": row["Ticker"],
                 "entry_price": entry_price,
-                "exit_idx": i + HOLD_DAYS
+                "exit_idx": i + HOLD_DAYS,
+                "weight": w
             })
 
     # =========================
@@ -210,11 +202,11 @@ for i in range(len(dates) - HOLD_DAYS - 2):
 equity_curve = pd.Series(equity_curve)
 returns = equity_curve.pct_change().fillna(0)
 
-CAGR = (equity_curve.iloc[-1]) ** (252 / len(equity_curve)) - 1
+CAGR = equity_curve.iloc[-1] ** (252 / len(equity_curve)) - 1
 Sharpe = returns.mean() / (returns.std() + 1e-9) * np.sqrt(252)
 MaxDD = (equity_curve / equity_curve.cummax() - 1).min()
 
-print("\n=== RESULT（高速版） ===")
+print("\n=== RESULT（完全版） ===")
 print(f"CAGR  : {CAGR:.4f}")
 print(f"Sharpe: {Sharpe:.4f}")
 print(f"MaxDD : {MaxDD:.4f}")
