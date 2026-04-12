@@ -96,13 +96,10 @@ def run_backtest(model, data_df):
     data_df = data_df.copy()
 
     # =========================
-    # 🔥 スコア（反転）
+    # 🔥 スコア（rankそのまま）
     # =========================
     data_df["raw_score"] = model.predict(data_df[FEATURES])
-    rank = data_df.groupby("Date")["raw_score"].rank(pct=True)
-
-    # 🔥 ここが超重要（方向修正）
-    data_df["score"] = 1 - rank
+    data_df["score"] = data_df.groupby("Date")["raw_score"].rank(pct=True)
 
     # 1日遅延
     data_df["score_shift"] = data_df.groupby("Ticker")["score"].shift(1)
@@ -157,22 +154,18 @@ def run_backtest(model, data_df):
             today_f = today.copy()
             today_f = today_f.dropna(subset=["score_shift"])
 
-            # =========================
-            # 🔥 フィルタ弱化（超重要）
-            # =========================
+            # 🔥 フィルタ（そのまま）
             today_f = today_f[
-                (today_f["Market_Trend"] > -0.5) &   # 緩める
-                (today_f["Trend_5_z"] > 0.0) &       # 弱トレンドOK
-                (today_f["score_shift"] > 0.8)       # 広く取る
+                (today_f["Market_Trend"] > -0.5) &
+                (today_f["Trend_5_z"] > 0.0) &
+                (today_f["score_shift"] > 0.8)
             ]
 
             if len(today_f) > 0:
 
                 picks = today_f.sort_values("score_shift", ascending=False).head(TOP_N)
 
-                # =========================
-                # 🔥 weight弱化（安定）
-                # =========================
+                # 🔥 weight（弱め）
                 weights = picks["score_shift"]
 
                 if weights.sum() > 0:
@@ -273,4 +266,3 @@ print(f"CAGR   : {result_df['CAGR'].mean():.3f}")
 print(f"Sharpe : {result_df['Sharpe'].mean():.3f}")
 print(f"MaxDD  : {result_df['MaxDD'].mean():.3f}")
 print(f"Trades : {result_df['Trades'].mean():.1f}")
-print(data_df[["raw_score", "Target"]].corr())
