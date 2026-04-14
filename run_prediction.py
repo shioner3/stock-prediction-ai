@@ -4,17 +4,21 @@ import os
 from lightgbm import LGBMRanker
 
 # =========================
-# 設定
+# 設定（15日専用）
 # =========================
 TOP_N = 3
 CANDIDATE_N = 10
 N_CLASS = 30
 DIVERSITY_BUCKETS = 3
 
+# 🔥 15日用パラ（後で最適化可能）
+W_TRENDVOL = 0.6
+W_DD = 0.3
+
 BASE_DIR = os.path.dirname(__file__)
 
-TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset.parquet")
-PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest.parquet")
+TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_15d.parquet")
+PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_15d.parquet")
 
 # =========================
 # データ読み込み
@@ -23,21 +27,17 @@ train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
 # =========================
-# FEATURES
+# FEATURES（15日専用）
 # =========================
 FEATURES = [
-    "Return_1","Return_3",
-    "MA3_ratio","MA5_ratio","MA10_ratio",
+    "Return_5","Return_10","Return_20",
+    "MA5_ratio","MA10_ratio","MA20_ratio","MA30_ratio",
     "Volatility",
-    "Volume_change","Volume_ratio",
-    "HL_range",
-    "Rel_Return_1",
-    "Trend_5_z","Trend_10_z","Trend_diff",
-    "Gap","Volatility_change","Momentum_acc",
-    "DD_5","DD_10",
+    "Trend_10_z","Trend_20_z","Trend_40_z",
+    "DD_20","DD_40",
     "TrendVol","Volume_Z",
-    "Return_1_rank","Volume_ratio_rank",
-    "Trend_5_z_rank","TrendVol_rank",
+    "Return_10_rank","Trend_20_z_rank",
+    "TrendVol_rank","DD_20_rank",
     "Market_Z","Market_Trend"
 ]
 
@@ -48,7 +48,7 @@ train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
 predict_df = predict_df.dropna(subset=FEATURES).copy()
 
 # =========================
-# Ranker用Target
+# Ranker target
 # =========================
 train_df["TargetRank"] = train_df.groupby("Date")["Target"].transform(
     lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
@@ -71,7 +71,8 @@ model = LGBMRanker(
     num_leaves=31,
     subsample=0.8,
     colsample_bytree=0.8,
-    random_state=42
+    random_state=42,
+    n_jobs=-1
 )
 
 model.fit(
@@ -87,28 +88,32 @@ today = predict_df.copy()
 today["score_raw"] = model.predict(today[FEATURES])
 
 # =========================
-# ① FILTER（弱め）
+# 🔥 final_score（15日の核）
 # =========================
-today = today[
-    today["TrendVol"] > -1.0
-].copy()
+today["trend_rank"] = today["TrendVol"].rank(pct=True)
+today["dd_rank"] = (-today["DD_20"]).rank(pct=True)  # 押し目はプラス評価
+
+today["filter_score"] = (
+    W_TRENDVOL * today["trend_rank"] +
+    W_DD * today["dd_rank"]
+)
+
+today["score"] = today["score_raw"] * (1 + today["filter_score"])
 
 # =========================
-# ② SCORE
+# ① FILTER（ほぼ無し）
 # =========================
-today["score"] = today["score_raw"]
+# → 長期は基本フィルタ弱く
+today = today[today["TrendVol"].notna()].copy()
 
 # =========================
-# ③ TOP10候補
+# ② TOP候補
 # =========================
 candidates = today.sort_values("score", ascending=False).head(CANDIDATE_N).copy()
 
 # =========================
-# ④ DIVERSITY（本質修正）
-# bucket → 各bucketから1銘柄ずつ選ぶ
+# ③ DIVERSITY（TrendVol分散）
 # =========================
-
-# 全体でbucket作成（←ここが重要）
 candidates["vol_bucket"] = pd.qcut(
     candidates["TrendVol"],
     q=min(DIVERSITY_BUCKETS, len(candidates)),
@@ -118,7 +123,6 @@ candidates["vol_bucket"] = pd.qcut(
 
 selected = []
 
-# bucketごとに1銘柄選択
 for b in sorted(candidates["vol_bucket"].dropna().unique()):
     tmp = candidates[candidates["vol_bucket"] == b]
     if len(tmp) > 0:
@@ -128,7 +132,7 @@ for b in sorted(candidates["vol_bucket"].dropna().unique()):
 selected = pd.DataFrame(selected)
 
 # =========================
-# 不足分補充（重要）
+# 不足補充
 # =========================
 if len(selected) < TOP_N:
     remain = candidates[~candidates.index.isin(selected.index)]
@@ -136,13 +140,13 @@ if len(selected) < TOP_N:
     selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
 
 # =========================
-# ⑤ TOP3最終選定
+# 最終
 # =========================
 final = selected.head(TOP_N).copy()
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
-# weight
+# weight（長期は均等寄りでもOK）
 # =========================
 final["weight"] = np.exp(final["score"])
 final["weight"] /= final["weight"].sum()
@@ -150,14 +154,13 @@ final["weight"] /= final["weight"].sum()
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（FINAL） ===")
+print("\n=== 今日の銘柄（15日モデル） ===")
 
 print(final[[
     "Ticker",
     "score",
-    "Trend_5_z",
     "TrendVol",
-    "DD_5",
+    "DD_20",
     "vol_bucket",
     "weight",
     "rank"
