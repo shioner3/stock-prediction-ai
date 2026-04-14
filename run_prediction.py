@@ -11,7 +11,6 @@ CANDIDATE_N = 10
 N_CLASS = 30
 DIVERSITY_BUCKETS = 3
 
-# スコア重み
 W_TRENDVOL = 0.5
 W_DD = 0.3
 W_MOM = 0.2
@@ -40,7 +39,9 @@ FEATURES = [
     "Market_Vol","Market_Trend_Str"
 ]
 
-# 🔥 安全チェック
+# =========================
+# 安全チェック
+# =========================
 missing = [c for c in FEATURES if c not in train_df.columns]
 if missing:
     raise ValueError(f"Missing columns: {missing}")
@@ -82,7 +83,7 @@ today = predict_df.copy()
 today["score_raw"] = model.predict(today[FEATURES])
 
 # =========================
-# 🔥 スコア（強化版）
+# スコア
 # =========================
 today["trend_rank"] = today["TrendVol"].rank(pct=True)
 today["dd_rank"] = (-today["DD_20"]).rank(pct=True)
@@ -96,19 +97,29 @@ today["final_score"] = today["score_raw"] * (
 )
 
 # =========================
-# 市場フィルタ（軽め）
+# 市場フィルタ（安全化）
 # =========================
-today = today[
+filtered = today[
     (today["Market_Trend"] > -0.02) &
     (today["Market_Vol"] < today["Market_Vol"].quantile(0.8))
-].copy()
+]
+
+if len(filtered) == 0:
+    print("⚠️ フィルタ全落ち → フィルタ無効化")
+else:
+    today = filtered.copy()
 
 # =========================
 # 候補
 # =========================
 candidates = today.sort_values("final_score", ascending=False).head(CANDIDATE_N).copy()
 
+if len(candidates) == 0:
+    raise ValueError("No candidates available")
+
+# =========================
 # diversity
+# =========================
 candidates["bucket"] = pd.qcut(
     candidates["TrendVol"],
     q=min(DIVERSITY_BUCKETS, len(candidates)),
@@ -119,19 +130,33 @@ candidates["bucket"] = pd.qcut(
 selected = []
 
 for b in sorted(candidates["bucket"].dropna().unique()):
-    selected.append(candidates[candidates["bucket"] == b].head(1))
+    tmp = candidates[candidates["bucket"] == b]
+    if len(tmp) > 0:
+        selected.append(tmp.head(1))
 
-selected = pd.concat(selected)
+# 🔥 ここが重要（落ちないように）
+if len(selected) == 0:
+    print("⚠️ selected empty → fallback")
+    selected = candidates.head(TOP_N)
+else:
+    selected = pd.concat(selected)
 
+# =========================
 # 補充
+# =========================
 if len(selected) < TOP_N:
     remain = candidates[~candidates.index.isin(selected.index)]
     selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
 
+# =========================
+# 最終
+# =========================
 final = selected.head(TOP_N).copy()
 final["rank"] = range(1, len(final) + 1)
 
+# =========================
 # weight
+# =========================
 final["weight"] = np.exp(final["final_score"])
 final["weight"] /= final["weight"].sum()
 
