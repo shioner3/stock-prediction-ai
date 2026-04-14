@@ -15,9 +15,10 @@ DIVERSITY_BUCKETS = 3
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-# 🔥 スコア補正
+# 🔥 スコア補正（統一）
 W_TRENDVOL = 0.6
 W_DD = 0.3
+W_MARKET = 0.3
 
 DATA_PATH = "ml_dataset_15d.parquet"
 
@@ -31,7 +32,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df["Year"] = df["Date"].dt.year
 
 # =========================
-# FEATURES（15日専用）
+# FEATURES（統一）
 # =========================
 FEATURES = [
     "Return_5","Return_10","Return_20",
@@ -42,7 +43,11 @@ FEATURES = [
     "TrendVol","Volume_Z",
     "Return_10_rank","Trend_20_z_rank",
     "TrendVol_rank","DD_20_rank",
-    "Market_Z","Market_Trend"
+    "Market_Z","Market_Trend",
+
+    # 🔥 追加（必須）
+    "Market_Vol",
+    "Market_Trend_S"
 ]
 
 df = df.dropna(subset=FEATURES + ["Target"]).copy()
@@ -122,15 +127,30 @@ for train_start, train_end, test_year in splits:
         today_df = date_groups[today].copy()
 
         # =========================
-        # 🔥 final_score（核心）
+        # 🔥 final_score（完全統一）
         # =========================
         today_df["trend_rank"] = today_df["TrendVol"].rank(pct=True)
         today_df["dd_rank"] = (-today_df["DD_20"]).rank(pct=True)
 
-        today_df["final_score"] = today_df["score_raw"] * (
-            1 + W_TRENDVOL * today_df["trend_rank"]
-              + W_DD * today_df["dd_rank"]
+        # 市場（重要）
+        today_df["market_rank"] = (
+            today_df["Market_Trend_S"].rank(pct=True)
+            - today_df["Market_Vol"].rank(pct=True)
         )
+
+        today_df["final_score"] = today_df["score_raw"] * (
+            1
+            + W_TRENDVOL * today_df["trend_rank"]
+            + W_DD * today_df["dd_rank"]
+            + W_MARKET * today_df["market_rank"]
+        )
+
+        # =========================
+        # 🔥 市場フィルタ（超重要）
+        # =========================
+        if today_df["Market_Trend_S"].mean() < 0:
+            equity_curve.append(capital)
+            continue
 
         # =========================
         # EXIT
@@ -183,6 +203,9 @@ for train_start, train_end, test_year in splits:
             weights = np.exp(entries["final_score"])
             weights /= weights.sum()
 
+            # 🔥 市場でポジション調整
+            market_scale = max(0, today_df["Market_Trend_S"].mean())
+
             for (_, row), w in zip(entries.iterrows(), weights):
 
                 if any(p["Ticker"] == row["Ticker"] for p in positions):
@@ -198,14 +221,15 @@ for train_start, train_end, test_year in splits:
                     "Ticker": row["Ticker"],
                     "entry_price": entry_price,
                     "exit_idx": i + HOLD_DAYS,
-                    "weight": w
+                    "weight": w * market_scale
                 })
 
         # weight正規化
         if len(positions) > 0:
             total_w = sum(p["weight"] for p in positions)
-            for p in positions:
-                p["weight"] /= total_w
+            if total_w > 0:
+                for p in positions:
+                    p["weight"] /= total_w
 
         capital *= (1 + daily_return)
         equity_curve.append(capital)
@@ -232,7 +256,7 @@ for train_start, train_end, test_year in splits:
     })
 
 # =========================
-# 全体まとめ
+# まとめ
 # =========================
-print("\n=== WALK FORWARD SUMMARY（15日モデル） ===")
+print("\n=== WALK FORWARD SUMMARY（15日モデル・統一版） ===")
 print(pd.DataFrame(all_results))
