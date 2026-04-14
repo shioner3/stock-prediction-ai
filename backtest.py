@@ -3,19 +3,23 @@ import numpy as np
 from lightgbm import LGBMRanker
 
 # =========================
-# 設定
+# 設定（15日専用）
 # =========================
 TOP_N = 3
 CANDIDATE_N = 10
 MAX_POSITIONS = 5
-HOLD_DAYS = 3
+HOLD_DAYS = 15
 N_CLASS = 30
 DIVERSITY_BUCKETS = 3
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-DATA_PATH = "ml_dataset.parquet"
+# 🔥 スコア補正
+W_TRENDVOL = 0.6
+W_DD = 0.3
+
+DATA_PATH = "ml_dataset_15d.parquet"
 
 # =========================
 # データ
@@ -26,14 +30,18 @@ df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 df["Date"] = pd.to_datetime(df["Date"])
 df["Year"] = df["Date"].dt.year
 
+# =========================
+# FEATURES（15日専用）
+# =========================
 FEATURES = [
-    "Return_1","Return_3","MA3_ratio","MA5_ratio","MA10_ratio",
-    "Volatility","Volume_change","Volume_ratio","HL_range",
-    "Rel_Return_1","Trend_5_z","Trend_10_z","Trend_diff",
-    "Gap","Volatility_change","Momentum_acc",
-    "DD_5","DD_10","TrendVol","Volume_Z",
-    "Return_1_rank","Volume_ratio_rank",
-    "Trend_5_z_rank","TrendVol_rank",
+    "Return_5","Return_10","Return_20",
+    "MA5_ratio","MA10_ratio","MA20_ratio","MA30_ratio",
+    "Volatility",
+    "Trend_10_z","Trend_20_z","Trend_40_z",
+    "DD_20","DD_40",
+    "TrendVol","Volume_Z",
+    "Return_10_rank","Trend_20_z_rank",
+    "TrendVol_rank","DD_20_rank",
     "Market_Z","Market_Trend"
 ]
 
@@ -94,7 +102,7 @@ for train_start, train_end, test_year in splits:
     # =========================
     # スコア
     # =========================
-    test_df["score"] = model.predict(test_df[FEATURES])
+    test_df["score_raw"] = model.predict(test_df[FEATURES])
 
     dates = sorted(test_df["Date"].unique())
     date_groups = dict(tuple(test_df.groupby("Date")))
@@ -114,9 +122,15 @@ for train_start, train_end, test_year in splits:
         today_df = date_groups[today].copy()
 
         # =========================
-        # 🔥 フィルタ無し
+        # 🔥 final_score（核心）
         # =========================
-        today_df["final_score"] = today_df["score"]
+        today_df["trend_rank"] = today_df["TrendVol"].rank(pct=True)
+        today_df["dd_rank"] = (-today_df["DD_20"]).rank(pct=True)
+
+        today_df["final_score"] = today_df["score_raw"] * (
+            1 + W_TRENDVOL * today_df["trend_rank"]
+              + W_DD * today_df["dd_rank"]
+        )
 
         # =========================
         # EXIT
@@ -145,7 +159,6 @@ for train_start, train_end, test_year in splits:
         # =========================
         candidates = today_df.sort_values("final_score", ascending=False).head(CANDIDATE_N)
 
-        # diversity
         candidates["bucket"] = pd.qcut(
             candidates["TrendVol"],
             q=min(DIVERSITY_BUCKETS, len(candidates)),
@@ -221,5 +234,5 @@ for train_start, train_end, test_year in splits:
 # =========================
 # 全体まとめ
 # =========================
-print("\n=== WALK FORWARD SUMMARY ===")
+print("\n=== WALK FORWARD SUMMARY（15日モデル） ===")
 print(pd.DataFrame(all_results))
