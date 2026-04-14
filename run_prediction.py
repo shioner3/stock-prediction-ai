@@ -1,36 +1,161 @@
 import pandas as pd
 import numpy as np
-import os
-from lightgbm import LGBMRanker
+import duckdb
 
 # =========================
 # 設定（15日専用）
 # =========================
-TOP_N = 3
-CANDIDATE_N = 10
-N_CLASS = 30
-DIVERSITY_BUCKETS = 3
+PARQUET_FILE = "stock_data/prices.parquet"
 
-# 🔥 15日用パラ（後で最適化可能）
-W_TRENDVOL = 0.6
-W_DD = 0.3
+TRAIN_SAVE_PATH = "ml_dataset_15d.parquet"
+PREDICT_SAVE_PATH = "ml_dataset_latest_15d.parquet"
 
-BASE_DIR = os.path.dirname(__file__)
+HOLD_DAYS = 15
+MIN_COUNT = 3000
+Z_WINDOW = 40
 
-TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_15d.parquet")
-PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_15d.parquet")
+MIN_PRICE = 50
+TARGET_CLIP = 0.5
 
 # =========================
 # データ読み込み
 # =========================
-train_df = pd.read_parquet(TRAIN_DATA_PATH)
-predict_df = pd.read_parquet(PREDICT_DATA_PATH)
+con = duckdb.connect()
+
+df = con.execute(f"""
+SELECT 
+    Date,
+    Ticker,
+    Open,
+    High,
+    Low,
+    Close,
+    Volume
+FROM '{PARQUET_FILE}'
+""").df()
+
+df["Date"] = pd.to_datetime(df["Date"])
+df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
 # =========================
-# FEATURES（15日専用）
+# フィルタ
+# =========================
+df = df[df["Close"] > MIN_PRICE].copy()
+
+counts = df["Date"].value_counts()
+valid_dates = counts[counts >= MIN_COUNT].index
+df = df[df["Date"].isin(valid_dates)].copy()
+
+# =========================
+# 🔥 リターン（中期）
+# =========================
+df["Return_5"]  = df.groupby("Ticker")["Close"].pct_change(5).shift(1)
+df["Return_10"] = df.groupby("Ticker")["Close"].pct_change(10).shift(1)
+df["Return_20"] = df.groupby("Ticker")["Close"].pct_change(20).shift(1)
+
+# 🔥 モメンタム加速（超重要）
+df["Momentum_20"] = df["Return_20"] - df["Return_5"]
+
+# =========================
+# 🔥 移動平均
+# =========================
+for w in [5, 10, 20, 30]:
+    ma = df.groupby("Ticker")["Close"].transform(
+        lambda x: x.shift(1).rolling(w).mean()
+    )
+    df[f"MA{w}_ratio"] = df["Close"].shift(1) / (ma + 1e-9)
+
+# =========================
+# 🔥 ボラ（リーク防止）
+# =========================
+df["Volatility"] = df.groupby("Ticker")["Close"].pct_change().shift(1).transform(
+    lambda x: x.rolling(20).std()
+)
+
+# =========================
+# 🔥 トレンド
+# =========================
+df["Trend_10"] = df.groupby("Ticker")["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(11) - 1
+df["Trend_20"] = df.groupby("Ticker")["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(21) - 1
+df["Trend_40"] = df.groupby("Ticker")["Close"].shift(1) / df.groupby("Ticker")["Close"].shift(41) - 1
+
+def zscore(x):
+    return (x - x.rolling(Z_WINDOW).mean()) / (x.rolling(Z_WINDOW).std() + 1e-9)
+
+df["Trend_10_z"] = df.groupby("Ticker")["Trend_10"].transform(zscore)
+df["Trend_20_z"] = df.groupby("Ticker")["Trend_20"].transform(zscore)
+df["Trend_40_z"] = df.groupby("Ticker")["Trend_40"].transform(zscore)
+
+# =========================
+# 🔥 ドローダウン
+# =========================
+rolling_max_20 = df.groupby("Ticker")["Close"].transform(
+    lambda x: x.shift(1).rolling(20).max()
+)
+rolling_max_40 = df.groupby("Ticker")["Close"].transform(
+    lambda x: x.shift(1).rolling(40).max()
+)
+
+df["DD_20"] = df["Close"].shift(1) / (rolling_max_20 + 1e-9) - 1
+df["DD_40"] = df["Close"].shift(1) / (rolling_max_40 + 1e-9) - 1
+
+# =========================
+# 🔥 Trend効率（スケール補正）
+# =========================
+df["TrendVol"] = df["Trend_20"] / (df["Volatility"] * np.sqrt(20) + 1e-9)
+
+# =========================
+# 🔥 出来高
+# =========================
+vol_mean = df.groupby("Ticker")["Volume"].transform(
+    lambda x: x.shift(1).rolling(20).mean()
+)
+vol_std = df.groupby("Ticker")["Volume"].transform(
+    lambda x: x.shift(1).rolling(20).std()
+)
+
+df["Volume_Z"] = (df["Volume"].shift(1) - vol_mean) / (vol_std + 1e-9)
+
+# =========================
+# 🔥 市場特徴量（強化）
+# =========================
+market_mean = df.groupby("Date")["Return_5"].transform("mean")
+market_std  = df.groupby("Date")["Return_5"].transform("std")
+
+df["Market_Z"] = (df["Return_5"] - market_mean) / (market_std + 1e-9)
+df["Market_Trend"] = df.groupby("Date")["Trend_20"].transform("mean")
+
+# 🔥 追加（重要）
+df["Market_Vol"] = df.groupby("Date")["Return_5"].transform("std")
+df["Market_Trend_Str"] = df.groupby("Date")["Trend_20"].transform(lambda x: x.abs().mean())
+
+# =========================
+# 🔥 クロスセクション
+# =========================
+rank_cols = [
+    "Return_10",
+    "Trend_20_z",
+    "TrendVol",
+    "DD_20"
+]
+
+for col in rank_cols:
+    df[f"{col}_rank"] = df.groupby("Date")[col].rank(pct=True)
+
+# =========================
+# 🎯 Target
+# =========================
+df["Target"] = (
+    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
+)
+
+df["Target"] = df["Target"].clip(-TARGET_CLIP, TARGET_CLIP)
+
+# =========================
+# FEATURES
 # =========================
 FEATURES = [
-    "Return_5","Return_10","Return_20",
+    "Return_5","Return_10","Return_20","Momentum_20",
     "MA5_ratio","MA10_ratio","MA20_ratio","MA30_ratio",
     "Volatility",
     "Trend_10_z","Trend_20_z","Trend_40_z",
@@ -38,132 +163,22 @@ FEATURES = [
     "TrendVol","Volume_Z",
     "Return_10_rank","Trend_20_z_rank",
     "TrendVol_rank","DD_20_rank",
-    "Market_Z","Market_Trend"
+    "Market_Z","Market_Trend",
+    "Market_Vol","Market_Trend_Str"
 ]
 
 # =========================
-# 前処理
+# データ作成
 # =========================
-train_df = train_df.dropna(subset=FEATURES + ["Target"]).copy()
-predict_df = predict_df.dropna(subset=FEATURES).copy()
+train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
+
+latest_date = df["Date"].max()
+predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
 
 # =========================
-# Ranker target
+# 保存
 # =========================
-train_df["TargetRank"] = train_df.groupby("Date")["Target"].transform(
-    lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
-)
+train_df.to_parquet(TRAIN_SAVE_PATH)
+predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-train_df = train_df.dropna(subset=["TargetRank"])
-train_df["TargetRank"] = train_df["TargetRank"].astype(int)
-
-train_df = train_df.sort_values("Date")
-group = train_df.groupby("Date").size().tolist()
-
-assert train_df["TargetRank"].max() < N_CLASS
-
-# =========================
-# モデル
-# =========================
-model = LGBMRanker(
-    n_estimators=300,
-    learning_rate=0.03,
-    num_leaves=31,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42,
-    n_jobs=-1
-)
-
-model.fit(
-    train_df[FEATURES],
-    train_df["TargetRank"],
-    group=group
-)
-
-# =========================
-# 予測
-# =========================
-today = predict_df.copy()
-today["score_raw"] = model.predict(today[FEATURES])
-
-# =========================
-# 🔥 final_score（15日の核）
-# =========================
-today["trend_rank"] = today["TrendVol"].rank(pct=True)
-today["dd_rank"] = (-today["DD_20"]).rank(pct=True)  # 押し目はプラス評価
-
-today["filter_score"] = (
-    W_TRENDVOL * today["trend_rank"] +
-    W_DD * today["dd_rank"]
-)
-
-today["score"] = today["score_raw"] * (1 + today["filter_score"])
-
-# =========================
-# ① FILTER（ほぼ無し）
-# =========================
-# → 長期は基本フィルタ弱く
-today = today[today["TrendVol"].notna()].copy()
-
-# =========================
-# ② TOP候補
-# =========================
-candidates = today.sort_values("score", ascending=False).head(CANDIDATE_N).copy()
-
-# =========================
-# ③ DIVERSITY（TrendVol分散）
-# =========================
-candidates["vol_bucket"] = pd.qcut(
-    candidates["TrendVol"],
-    q=min(DIVERSITY_BUCKETS, len(candidates)),
-    labels=False,
-    duplicates="drop"
-)
-
-selected = []
-
-for b in sorted(candidates["vol_bucket"].dropna().unique()):
-    tmp = candidates[candidates["vol_bucket"] == b]
-    if len(tmp) > 0:
-        best = tmp.sort_values("score", ascending=False).iloc[0]
-        selected.append(best)
-
-selected = pd.DataFrame(selected)
-
-# =========================
-# 不足補充
-# =========================
-if len(selected) < TOP_N:
-    remain = candidates[~candidates.index.isin(selected.index)]
-    remain = remain.sort_values("score", ascending=False)
-    selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
-
-# =========================
-# 最終
-# =========================
-final = selected.head(TOP_N).copy()
-final["rank"] = range(1, len(final) + 1)
-
-# =========================
-# weight（長期は均等寄りでもOK）
-# =========================
-final["weight"] = np.exp(final["score"])
-final["weight"] /= final["weight"].sum()
-
-# =========================
-# 出力
-# =========================
-print("\n=== 今日の銘柄（15日モデル） ===")
-
-print(final[[
-    "Ticker",
-    "score",
-    "TrendVol",
-    "DD_20",
-    "vol_bucket",
-    "weight",
-    "rank"
-]])
-
-print("\n件数:", len(final))
+print("\n保存完了（15日ホールド専用・完成版）")
