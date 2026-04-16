@@ -117,7 +117,20 @@ for train_start, train_end, test_year in splits:
         )
 
         # =========================
-        # EXIT（常に実行）
+        # 🔥 市場レジーム判定
+        # =========================
+        market_trend = df_today["Market_Trend"].iloc[0]
+        market_trend_str = df_today["Market_Trend_Str"].iloc[0]
+
+        if market_trend < -0.02 or market_trend_str < 0.01:
+            TOP_N_DYNAMIC = 1
+        elif market_trend > 0.02 and market_trend_str > 0.03:
+            TOP_N_DYNAMIC = 5
+        else:
+            TOP_N_DYNAMIC = 3
+
+        # =========================
+        # EXIT
         # =========================
         daily_return = 0
         new_pos = []
@@ -134,61 +147,52 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # 市場フィルタ（ENTRYのみ制限）
-        # =========================
-        allow_entry = True
-        if df_today["Market_Trend"].iloc[0] < -0.02:
-            allow_entry = False
-
-        # =========================
         # ENTRY
         # =========================
-        if allow_entry:
+        candidates = df_today.sort_values("final_score", ascending=False).head(CANDIDATE_N)
 
-            candidates = df_today.sort_values("final_score", ascending=False).head(CANDIDATE_N)
+        if len(candidates) > 0:
 
-            if len(candidates) > 0:
+            candidates["bucket"] = pd.qcut(
+                candidates["TrendVol"],
+                q=min(DIVERSITY_BUCKETS, len(candidates)),
+                labels=False,
+                duplicates="drop"
+            )
 
-                candidates["bucket"] = pd.qcut(
-                    candidates["TrendVol"],
-                    q=min(DIVERSITY_BUCKETS, len(candidates)),
-                    labels=False,
-                    duplicates="drop"
-                )
+            selected = []
 
-                selected = []
+            for b in sorted(candidates["bucket"].dropna().unique()):
+                tmp = candidates[candidates["bucket"] == b]
+                if len(tmp) > 0:
+                    selected.append(tmp.head(1))
 
-                for b in sorted(candidates["bucket"].dropna().unique()):
-                    tmp = candidates[candidates["bucket"] == b]
-                    if len(tmp) > 0:
-                        selected.append(tmp.head(1))
+            if len(selected) == 0:
+                selected = candidates.head(TOP_N_DYNAMIC)
+            else:
+                selected = pd.concat(selected)
 
-                if len(selected) == 0:
-                    selected = candidates.head(TOP_N)
-                else:
-                    selected = pd.concat(selected)
+            if len(selected) < TOP_N_DYNAMIC:
+                remain = candidates[~candidates.index.isin(selected.index)]
+                selected = pd.concat([selected, remain.head(TOP_N_DYNAMIC - len(selected))])
 
-                if len(selected) < TOP_N:
-                    remain = candidates[~candidates.index.isin(selected.index)]
-                    selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
+            slots = MAX_POSITIONS - len(positions)
 
-                slots = MAX_POSITIONS - len(positions)
+            if slots > 0:
+                entries = selected.head(slots)
 
-                if slots > 0:
-                    entries = selected.head(slots)
+                weights = np.exp(entries["final_score"])
+                weights /= weights.sum()
 
-                    weights = np.exp(entries["final_score"])
-                    weights /= weights.sum()
-
-                    for (_, r), w in zip(entries.iterrows(), weights):
-                        price = price_open.get((next_day, r["Ticker"]))
-                        if price is not None:
-                            positions.append({
-                                "Ticker": r["Ticker"],
-                                "entry": price * (1 + FEE),
-                                "exit_idx": i + HOLD_DAYS,
-                                "w": w
-                            })
+                for (_, r), w in zip(entries.iterrows(), weights):
+                    price = price_open.get((next_day, r["Ticker"]))
+                    if price is not None:
+                        positions.append({
+                            "Ticker": r["Ticker"],
+                            "entry": price * (1 + FEE),
+                            "exit_idx": i + HOLD_DAYS,
+                            "w": w
+                        })
 
         # =========================
         # weight正規化
