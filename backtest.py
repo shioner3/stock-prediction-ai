@@ -15,9 +15,10 @@ DIVERSITY_BUCKETS = 3
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-W_TRENDVOL = 0.5
-W_DD = 0.3
-W_MOM = 0.2
+# 🔥 重み（安定版）
+W_TRENDVOL = 0.3
+W_DD = 0.4
+W_MOM = 0.3
 
 DATA_PATH = "ml_dataset_15d.parquet"
 
@@ -41,11 +42,6 @@ FEATURES = [
     "Market_Vol","Market_Trend_Str"
 ]
 
-# 安全チェック
-missing = [c for c in FEATURES if c not in df.columns]
-if missing:
-    raise ValueError(f"Missing columns: {missing}")
-
 df = df.dropna(subset=FEATURES + ["Target"]).copy()
 
 df["TargetRank"] = df.groupby("Date")["Target"].transform(
@@ -66,8 +62,10 @@ results = []
 
 for train_start, train_end, test_year in splits:
 
+    print(f"\n=== {train_start}-{train_end} → {test_year} ===")
+
     train_df = df[(df["Year"] >= train_start) & (df["Year"] <= train_end)]
-    test_df  = df[df["Year"] == test_year]
+    test_df  = df[df["Year"] == test_year].copy()
 
     group = train_df.groupby("Date").size().tolist()
 
@@ -79,7 +77,7 @@ for train_start, train_end, test_year in splits:
     dates = sorted(test_df["Date"].unique())
     date_groups = dict(tuple(test_df.groupby("Date")))
 
-    capital = 1.0
+    capital = INITIAL_CAPITAL
     positions = []
     equity = []
 
@@ -89,19 +87,36 @@ for train_start, train_end, test_year in splits:
         next_day = dates[i + 1]
         df_today = date_groups[today].copy()
 
-        # スコア
+        # =========================
+        # 🔥 score正規化（重要）
+        # =========================
+        sr = df_today["score_raw"]
+        df_today["score_raw"] = (sr - sr.mean()) / (sr.std() + 1e-9)
+
+        # =========================
+        # 🔥 スコア（加算型）
+        # =========================
         df_today["trend_rank"] = df_today["TrendVol"].rank(pct=True)
         df_today["dd_rank"] = (-df_today["DD_20"]).rank(pct=True)
         df_today["mom_rank"] = df_today["Momentum_20"].rank(pct=True)
 
-        df_today["final_score"] = df_today["score_raw"] * (
-            1
+        df_today["final_score"] = (
+            df_today["score_raw"]
             + W_TRENDVOL * df_today["trend_rank"]
             + W_DD * df_today["dd_rank"]
             + W_MOM * df_today["mom_rank"]
         )
 
+        # =========================
+        # 🔥 市場フィルタ（超重要）
+        # =========================
+        if df_today["Market_Trend"].iloc[0] < -0.02:
+            equity.append(capital)
+            continue
+
+        # =========================
         # EXIT
+        # =========================
         daily_return = 0
         new_pos = []
 
@@ -116,8 +131,14 @@ for train_start, train_end, test_year in splits:
 
         positions = new_pos
 
+        # =========================
         # ENTRY
+        # =========================
         candidates = df_today.sort_values("final_score", ascending=False).head(CANDIDATE_N)
+
+        if len(candidates) == 0:
+            equity.append(capital)
+            continue
 
         candidates["bucket"] = pd.qcut(
             candidates["TrendVol"],
@@ -128,14 +149,24 @@ for train_start, train_end, test_year in splits:
 
         selected = []
         for b in sorted(candidates["bucket"].dropna().unique()):
-            selected.append(candidates[candidates["bucket"] == b].head(1))
+            tmp = candidates[candidates["bucket"] == b]
+            if len(tmp) > 0:
+                selected.append(tmp.head(1))
 
-        selected = pd.concat(selected).head(TOP_N)
+        if len(selected) == 0:
+            selected = candidates.head(TOP_N)
+        else:
+            selected = pd.concat(selected)
+
+        if len(selected) < TOP_N:
+            remain = candidates[~candidates.index.isin(selected.index)]
+            selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
 
         slots = MAX_POSITIONS - len(positions)
 
         if slots > 0:
             entries = selected.head(slots)
+
             weights = np.exp(entries["final_score"])
             weights /= weights.sum()
 
@@ -164,6 +195,10 @@ for train_start, train_end, test_year in splits:
     Sharpe = ret.mean() / (ret.std() + 1e-9) * np.sqrt(252)
     MaxDD = (equity / equity.cummax() - 1).min()
 
+    print(f"CAGR  : {CAGR:.4f}")
+    print(f"Sharpe: {Sharpe:.4f}")
+    print(f"MaxDD : {MaxDD:.4f}")
+
     results.append({
         "Period": f"{train_start}-{train_end}→{test_year}",
         "CAGR": CAGR,
@@ -171,4 +206,5 @@ for train_start, train_end, test_year in splits:
         "MaxDD": MaxDD
     })
 
+print("\n=== SUMMARY ===")
 print(pd.DataFrame(results))
