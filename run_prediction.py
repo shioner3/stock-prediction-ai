@@ -11,9 +11,10 @@ CANDIDATE_N = 10
 N_CLASS = 30
 DIVERSITY_BUCKETS = 3
 
-W_TRENDVOL = 0.5
-W_DD = 0.3
-W_MOM = 0.2
+# 🔥 重み（安定版）
+W_TRENDVOL = 0.3
+W_DD = 0.4
+W_MOM = 0.3
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -82,32 +83,37 @@ model.fit(train_df[FEATURES], train_df["TargetRank"], group=group)
 today = predict_df.copy()
 today["score_raw"] = model.predict(today[FEATURES])
 
+# 🔥 score標準化（超重要）
+today["score_raw"] = (
+    today["score_raw"] - today["score_raw"].mean()
+) / (today["score_raw"].std() + 1e-9)
+
 # =========================
-# スコア
+# スコア（加算型に変更）
 # =========================
 today["trend_rank"] = today["TrendVol"].rank(pct=True)
 today["dd_rank"] = (-today["DD_20"]).rank(pct=True)
 today["mom_rank"] = today["Momentum_20"].rank(pct=True)
 
-today["final_score"] = today["score_raw"] * (
-    1
+today["final_score"] = (
+    today["score_raw"]
     + W_TRENDVOL * today["trend_rank"]
     + W_DD * today["dd_rank"]
     + W_MOM * today["mom_rank"]
 )
 
 # =========================
-# 市場フィルタ（安全化）
+# 市場フィルタ（ゲート型）
 # =========================
-filtered = today[
-    (today["Market_Trend"] > -0.02) &
-    (today["Market_Vol"] < today["Market_Vol"].quantile(0.8))
-]
+market_trend = today["Market_Trend"].iloc[0]
+market_vol = today["Market_Vol"].iloc[0]
 
-if len(filtered) == 0:
-    print("⚠️ フィルタ全落ち → フィルタ無効化")
-else:
-    today = filtered.copy()
+if market_trend < -0.02:
+    print("⚠️ 地合い悪化 → ノーポジ")
+    today = today.iloc[0:0]  # 全スキップ
+
+elif market_vol > today["Market_Vol"].quantile(0.9):
+    print("⚠️ ボラ過大 → 控えめ運用")
 
 # =========================
 # 候補
@@ -115,7 +121,8 @@ else:
 candidates = today.sort_values("final_score", ascending=False).head(CANDIDATE_N).copy()
 
 if len(candidates) == 0:
-    raise ValueError("No candidates available")
+    print("⚠️ 候補なし → スキップ")
+    exit()
 
 # =========================
 # diversity
@@ -134,7 +141,7 @@ for b in sorted(candidates["bucket"].dropna().unique()):
     if len(tmp) > 0:
         selected.append(tmp.head(1))
 
-# 🔥 ここが重要（落ちないように）
+# fallback
 if len(selected) == 0:
     print("⚠️ selected empty → fallback")
     selected = candidates.head(TOP_N)
@@ -155,7 +162,7 @@ final = selected.head(TOP_N).copy()
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
-# weight
+# weight（安定化）
 # =========================
 final["weight"] = np.exp(final["final_score"])
 final["weight"] /= final["weight"].sum()
@@ -163,8 +170,14 @@ final["weight"] /= final["weight"].sum()
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（15日モデル） ===")
+print("\n=== 今日の銘柄（15日モデル・改良版） ===")
+
 print(final[[
-    "Ticker","final_score","TrendVol","Momentum_20",
-    "DD_20","weight","rank"
+    "Ticker",
+    "final_score",
+    "TrendVol",
+    "Momentum_20",
+    "DD_20",
+    "weight",
+    "rank"
 ]])
