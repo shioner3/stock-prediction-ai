@@ -15,7 +15,7 @@ DIVERSITY_BUCKETS = 3
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-# 🔥 重み（安定版）
+# 🔥 重み
 W_TRENDVOL = 0.3
 W_DD = 0.4
 W_MOM = 0.3
@@ -69,7 +69,16 @@ for train_start, train_end, test_year in splits:
 
     group = train_df.groupby("Date").size().tolist()
 
-    model = LGBMRanker(n_estimators=200, learning_rate=0.05)
+    model = LGBMRanker(
+        n_estimators=200,
+        learning_rate=0.05,
+        num_leaves=31,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        n_jobs=-1
+    )
+
     model.fit(train_df[FEATURES], train_df["TargetRank"], group=group)
 
     test_df["score_raw"] = model.predict(test_df[FEATURES])
@@ -88,13 +97,13 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 score正規化（重要）
+        # 🔥 score正規化
         # =========================
         sr = df_today["score_raw"]
         df_today["score_raw"] = (sr - sr.mean()) / (sr.std() + 1e-9)
 
         # =========================
-        # 🔥 スコア（加算型）
+        # スコア
         # =========================
         df_today["trend_rank"] = df_today["TrendVol"].rank(pct=True)
         df_today["dd_rank"] = (-df_today["DD_20"]).rank(pct=True)
@@ -108,14 +117,7 @@ for train_start, train_end, test_year in splits:
         )
 
         # =========================
-        # 🔥 市場フィルタ（超重要）
-        # =========================
-        if df_today["Market_Trend"].iloc[0] < -0.02:
-            equity.append(capital)
-            continue
-
-        # =========================
-        # EXIT
+        # EXIT（常に実行）
         # =========================
         daily_return = 0
         new_pos = []
@@ -123,7 +125,7 @@ for train_start, train_end, test_year in splits:
         for p in positions:
             if i == p["exit_idx"]:
                 price = price_open.get((today, p["Ticker"]))
-                if price:
+                if price is not None:
                     ret = (price / p["entry"] - 1) - FEE
                     daily_return += ret * p["w"]
             else:
@@ -132,59 +134,73 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
+        # 市場フィルタ（ENTRYのみ制限）
+        # =========================
+        allow_entry = True
+        if df_today["Market_Trend"].iloc[0] < -0.02:
+            allow_entry = False
+
+        # =========================
         # ENTRY
         # =========================
-        candidates = df_today.sort_values("final_score", ascending=False).head(CANDIDATE_N)
+        if allow_entry:
 
-        if len(candidates) == 0:
-            equity.append(capital)
-            continue
+            candidates = df_today.sort_values("final_score", ascending=False).head(CANDIDATE_N)
 
-        candidates["bucket"] = pd.qcut(
-            candidates["TrendVol"],
-            q=min(DIVERSITY_BUCKETS, len(candidates)),
-            labels=False,
-            duplicates="drop"
-        )
+            if len(candidates) > 0:
 
-        selected = []
-        for b in sorted(candidates["bucket"].dropna().unique()):
-            tmp = candidates[candidates["bucket"] == b]
-            if len(tmp) > 0:
-                selected.append(tmp.head(1))
+                candidates["bucket"] = pd.qcut(
+                    candidates["TrendVol"],
+                    q=min(DIVERSITY_BUCKETS, len(candidates)),
+                    labels=False,
+                    duplicates="drop"
+                )
 
-        if len(selected) == 0:
-            selected = candidates.head(TOP_N)
-        else:
-            selected = pd.concat(selected)
+                selected = []
 
-        if len(selected) < TOP_N:
-            remain = candidates[~candidates.index.isin(selected.index)]
-            selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
+                for b in sorted(candidates["bucket"].dropna().unique()):
+                    tmp = candidates[candidates["bucket"] == b]
+                    if len(tmp) > 0:
+                        selected.append(tmp.head(1))
 
-        slots = MAX_POSITIONS - len(positions)
+                if len(selected) == 0:
+                    selected = candidates.head(TOP_N)
+                else:
+                    selected = pd.concat(selected)
 
-        if slots > 0:
-            entries = selected.head(slots)
+                if len(selected) < TOP_N:
+                    remain = candidates[~candidates.index.isin(selected.index)]
+                    selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
 
-            weights = np.exp(entries["final_score"])
-            weights /= weights.sum()
+                slots = MAX_POSITIONS - len(positions)
 
-            for (_, r), w in zip(entries.iterrows(), weights):
-                price = price_open.get((next_day, r["Ticker"]))
-                if price:
-                    positions.append({
-                        "Ticker": r["Ticker"],
-                        "entry": price * (1 + FEE),
-                        "exit_idx": i + HOLD_DAYS,
-                        "w": w
-                    })
+                if slots > 0:
+                    entries = selected.head(slots)
 
+                    weights = np.exp(entries["final_score"])
+                    weights /= weights.sum()
+
+                    for (_, r), w in zip(entries.iterrows(), weights):
+                        price = price_open.get((next_day, r["Ticker"]))
+                        if price is not None:
+                            positions.append({
+                                "Ticker": r["Ticker"],
+                                "entry": price * (1 + FEE),
+                                "exit_idx": i + HOLD_DAYS,
+                                "w": w
+                            })
+
+        # =========================
+        # weight正規化
+        # =========================
         if positions:
             s = sum(p["w"] for p in positions)
             for p in positions:
                 p["w"] /= s
 
+        # =========================
+        # 資産更新
+        # =========================
         capital *= (1 + daily_return)
         equity.append(capital)
 
