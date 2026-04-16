@@ -53,8 +53,12 @@ df["Return_5"]  = df.groupby("Ticker")["Close"].pct_change(5).shift(1)
 df["Return_10"] = df.groupby("Ticker")["Close"].pct_change(10).shift(1)
 df["Return_20"] = df.groupby("Ticker")["Close"].pct_change(20).shift(1)
 
-# 🔥 モメンタム加速（超重要）
-df["Momentum_20"] = df["Return_20"] - df["Return_5"]
+# 🔥 モメンタム（強化版）
+df["Momentum_20"] = (
+    df["Return_5"] +
+    df["Return_10"] +
+    df["Return_20"]
+)
 
 # =========================
 # 🔥 移動平均
@@ -100,9 +104,9 @@ df["DD_20"] = df["Close"].shift(1) / (rolling_max_20 + 1e-9) - 1
 df["DD_40"] = df["Close"].shift(1) / (rolling_max_40 + 1e-9) - 1
 
 # =========================
-# 🔥 Trend効率（スケール補正）
+# 🔥 Trend効率（安定化）
 # =========================
-df["TrendVol"] = df["Trend_20"] / (df["Volatility"] * np.sqrt(20) + 1e-9)
+df["TrendVol"] = df["Trend_20"] / (df["Volatility"] + 0.02)
 
 # =========================
 # 🔥 出来高
@@ -117,7 +121,7 @@ vol_std = df.groupby("Ticker")["Volume"].transform(
 df["Volume_Z"] = (df["Volume"].shift(1) - vol_mean) / (vol_std + 1e-9)
 
 # =========================
-# 🔥 市場特徴量（強化）
+# 🔥 市場特徴量
 # =========================
 market_mean = df.groupby("Date")["Return_5"].transform("mean")
 market_std  = df.groupby("Date")["Return_5"].transform("std")
@@ -125,7 +129,7 @@ market_std  = df.groupby("Date")["Return_5"].transform("std")
 df["Market_Z"] = (df["Return_5"] - market_mean) / (market_std + 1e-9)
 df["Market_Trend"] = df.groupby("Date")["Trend_20"].transform("mean")
 
-# 🔥 追加（重要）
+# 🔥 追加
 df["Market_Vol"] = df.groupby("Date")["Return_5"].transform("std")
 df["Market_Trend_Str"] = df.groupby("Date")["Trend_20"].transform(lambda x: x.abs().mean())
 
@@ -143,12 +147,11 @@ for col in rank_cols:
     df[f"{col}_rank"] = df.groupby("Date")[col].rank(pct=True)
 
 # =========================
-# 🎯 Target
+# 🎯 Target（最重要：future max）
 # =========================
-df["Target"] = (
-    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
-)
+future_max = df.groupby("Ticker")["High"].shift(-1).rolling(HOLD_DAYS).max()
 
+df["Target"] = future_max / df["Close"] - 1
 df["Target"] = df["Target"].clip(-TARGET_CLIP, TARGET_CLIP)
 
 # =========================
@@ -181,4 +184,4 @@ predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(d
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（15日ホールド専用・完成版）")
+print("\n保存完了（15日ホールド専用・改良版）")
