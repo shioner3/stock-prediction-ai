@@ -15,6 +15,7 @@ DIVERSITY_BUCKETS = 3
 W_TRENDVOL = 0.3
 W_DD = 0.4
 W_MOM = 0.3
+W_TREND_STR = 0.1  # ←追加
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -83,23 +84,32 @@ model.fit(train_df[FEATURES], train_df["TargetRank"], group=group)
 today = predict_df.copy()
 today["score_raw"] = model.predict(today[FEATURES])
 
-# 🔥 score標準化（超重要）
+# =========================
+# 🔥 score標準化（重要）
+# =========================
 today["score_raw"] = (
     today["score_raw"] - today["score_raw"].mean()
 ) / (today["score_raw"].std() + 1e-9)
 
 # =========================
-# スコア（加算型に変更）
+# 🔥 ランク特徴
 # =========================
 today["trend_rank"] = today["TrendVol"].rank(pct=True)
 today["dd_rank"] = (-today["DD_20"]).rank(pct=True)
 today["mom_rank"] = today["Momentum_20"].rank(pct=True)
 
+# 🔥 追加
+today["trend_str_rank"] = today["Market_Trend_Str"].rank(pct=True)
+
+# =========================
+# 🔥 スコア（加算型に統一）
+# =========================
 today["final_score"] = (
     today["score_raw"]
     + W_TRENDVOL * today["trend_rank"]
     + W_DD * today["dd_rank"]
     + W_MOM * today["mom_rank"]
+    + W_TREND_STR * today["trend_str_rank"]  # ←追加
 )
 
 # =========================
@@ -110,7 +120,7 @@ market_vol = today["Market_Vol"].iloc[0]
 
 if market_trend < -0.02:
     print("⚠️ 地合い悪化 → ノーポジ")
-    today = today.iloc[0:0]  # 全スキップ
+    today = today.iloc[0:0]
 
 elif market_vol > today["Market_Vol"].quantile(0.9):
     print("⚠️ ボラ過大 → 控えめ運用")
@@ -162,7 +172,7 @@ final = selected.head(TOP_N).copy()
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
-# weight（安定化）
+# weight
 # =========================
 final["weight"] = np.exp(final["final_score"])
 final["weight"] /= final["weight"].sum()
@@ -170,7 +180,7 @@ final["weight"] /= final["weight"].sum()
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（15日モデル・改良版） ===")
+print("\n=== 今日の銘柄（15日モデル・強化版） ===")
 
 print(final[[
     "Ticker",
