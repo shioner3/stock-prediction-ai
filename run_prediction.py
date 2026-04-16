@@ -15,7 +15,6 @@ DIVERSITY_BUCKETS = 3
 W_TRENDVOL = 0.3
 W_DD = 0.4
 W_MOM = 0.3
-W_TREND_STR = 0.1  # ←追加
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -98,32 +97,36 @@ today["trend_rank"] = today["TrendVol"].rank(pct=True)
 today["dd_rank"] = (-today["DD_20"]).rank(pct=True)
 today["mom_rank"] = today["Momentum_20"].rank(pct=True)
 
-# 🔥 追加
-today["trend_str_rank"] = today["Market_Trend_Str"].rank(pct=True)
-
 # =========================
-# 🔥 スコア（加算型に統一）
+# 🔥 スコア（加算型）
 # =========================
 today["final_score"] = (
     today["score_raw"]
     + W_TRENDVOL * today["trend_rank"]
     + W_DD * today["dd_rank"]
     + W_MOM * today["mom_rank"]
-    + W_TREND_STR * today["trend_str_rank"]  # ←追加
 )
 
 # =========================
-# 市場フィルタ（ゲート型）
+# 🔥 市場レジーム判定（超重要）
 # =========================
 market_trend = today["Market_Trend"].iloc[0]
 market_vol = today["Market_Vol"].iloc[0]
+market_trend_str = today["Market_Trend_Str"].iloc[0]
 
-if market_trend < -0.02:
-    print("⚠️ 地合い悪化 → ノーポジ")
-    today = today.iloc[0:0]
+# デフォルト
+TOP_N_DYNAMIC = TOP_N
 
-elif market_vol > today["Market_Vol"].quantile(0.9):
-    print("⚠️ ボラ過大 → 控えめ運用")
+if market_trend < -0.02 or market_trend_str < 0.01:
+    print("⚠️ 弱い相場 → 1銘柄")
+    TOP_N_DYNAMIC = 1
+
+elif market_trend > 0.02 and market_trend_str > 0.03:
+    print("🔥 強い相場 → フルポジ")
+    TOP_N_DYNAMIC = 5
+
+else:
+    TOP_N_DYNAMIC = 3
 
 # =========================
 # 候補
@@ -153,22 +156,21 @@ for b in sorted(candidates["bucket"].dropna().unique()):
 
 # fallback
 if len(selected) == 0:
-    print("⚠️ selected empty → fallback")
-    selected = candidates.head(TOP_N)
+    selected = candidates.head(TOP_N_DYNAMIC)
 else:
     selected = pd.concat(selected)
 
 # =========================
 # 補充
 # =========================
-if len(selected) < TOP_N:
+if len(selected) < TOP_N_DYNAMIC:
     remain = candidates[~candidates.index.isin(selected.index)]
-    selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
+    selected = pd.concat([selected, remain.head(TOP_N_DYNAMIC - len(selected))])
 
 # =========================
 # 最終
 # =========================
-final = selected.head(TOP_N).copy()
+final = selected.head(TOP_N_DYNAMIC).copy()
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
@@ -180,7 +182,7 @@ final["weight"] /= final["weight"].sum()
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（15日モデル・強化版） ===")
+print("\n=== 今日の銘柄（15日モデル・最適化版） ===")
 
 print(final[[
     "Ticker",
