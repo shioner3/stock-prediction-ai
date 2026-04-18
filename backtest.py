@@ -1,19 +1,17 @@
 import pandas as pd
 import numpy as np
-from lightgbm import LGBMRanker
 
 # =========================
-# 設定
+# 設定（スコア戦略）
 # =========================
 TOP_N = 3
 MAX_POSITIONS = 5
-HOLD_DAYS = 7   # 🔥 変更
-N_CLASS = 30
+HOLD_DAYS = 7
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-DATA_PATH = "ml_dataset_7d.parquet"  # 🔥 変更
+DATA_PATH = "ml_dataset_7d.parquet"
 
 # =========================
 # データ
@@ -22,32 +20,54 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df["Year"] = df["Date"].dt.year
 
-FEATURES = [
-    "Return_5","Return_10","Return_20","Momentum_20",
-    "MA5_ratio","MA10_ratio","MA20_ratio","MA30_ratio",
-    "Volatility",
-    "Trend_10_z","Trend_20_z","Trend_40_z",
-    "DD_20","DD_40",
-    "TrendVol","Volume_Z",
-    "Return_10_rank","Trend_20_z_rank",
-    "TrendVol_rank","DD_20_rank",
-    "Market_Z","Market_Trend",
-    "Market_Vol","Market_Trend_Str"
-]
-
-df = df.dropna(subset=FEATURES + ["Target"]).copy()
-
 # =========================
-# Rank用Target
+# 🔥 スコア構築（ここが全て）
 # =========================
-df["TargetRank"] = df.groupby("Date")["Target"].transform(
-    lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
+
+# トレンド × モメンタム
+df["Score_TrendMomentum"] = df["Trend_20_z"] * df["Momentum_20"]
+
+# 質（トレンド効率＋低DD）
+df["Score_Quality"] = (
+    df["TrendVol_rank"]
+    + (-df["DD_20_rank"])
 )
 
-df = df.dropna(subset=["TargetRank"])
-df["TargetRank"] = df["TargetRank"].astype(int)
+# 短期
+df["Score_ShortTerm"] = (
+    0.5 * df["Return_5"]
+    + 0.5 * df["Return_10"]
+)
 
+# 逆張り
+df["Score_Reversal"] = -df["Return_5"]
+
+# =========================
+# 🔥 正規化
+# =========================
+for col in [
+    "Score_TrendMomentum",
+    "Score_Quality",
+    "Score_ShortTerm",
+    "Score_Reversal"
+]:
+    df[col] = df.groupby("Date")[col].transform(
+        lambda x: (x - x.mean()) / (x.std() + 1e-9)
+    )
+
+# =========================
+# 🔥 最終スコア
+# =========================
+df["final_score"] = (
+    0.35 * df["Score_TrendMomentum"]
+    + 0.30 * df["Score_Quality"]
+    + 0.20 * df["Score_ShortTerm"]
+    + 0.15 * df["Score_Reversal"]
+)
+
+# =========================
 # 価格辞書
+# =========================
 price_open = {(r.Date, r.Ticker): r.Open for r in df.itertuples()}
 
 # =========================
@@ -62,35 +82,16 @@ splits = [
 results = []
 
 # =========================
-# 学習・検証
+# バックテスト
 # =========================
 for train_start, train_end, test_year in splits:
 
     print(f"\n=== {train_start}-{train_end} → {test_year} ===")
 
-    train_df = df[(df["Year"] >= train_start) & (df["Year"] <= train_end)]
-    test_df  = df[df["Year"] == test_year].copy()
-
-    group = train_df.groupby("Date").size().tolist()
-
-    model = LGBMRanker(
-        n_estimators=300,
-        learning_rate=0.03,
-        num_leaves=31,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
-        n_jobs=-1
-    )
-
-    model.fit(train_df[FEATURES], train_df["TargetRank"], group=group)
-
-    test_df["score_raw"] = model.predict(test_df[FEATURES])
+    test_df = df[df["Year"] == test_year].copy()
 
     dates = sorted(test_df["Date"].unique())
     date_groups = dict(tuple(test_df.groupby("Date")))
-
-    print("len(dates):", len(dates), flush=True)
 
     capital = INITIAL_CAPITAL
     positions = []
@@ -103,12 +104,24 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 スコア正規化のみ
+        # 🔥 市場レジーム
         # =========================
-        sr = df_today["score_raw"]
-        df_today["score_raw"] = (sr - sr.mean()) / (sr.std() + 1e-9)
+        market_trend = df_today["Market_Trend"].iloc[0]
+        market_sharpe = df_today["Market_Sharpe"].iloc[0]
 
-        df_today["final_score"] = df_today["score_raw"]
+        if market_trend < 0:
+            w_trend = 0.2
+            w_rev = 0.3
+        else:
+            w_trend = 0.4
+            w_rev = 0.1
+
+        df_today["final_score"] = (
+            w_trend * df_today["Score_TrendMomentum"]
+            + 0.30 * df_today["Score_Quality"]
+            + 0.20 * df_today["Score_ShortTerm"]
+            + w_rev * df_today["Score_Reversal"]
+        )
 
         # =========================
         # EXIT
@@ -128,7 +141,7 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY（完全モデル依存）
+        # ENTRY（スコアのみ）
         # =========================
         candidates = df_today.sort_values("final_score", ascending=False).head(TOP_N)
 
@@ -138,8 +151,9 @@ for train_start, train_end, test_year in splits:
 
             entries = candidates.head(slots)
 
-            # 均等ウェイト
-            weights = np.ones(len(entries)) / len(entries)
+            # 🔥 スコア比例ウェイト
+            weights = np.exp(entries["final_score"])
+            weights /= weights.sum()
 
             for (_, r), w in zip(entries.iterrows(), weights):
                 price = price_open.get((next_day, r["Ticker"]))
