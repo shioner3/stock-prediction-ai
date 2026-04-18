@@ -6,19 +6,12 @@ from lightgbm import LGBMRanker
 # 設定
 # =========================
 TOP_N = 3
-CANDIDATE_N = 10
 MAX_POSITIONS = 5
 HOLD_DAYS = 15
 N_CLASS = 30
-DIVERSITY_BUCKETS = 3
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
-
-# 🔥 重み
-W_TRENDVOL = 0.3
-W_DD = 0.4
-W_MOM = 0.3
 
 DATA_PATH = "ml_dataset_15d.parquet"
 
@@ -44,14 +37,22 @@ FEATURES = [
 
 df = df.dropna(subset=FEATURES + ["Target"]).copy()
 
+# =========================
+# Rank用Target
+# =========================
 df["TargetRank"] = df.groupby("Date")["Target"].transform(
     lambda x: pd.qcut(x, q=N_CLASS, labels=False, duplicates="drop")
 )
+
 df = df.dropna(subset=["TargetRank"])
 df["TargetRank"] = df["TargetRank"].astype(int)
 
+# 価格辞書
 price_open = {(r.Date, r.Ticker): r.Open for r in df.itertuples()}
 
+# =========================
+# 分割
+# =========================
 splits = [
     (2018, 2020, 2021),
     (2019, 2021, 2022),
@@ -60,6 +61,9 @@ splits = [
 
 results = []
 
+# =========================
+# 学習・検証
+# =========================
 for train_start, train_end, test_year in splits:
 
     print(f"\n=== {train_start}-{train_end} → {test_year} ===")
@@ -97,37 +101,12 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 score正規化
+        # 🔥 スコア正規化のみ
         # =========================
         sr = df_today["score_raw"]
         df_today["score_raw"] = (sr - sr.mean()) / (sr.std() + 1e-9)
 
-        # =========================
-        # スコア
-        # =========================
-        df_today["trend_rank"] = df_today["TrendVol"].rank(pct=True)
-        df_today["dd_rank"] = (-df_today["DD_20"]).rank(pct=True)
-        df_today["mom_rank"] = df_today["Momentum_20"].rank(pct=True)
-
-        df_today["final_score"] = (
-            df_today["score_raw"]
-            + W_TRENDVOL * df_today["trend_rank"]
-            + W_DD * df_today["dd_rank"]
-            + W_MOM * df_today["mom_rank"]
-        )
-
-        # =========================
-        # 🔥 市場レジーム判定
-        # =========================
-        market_trend = df_today["Market_Trend"].iloc[0]
-        market_trend_str = df_today["Market_Trend_Str"].iloc[0]
-
-        if market_trend < -0.02 or market_trend_str < 0.01:
-            TOP_N_DYNAMIC = 1
-        elif market_trend > 0.02 and market_trend_str > 0.03:
-            TOP_N_DYNAMIC = 5
-        else:
-            TOP_N_DYNAMIC = 3
+        df_today["final_score"] = df_today["score_raw"]
 
         # =========================
         # EXIT
@@ -147,52 +126,28 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY
+        # ENTRY（完全モデル依存）
         # =========================
-        candidates = df_today.sort_values("final_score", ascending=False).head(CANDIDATE_N)
+        candidates = df_today.sort_values("final_score", ascending=False).head(TOP_N)
 
-        if len(candidates) > 0:
+        slots = MAX_POSITIONS - len(positions)
 
-            candidates["bucket"] = pd.qcut(
-                candidates["TrendVol"],
-                q=min(DIVERSITY_BUCKETS, len(candidates)),
-                labels=False,
-                duplicates="drop"
-            )
+        if slots > 0 and len(candidates) > 0:
 
-            selected = []
+            entries = candidates.head(slots)
 
-            for b in sorted(candidates["bucket"].dropna().unique()):
-                tmp = candidates[candidates["bucket"] == b]
-                if len(tmp) > 0:
-                    selected.append(tmp.head(1))
+            # 🔥 均等ウェイト
+            weights = np.ones(len(entries)) / len(entries)
 
-            if len(selected) == 0:
-                selected = candidates.head(TOP_N_DYNAMIC)
-            else:
-                selected = pd.concat(selected)
-
-            if len(selected) < TOP_N_DYNAMIC:
-                remain = candidates[~candidates.index.isin(selected.index)]
-                selected = pd.concat([selected, remain.head(TOP_N_DYNAMIC - len(selected))])
-
-            slots = MAX_POSITIONS - len(positions)
-
-            if slots > 0:
-                entries = selected.head(slots)
-
-                weights = np.exp(entries["final_score"])
-                weights /= weights.sum()
-
-                for (_, r), w in zip(entries.iterrows(), weights):
-                    price = price_open.get((next_day, r["Ticker"]))
-                    if price is not None:
-                        positions.append({
-                            "Ticker": r["Ticker"],
-                            "entry": price * (1 + FEE),
-                            "exit_idx": i + HOLD_DAYS,
-                            "w": w
-                        })
+            for (_, r), w in zip(entries.iterrows(), weights):
+                price = price_open.get((next_day, r["Ticker"]))
+                if price is not None:
+                    positions.append({
+                        "Ticker": r["Ticker"],
+                        "entry": price * (1 + FEE),
+                        "exit_idx": i + HOLD_DAYS,
+                        "w": w
+                    })
 
         # =========================
         # weight正規化
