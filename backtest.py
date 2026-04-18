@@ -21,25 +21,26 @@ df["Date"] = pd.to_datetime(df["Date"])
 df["Year"] = df["Date"].dt.year
 
 # =========================
-# 🔥 スコア構築
+# 🔥 爆発検出スコア
 # =========================
-df["Score_TrendMomentum"] = df["Trend_20_z"] * df["Momentum_20"]
 
-df["Score_Quality"] = (
-    df["TrendVol_rank"]
-    + (-df["DD_20_rank"])
+# ① 爆発の核（最重要）
+df["Score_Explosion"] = (
+    df["Trend_20_z"]
+    * df["Momentum_20"]
+    * df["Volume_Z"]
 )
 
-df["Score_Reversal"] = -df["Return_5"]
+# ② 初動検出（加速）
+df["Score_Accel"] = df["Momentum_accel"]
+
+# ③ 押し目（浅いDD）
+df["Score_Pullback"] = -df["DD_20"]
 
 # =========================
-# 🔥 正規化（クリップ）
+# 🔥 正規化（必須）
 # =========================
-for col in [
-    "Score_TrendMomentum",
-    "Score_Quality",
-    "Score_Reversal"
-]:
+for col in ["Score_Explosion", "Score_Accel", "Score_Pullback"]:
     df[col] = df.groupby("Date")[col].transform(
         lambda x: np.clip(
             (x - x.mean()) / (x.std() + 1e-9),
@@ -86,32 +87,32 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 市場フィルター（緩和）
+        # 🔥 市場フィルター（緩め）
         # =========================
         market_trend = df_today["Market_Trend"].iloc[0]
 
-        if market_trend < -0.02:
-            continue
+        if market_trend < -0.03:
+            continue  # 完全回避
 
         # =========================
-        # 🔥 レジーム別調整
+        # 🔥 レジーム
         # =========================
         if market_trend > 0.02:
             TOP_N = 5
-            w_trend = 0.5
-            w_rev = 0.05
+            w_exp = 0.6
+            w_acc = 0.3
         else:
             TOP_N = TOP_N_BASE
-            w_trend = 0.4
-            w_rev = 0.15
+            w_exp = 0.5
+            w_acc = 0.3
 
         # =========================
-        # 🔥 スコア（シンプル化）
+        # 🔥 最終スコア（爆発特化）
         # =========================
         df_today["final_score"] = (
-            w_trend * df_today["Score_TrendMomentum"]
-            + 0.35 * df_today["Score_Quality"]
-            + w_rev * df_today["Score_Reversal"]
+            w_exp * df_today["Score_Explosion"]
+            + w_acc * df_today["Score_Accel"]
+            + 0.2 * df_today["Score_Pullback"]
         )
 
         # =========================
@@ -132,14 +133,24 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY
+        # ENTRY（爆発狙い）
         # =========================
         candidates = df_today.sort_values("final_score", ascending=False).head(10)
 
         if len(candidates) == 0:
             continue
 
+        # 🔥 爆発フィルター（超重要）
+        candidates = candidates[
+            (candidates["Score_Explosion"] > 0.5)
+        ]
+
+        if len(candidates) == 0:
+            continue
+
+        # =========================
         # 分散
+        # =========================
         candidates["bucket"] = pd.qcut(
             candidates["TrendVol"],
             q=min(3, len(candidates)),
@@ -168,8 +179,8 @@ for train_start, train_end, test_year in splits:
         if slots > 0:
             entries = selected.head(slots)
 
-            # 🔥 強いweight
-            weights = np.exp(entries["final_score"] * 2.0)
+            # 🔥 爆発重み（かなり尖らせる）
+            weights = np.exp(entries["final_score"] * 3.0)
             weights /= weights.sum()
 
             for (_, r), w in zip(entries.iterrows(), weights):
