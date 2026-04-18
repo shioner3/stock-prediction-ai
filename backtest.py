@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 
 # =========================
-# 設定（スコア戦略）
+# 設定
 # =========================
-TOP_N = 3
+TOP_N_BASE = 3
 MAX_POSITIONS = 5
 HOLD_DAYS = 7
 
@@ -21,29 +21,24 @@ df["Date"] = pd.to_datetime(df["Date"])
 df["Year"] = df["Date"].dt.year
 
 # =========================
-# 🔥 スコア構築（ここが全て）
+# 🔥 スコア構築
 # =========================
-
-# トレンド × モメンタム
 df["Score_TrendMomentum"] = df["Trend_20_z"] * df["Momentum_20"]
 
-# 質（トレンド効率＋低DD）
 df["Score_Quality"] = (
     df["TrendVol_rank"]
     + (-df["DD_20_rank"])
 )
 
-# 短期
 df["Score_ShortTerm"] = (
     0.5 * df["Return_5"]
     + 0.5 * df["Return_10"]
 )
 
-# 逆張り
 df["Score_Reversal"] = -df["Return_5"]
 
 # =========================
-# 🔥 正規化
+# 🔥 ノイズ除去（超重要）
 # =========================
 for col in [
     "Score_TrendMomentum",
@@ -52,18 +47,11 @@ for col in [
     "Score_Reversal"
 ]:
     df[col] = df.groupby("Date")[col].transform(
-        lambda x: (x - x.mean()) / (x.std() + 1e-9)
+        lambda x: np.clip(
+            (x - x.mean()) / (x.std() + 1e-9),
+            -3, 3
+        )
     )
-
-# =========================
-# 🔥 最終スコア
-# =========================
-df["final_score"] = (
-    0.35 * df["Score_TrendMomentum"]
-    + 0.30 * df["Score_Quality"]
-    + 0.20 * df["Score_ShortTerm"]
-    + 0.15 * df["Score_Reversal"]
-)
 
 # =========================
 # 価格辞書
@@ -104,18 +92,26 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 市場レジーム
+        # 🔥 市場レジーム（強化）
         # =========================
         market_trend = df_today["Market_Trend"].iloc[0]
         market_sharpe = df_today["Market_Sharpe"].iloc[0]
 
-        if market_trend < 0:
-            w_trend = 0.2
-            w_rev = 0.3
-        else:
-            w_trend = 0.4
-            w_rev = 0.1
+        if market_trend < -0.01 or market_sharpe < -0.3:
+            continue  # 🔥 ノートレード
 
+        if market_trend > 0.02 and market_sharpe > 0.5:
+            TOP_N = 5
+            w_trend = 0.45
+            w_rev = 0.05
+        else:
+            TOP_N = TOP_N_BASE
+            w_trend = 0.35
+            w_rev = 0.15
+
+        # =========================
+        # 🔥 スコア
+        # =========================
         df_today["final_score"] = (
             w_trend * df_today["Score_TrendMomentum"]
             + 0.30 * df_today["Score_Quality"]
@@ -141,17 +137,44 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY（スコアのみ）
+        # ENTRY（分散あり）
         # =========================
-        candidates = df_today.sort_values("final_score", ascending=False).head(TOP_N)
+        candidates = df_today.sort_values("final_score", ascending=False).head(10)
+
+        if len(candidates) == 0:
+            continue
+
+        # 🔥 分散（TrendVolで分割）
+        candidates["bucket"] = pd.qcut(
+            candidates["TrendVol"],
+            q=min(3, len(candidates)),
+            labels=False,
+            duplicates="drop"
+        )
+
+        selected = []
+
+        for b in sorted(candidates["bucket"].dropna().unique()):
+            tmp = candidates[candidates["bucket"] == b]
+            if len(tmp) > 0:
+                selected.append(tmp.head(1))
+
+        if len(selected) > 0:
+            selected = pd.concat(selected)
+        else:
+            selected = candidates.head(TOP_N)
+
+        if len(selected) < TOP_N:
+            remain = candidates[~candidates.index.isin(selected.index)]
+            selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
 
         slots = MAX_POSITIONS - len(positions)
 
-        if slots > 0 and len(candidates) > 0:
+        if slots > 0:
 
-            entries = candidates.head(slots)
+            entries = selected.head(slots)
 
-            # 🔥 スコア比例ウェイト
+            # 🔥 スコア重み（安定化）
             weights = np.exp(entries["final_score"])
             weights /= weights.sum()
 
@@ -180,6 +203,11 @@ for train_start, train_end, test_year in splits:
         equity.append(capital)
 
     equity = pd.Series(equity)
+
+    if len(equity) == 0:
+        print("⚠️ トレードなし")
+        continue
+
     ret = equity.pct_change().fillna(0)
 
     CAGR = equity.iloc[-1] ** (252 / len(equity)) - 1
