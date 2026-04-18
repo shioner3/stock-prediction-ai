@@ -18,9 +18,18 @@ PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_7d.parquet")
 df = pd.read_parquet(PREDICT_DATA_PATH).copy()
 
 # =========================
+# 🔥 必須カラムチェック
+# =========================
+required_cols = ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]
+
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    raise ValueError(f"Missing columns: {missing}")
+
+# =========================
 # 🔥 正規化（超重要）
 # =========================
-for col in ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]:
+for col in required_cols:
     df[col] = (df[col] - df[col].mean()) / (df[col].std() + 1e-9)
 
 # =========================
@@ -34,16 +43,22 @@ df["final_score"] = (
 )
 
 # =========================
-# 🔥 市場フィルター（簡略版）
+# 🔥 市場フィルター（安全版）
 # =========================
-market_trend = df["Market_Trend"].iloc[0]
-market_sharpe = df["Market_Sharpe"].iloc[0]
+use_market = False
 
-if market_trend < 0 or market_sharpe < 0:
-    print("⚠️ 弱い相場 → 厳選")
-    CANDIDATE_N = 5
+if "Market_Trend" in df.columns and "Market_Sharpe" in df.columns:
+    use_market = True
+    market_trend = df["Market_Trend"].iloc[0]
+    market_sharpe = df["Market_Sharpe"].iloc[0]
+
+    if market_trend < 0 or market_sharpe < 0:
+        print("⚠️ 弱い相場 → 厳選")
+        CANDIDATE_N = 5
+    else:
+        print("🔥 通常相場")
 else:
-    print("🔥 通常相場")
+    print("⚠️ Market情報なし → フィルター無効")
 
 # =========================
 # 候補抽出
@@ -55,7 +70,7 @@ if len(candidates) == 0:
     exit()
 
 # =========================
-# 🔥 diversity（ボラで分散）
+# 🔥 diversity（ボラ分散）
 # =========================
 candidates["bucket"] = pd.qcut(
     candidates["Vol_Expansion"],
@@ -71,6 +86,7 @@ for b in sorted(candidates["bucket"].dropna().unique()):
     if len(tmp) > 0:
         selected.append(tmp.head(1))
 
+# fallback
 if len(selected) == 0:
     selected = candidates.head(TOP_N)
 else:
