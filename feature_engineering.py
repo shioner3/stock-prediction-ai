@@ -54,7 +54,7 @@ df["Return_10"] = df.groupby("Ticker")["Close"].pct_change(10).shift(1)
 df["Return_20"] = df.groupby("Ticker")["Close"].pct_change(20).shift(1)
 
 # =========================
-# 🔥 Momentum（強化）
+# 🔥 Momentum
 # =========================
 df["Momentum_20"] = (
     0.5 * df["Return_20"]
@@ -108,7 +108,7 @@ df["DD_20"] = df["Close"].shift(1) / (rolling_max_20 + 1e-9) - 1
 df["DD_40"] = df["Close"].shift(1) / (rolling_max_40 + 1e-9) - 1
 
 # =========================
-# 🔥 Trend効率（修正済）
+# 🔥 Trend効率
 # =========================
 df["TrendVol"] = df["Trend_20"] / (df["Volatility"] * np.sqrt(20) + 1e-6)
 
@@ -125,7 +125,7 @@ vol_std = df.groupby("Ticker")["Volume"].transform(
 df["Volume_Z"] = (df["Volume"].shift(1) - vol_mean) / (vol_std + 1e-9)
 
 # =========================
-# 🔥 市場特徴量（強化）
+# 🔥 市場特徴量
 # =========================
 market_mean = df.groupby("Date")["Return_5"].transform("mean")
 market_std  = df.groupby("Date")["Return_5"].transform("std")
@@ -135,25 +135,50 @@ df["Market_Trend"] = df.groupby("Date")["Trend_20"].transform("mean")
 
 df["Market_Vol"] = market_std
 df["Market_Trend_Str"] = df.groupby("Date")["Trend_20"].transform(lambda x: x.abs().mean())
-
-# 🔥 追加（超重要）
 df["Market_Sharpe"] = market_mean / (market_std + 1e-9)
+
+# =========================
+# 🔥 ノイズ削減（先にやる）
+# =========================
+for col in ["TrendVol", "Momentum_20", "Volume_Z"]:
+    df[col] = df[col].clip(
+        df[col].quantile(0.01),
+        df[col].quantile(0.99)
+    )
 
 # =========================
 # 🔥 クロスセクション
 # =========================
-rank_cols = [
-    "Return_10",
-    "Trend_20_z",
-    "TrendVol",
-    "DD_20"
-]
-
-for col in rank_cols:
+for col in ["Return_10","Trend_20_z","TrendVol","DD_20"]:
     df[f"{col}_rank"] = df.groupby("Date")[col].rank(pct=True)
 
 # =========================
-# 🎯 Target（現実型）
+# 🔥 スコア直結特徴（核心）
+# =========================
+df["Score_TrendMomentum"] = df["Trend_20_z"] * df["Momentum_20"]
+
+df["Score_Quality"] = (
+    df["TrendVol_rank"]
+    + (1 - df["DD_20_rank"])
+)
+
+df["Score_ShortTerm"] = (
+    0.5 * df["Return_5"]
+    + 0.5 * df["Return_10"]
+)
+
+df["Score_Reversal"] = -df["Return_5"]
+
+# =========================
+# 🔥 Market regime
+# =========================
+df["Market_Regime"] = (
+    (df["Market_Trend"] > 0).astype(int)
+    + (df["Market_Sharpe"] > 0).astype(int)
+)
+
+# =========================
+# 🎯 Target
 # =========================
 future_close = df.groupby("Ticker")["Close"].shift(-HOLD_DAYS)
 future_max = df.groupby("Ticker")["High"].shift(-1).rolling(HOLD_DAYS).max()
@@ -165,27 +190,35 @@ df["Target"] = (
 
 df["Target"] = df["Target"].clip(-TARGET_CLIP, TARGET_CLIP)
 
+# 🔥 Rank用Target
+df["TargetRank"] = df.groupby("Date")["Target"].rank(pct=True)
+
 # =========================
-# FEATURES
+# FEATURES（スコア特化）
 # =========================
 FEATURES = [
-    "Return_5","Return_10","Return_20",
-    "Momentum_20","Momentum_accel",
-    "MA5_ratio","MA10_ratio","MA20_ratio","MA30_ratio",
+    "Score_TrendMomentum",
+    "Score_Quality",
+    "Score_ShortTerm",
+    "Score_Reversal",
+
+    "TrendVol",
+    "Momentum_20",
+    "Momentum_accel",
     "Volatility",
-    "Trend_10_z","Trend_20_z","Trend_40_z",
-    "DD_20","DD_40",
-    "TrendVol","Volume_Z",
-    "Return_10_rank","Trend_20_z_rank",
-    "TrendVol_rank","DD_20_rank",
-    "Market_Z","Market_Trend",
-    "Market_Vol","Market_Trend_Str","Market_Sharpe"
+
+    "Volume_Z",
+
+    "Market_Trend",
+    "Market_Vol",
+    "Market_Sharpe",
+    "Market_Regime"
 ]
 
 # =========================
 # データ作成
 # =========================
-train_df = df.dropna(subset=FEATURES + ["Target"]).reset_index(drop=True)
+train_df = df.dropna(subset=FEATURES + ["TargetRank"]).reset_index(drop=True)
 
 latest_date = df["Date"].max()
 predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(drop=True)
@@ -196,4 +229,4 @@ predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(d
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n保存完了（7日モデル・完成版）")
+print("\n保存完了（7日・スコアリング特化 完成版）")
