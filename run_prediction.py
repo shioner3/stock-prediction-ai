@@ -4,22 +4,23 @@ import os
 from lightgbm import LGBMRanker
 
 # =========================
-# 設定
+# 設定（7日モデル）
 # =========================
 TOP_N = 3
 CANDIDATE_N = 10
 N_CLASS = 30
 DIVERSITY_BUCKETS = 3
 
-# 🔥 重み（安定版）
-W_TRENDVOL = 0.3
-W_DD = 0.4
-W_MOM = 0.3
+# 🔥 重み（最適化）
+W_TRENDVOL = 0.25
+W_DD = 0.35
+W_MOM = 0.25
+W_ACCEL = 0.15   # ←追加（超重要）
 
 BASE_DIR = os.path.dirname(__file__)
 
-TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_15d.parquet")
-PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_15d.parquet")
+TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_7d.parquet")
+PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_7d.parquet")
 
 # =========================
 # データ
@@ -28,7 +29,8 @@ train_df = pd.read_parquet(TRAIN_DATA_PATH)
 predict_df = pd.read_parquet(PREDICT_DATA_PATH)
 
 FEATURES = [
-    "Return_5","Return_10","Return_20","Momentum_20",
+    "Return_5","Return_10","Return_20",
+    "Momentum_20","Momentum_accel",
     "MA5_ratio","MA10_ratio","MA20_ratio","MA30_ratio",
     "Volatility",
     "Trend_10_z","Trend_20_z","Trend_40_z",
@@ -37,7 +39,7 @@ FEATURES = [
     "Return_10_rank","Trend_20_z_rank",
     "TrendVol_rank","DD_20_rank",
     "Market_Z","Market_Trend",
-    "Market_Vol","Market_Trend_Str"
+    "Market_Vol","Market_Trend_Str","Market_Sharpe"
 ]
 
 # =========================
@@ -84,7 +86,7 @@ today = predict_df.copy()
 today["score_raw"] = model.predict(today[FEATURES])
 
 # =========================
-# 🔥 score標準化（重要）
+# 🔥 score標準化
 # =========================
 today["score_raw"] = (
     today["score_raw"] - today["score_raw"].mean()
@@ -96,32 +98,34 @@ today["score_raw"] = (
 today["trend_rank"] = today["TrendVol"].rank(pct=True)
 today["dd_rank"] = (-today["DD_20"]).rank(pct=True)
 today["mom_rank"] = today["Momentum_20"].rank(pct=True)
+today["accel_rank"] = today["Momentum_accel"].rank(pct=True)
 
 # =========================
-# 🔥 スコア（加算型）
+# 🔥 スコア（加算型・完成形）
 # =========================
 today["final_score"] = (
     today["score_raw"]
     + W_TRENDVOL * today["trend_rank"]
     + W_DD * today["dd_rank"]
     + W_MOM * today["mom_rank"]
+    + W_ACCEL * today["accel_rank"]
 )
 
 # =========================
-# 🔥 市場レジーム判定（超重要）
+# 🔥 市場レジーム判定（強化版）
 # =========================
 market_trend = today["Market_Trend"].iloc[0]
 market_vol = today["Market_Vol"].iloc[0]
 market_trend_str = today["Market_Trend_Str"].iloc[0]
+market_sharpe = today["Market_Sharpe"].iloc[0]
 
-# デフォルト
 TOP_N_DYNAMIC = TOP_N
 
-if market_trend < -0.02 or market_trend_str < 0.01:
+if market_trend < -0.02 or market_sharpe < -0.5:
     print("⚠️ 弱い相場 → 1銘柄")
     TOP_N_DYNAMIC = 1
 
-elif market_trend > 0.02 and market_trend_str > 0.03:
+elif market_trend > 0.02 and market_trend_str > 0.03 and market_sharpe > 0.5:
     print("🔥 強い相場 → フルポジ")
     TOP_N_DYNAMIC = 5
 
@@ -174,7 +178,7 @@ final = selected.head(TOP_N_DYNAMIC).copy()
 final["rank"] = range(1, len(final) + 1)
 
 # =========================
-# weight
+# weight（安定化）
 # =========================
 final["weight"] = np.exp(final["final_score"])
 final["weight"] /= final["weight"].sum()
@@ -182,13 +186,14 @@ final["weight"] /= final["weight"].sum()
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（15日モデル・最適化版） ===")
+print("\n=== 今日の銘柄（7日モデル・完成版） ===")
 
 print(final[[
     "Ticker",
     "final_score",
     "TrendVol",
     "Momentum_20",
+    "Momentum_accel",
     "DD_20",
     "weight",
     "rank"
