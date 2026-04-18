@@ -7,13 +7,13 @@ from lightgbm import LGBMRanker
 # =========================
 TOP_N = 3
 MAX_POSITIONS = 5
-HOLD_DAYS = 15
+HOLD_DAYS = 7   # 🔥 変更
 N_CLASS = 30
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
 
-DATA_PATH = "ml_dataset_15d.parquet"
+DATA_PATH = "ml_dataset_7d.parquet"  # 🔥 変更
 
 # =========================
 # データ
@@ -74,8 +74,8 @@ for train_start, train_end, test_year in splits:
     group = train_df.groupby("Date").size().tolist()
 
     model = LGBMRanker(
-        n_estimators=200,
-        learning_rate=0.05,
+        n_estimators=300,
+        learning_rate=0.03,
         num_leaves=31,
         subsample=0.8,
         colsample_bytree=0.8,
@@ -90,8 +90,6 @@ for train_start, train_end, test_year in splits:
     dates = sorted(test_df["Date"].unique())
     date_groups = dict(tuple(test_df.groupby("Date")))
 
-    # 🔥 ここに追加
-    print("dates:", dates[:5], "...", dates[-5:], flush=True)
     print("len(dates):", len(dates), flush=True)
 
     capital = INITIAL_CAPITAL
@@ -140,7 +138,7 @@ for train_start, train_end, test_year in splits:
 
             entries = candidates.head(slots)
 
-            # 🔥 均等ウェイト
+            # 均等ウェイト
             weights = np.ones(len(entries)) / len(entries)
 
             for (_, r), w in zip(entries.iterrows(), weights):
