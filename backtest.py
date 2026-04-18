@@ -30,20 +30,14 @@ df["Score_Quality"] = (
     + (-df["DD_20_rank"])
 )
 
-df["Score_ShortTerm"] = (
-    0.5 * df["Return_5"]
-    + 0.5 * df["Return_10"]
-)
-
 df["Score_Reversal"] = -df["Return_5"]
 
 # =========================
-# 🔥 ノイズ除去（超重要）
+# 🔥 正規化（クリップ）
 # =========================
 for col in [
     "Score_TrendMomentum",
     "Score_Quality",
-    "Score_ShortTerm",
     "Score_Reversal"
 ]:
     df[col] = df.groupby("Date")[col].transform(
@@ -92,30 +86,31 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 市場レジーム（強化）
+        # 🔥 市場フィルター（緩和）
         # =========================
         market_trend = df_today["Market_Trend"].iloc[0]
-        market_sharpe = df_today["Market_Sharpe"].iloc[0]
 
-        if market_trend < -0.01 or market_sharpe < -0.3:
-            continue  # 🔥 ノートレード
+        if market_trend < -0.02:
+            continue
 
-        if market_trend > 0.02 and market_sharpe > 0.5:
+        # =========================
+        # 🔥 レジーム別調整
+        # =========================
+        if market_trend > 0.02:
             TOP_N = 5
-            w_trend = 0.45
+            w_trend = 0.5
             w_rev = 0.05
         else:
             TOP_N = TOP_N_BASE
-            w_trend = 0.35
+            w_trend = 0.4
             w_rev = 0.15
 
         # =========================
-        # 🔥 スコア
+        # 🔥 スコア（シンプル化）
         # =========================
         df_today["final_score"] = (
             w_trend * df_today["Score_TrendMomentum"]
-            + 0.30 * df_today["Score_Quality"]
-            + 0.20 * df_today["Score_ShortTerm"]
+            + 0.35 * df_today["Score_Quality"]
             + w_rev * df_today["Score_Reversal"]
         )
 
@@ -137,14 +132,14 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY（分散あり）
+        # ENTRY
         # =========================
         candidates = df_today.sort_values("final_score", ascending=False).head(10)
 
         if len(candidates) == 0:
             continue
 
-        # 🔥 分散（TrendVolで分割）
+        # 分散
         candidates["bucket"] = pd.qcut(
             candidates["TrendVol"],
             q=min(3, len(candidates)),
@@ -171,11 +166,10 @@ for train_start, train_end, test_year in splits:
         slots = MAX_POSITIONS - len(positions)
 
         if slots > 0:
-
             entries = selected.head(slots)
 
-            # 🔥 スコア重み（安定化）
-            weights = np.exp(entries["final_score"])
+            # 🔥 強いweight
+            weights = np.exp(entries["final_score"] * 2.0)
             weights /= weights.sum()
 
             for (_, r), w in zip(entries.iterrows(), weights):
@@ -189,7 +183,7 @@ for train_start, train_end, test_year in splits:
                     })
 
         # =========================
-        # weight正規化
+        # 正規化
         # =========================
         if positions:
             s = sum(p["w"] for p in positions)
