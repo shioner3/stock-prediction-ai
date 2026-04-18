@@ -90,6 +90,10 @@ for train_start, train_end, test_year in splits:
     dates = sorted(test_df["Date"].unique())
     date_groups = dict(tuple(test_df.groupby("Date")))
 
+    # 🔥 ここに追加
+    print("dates:", dates[:5], "...", dates[-5:], flush=True)
+    print("len(dates):", len(dates), flush=True)
+
     capital = INITIAL_CAPITAL
     positions = []
     equity = []
