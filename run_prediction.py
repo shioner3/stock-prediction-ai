@@ -1,124 +1,89 @@
 import pandas as pd
 import numpy as np
 import os
+import pickle
 
 # =========================
-# 設定（爆発検出モデル）
+# 設定（4日戦略 AI主体）
 # =========================
 TOP_N = 3
-CANDIDATE_N = 10
-DIVERSITY_BUCKETS = 3
+TOP_RATE = 0.02
 
 BASE_DIR = os.path.dirname(__file__)
-PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_7d.parquet")
+
+PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_4d.parquet")
+MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
 # =========================
-# データ
+# データ読み込み
 # =========================
 df = pd.read_parquet(PREDICT_DATA_PATH).copy()
 
 # =========================
-# 🔥 必須カラムチェック
+# モデル読み込み
 # =========================
-required_cols = ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
 
-missing = [c for c in required_cols if c not in df.columns]
+# =========================
+# 特徴量
+# =========================
+FEATURES = [
+    "Breakout",
+    "Volume_Spike",
+    "Vol_Expansion",
+    "Gap"
+]
+
+# =========================
+# 欠損チェック
+# =========================
+missing = [c for c in FEATURES if c not in df.columns]
 if missing:
     raise ValueError(f"Missing columns: {missing}")
 
-# =========================
-# 🔥 正規化（超重要）
-# =========================
-for col in required_cols:
-    df[col] = (df[col] - df[col].mean()) / (df[col].std() + 1e-9)
+df = df.dropna(subset=FEATURES).copy()
 
 # =========================
-# 🔥 最終スコア（爆発特化）
+# 🔥 予測（AI主体）
 # =========================
-df["final_score"] = (
-    0.40 * df["Breakout"]
-    + 0.25 * df["Volume_Spike"]
-    + 0.20 * df["Vol_Expansion"]
-    + 0.15 * df["Gap"]
-)
+df["pred_score"] = model.predict(df[FEATURES])
 
 # =========================
-# 🔥 市場フィルター（安全版）
+# 🔥 ランク化（クロスセクション）
 # =========================
-use_market = False
-
-if "Market_Trend" in df.columns and "Market_Sharpe" in df.columns:
-    use_market = True
-    market_trend = df["Market_Trend"].iloc[0]
-    market_sharpe = df["Market_Sharpe"].iloc[0]
-
-    if market_trend < 0 or market_sharpe < 0:
-        print("⚠️ 弱い相場 → 厳選")
-        CANDIDATE_N = 5
-    else:
-        print("🔥 通常相場")
-else:
-    print("⚠️ Market情報なし → フィルター無効")
+df["pred_rank"] = df["pred_score"].rank(ascending=False, pct=True)
 
 # =========================
-# 候補抽出
+# 🔥 上位フィルター
 # =========================
-candidates = df.sort_values("final_score", ascending=False).head(CANDIDATE_N).copy()
+df = df[df["pred_rank"] <= TOP_RATE].copy()
 
-if len(candidates) == 0:
-    print("⚠️ 候補なし")
+if len(df) == 0:
+    print("⚠️ 条件満たす銘柄なし")
     exit()
 
 # =========================
-# 🔥 diversity（ボラ分散）
+# 🔥 最終選定（TOP_N）
 # =========================
-candidates["bucket"] = pd.qcut(
-    candidates["Vol_Expansion"],
-    q=min(DIVERSITY_BUCKETS, len(candidates)),
-    labels=False,
-    duplicates="drop"
-)
-
-selected = []
-
-for b in sorted(candidates["bucket"].dropna().unique()):
-    tmp = candidates[candidates["bucket"] == b]
-    if len(tmp) > 0:
-        selected.append(tmp.head(1))
-
-# fallback
-if len(selected) == 0:
-    selected = candidates.head(TOP_N)
-else:
-    selected = pd.concat(selected)
+df = df.sort_values("pred_score", ascending=False).head(TOP_N).copy()
+df["rank"] = range(1, len(df) + 1)
 
 # =========================
-# 補充
+# 🔥 weight（超重要）
 # =========================
-if len(selected) < TOP_N:
-    remain = candidates[~candidates.index.isin(selected.index)]
-    selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
-
-# =========================
-# 最終
-# =========================
-final = selected.head(TOP_N).copy()
-final["rank"] = range(1, len(final) + 1)
-
-# =========================
-# 🔥 weight（爆発対応）
-# =========================
-final["weight"] = np.exp(final["final_score"])
-final["weight"] /= final["weight"].sum()
+# スコアを強調（差を広げる）
+df["weight"] = np.exp(df["pred_score"])
+df["weight"] /= df["weight"].sum()
 
 # =========================
 # 出力
 # =========================
-print("\n=== 今日の銘柄（爆発検出モデル） ===")
+print("\n=== 今日の銘柄（AI主体モデル） ===")
 
-print(final[[
+print(df[[
     "Ticker",
-    "final_score",
+    "pred_score",
     "Breakout",
     "Volume_Spike",
     "Vol_Expansion",
