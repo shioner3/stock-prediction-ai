@@ -3,14 +3,14 @@ import numpy as np
 import duckdb
 
 # =========================
-# 設定
+# 設定（4日戦略）
 # =========================
 PARQUET_FILE = "stock_data/prices.parquet"
 
-TRAIN_SAVE_PATH = "ml_dataset_7d.parquet"
-PREDICT_SAVE_PATH = "ml_dataset_latest_7d.parquet"
+TRAIN_SAVE_PATH = "ml_dataset_4d.parquet"
+PREDICT_SAVE_PATH = "ml_dataset_latest_4d.parquet"
 
-HOLD_DAYS = 7
+HOLD_DAYS = 4
 MIN_COUNT = 3000
 MIN_PRICE = 50
 TARGET_CLIP = 0.5
@@ -38,9 +38,9 @@ valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
 
 # =========================
-# 🔥 基本リターン
+# 🔥 基本リターン（短期寄せ）
 # =========================
-df["Return_5"] = df.groupby("Ticker")["Close"].pct_change(5).shift(1)
+df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3).shift(1)
 
 # =========================
 # 🔥 ボラ
@@ -56,26 +56,26 @@ vol_std  = df.groupby("Ticker")["Volume"].transform(lambda x: x.shift(1).rolling
 df["Volume_Z"] = (df["Volume"].shift(1) - vol_mean) / (vol_std + 1e-9)
 
 # =========================
-# 🔥 【核心】爆発検出特徴
+# 🔥 特徴量（4日戦略向け調整）
 # =========================
 
-# ① ブレイクアウト
+# ① ブレイクアウト（少し短縮）
 rolling_high = df.groupby("Ticker")["High"].transform(
-    lambda x: x.shift(1).rolling(20).max()
+    lambda x: x.shift(1).rolling(15).max()
 )
 df["Breakout"] = df["Close"].shift(1) / (rolling_high + 1e-9)
 
-# ② 出来高スパイク
-df["Volume_Spike"] = df["Volume_Z"] * df["Return_5"]
+# ② 出来高スパイク（短期化）
+df["Volume_Spike"] = df["Volume_Z"] * df["Return_3"]
 
 # ③ ボラ拡大
-df["Vol_Expansion"] = df["Volatility"] * df["Return_5"].abs()
+df["Vol_Expansion"] = df["Volatility"] * df["Return_3"].abs()
 
 # ④ ギャップ
 df["Gap"] = df["Open"] / df["Close"].shift(1) - 1
 
 # =========================
-# 🔥 正規化（超重要）
+# 🔥 正規化（クロスセクション）
 # =========================
 for col in ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]:
     df[col] = df.groupby("Date")[col].transform(
@@ -86,17 +86,17 @@ for col in ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]:
     )
 
 # =========================
-# 🔥 最終スコア（爆発特化）
+# 🔥 最終スコア（やや安定寄せ）
 # =========================
 df["final_score"] = (
-    0.40 * df["Breakout"]
-    + 0.25 * df["Volume_Spike"]
+    0.35 * df["Breakout"]
+    + 0.30 * df["Volume_Spike"]
     + 0.20 * df["Vol_Expansion"]
     + 0.15 * df["Gap"]
 )
 
 # =========================
-# 🎯 Target（爆発用）
+# 🎯 Target（4日戦略）
 # =========================
 future_max = df.groupby("Ticker")["High"].shift(-1).rolling(HOLD_DAYS).max()
 
@@ -129,4 +129,4 @@ predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(d
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n🔥 保存完了（爆発検出モデル）")
+print("\n🔥 保存完了（4日戦略モデル）")
