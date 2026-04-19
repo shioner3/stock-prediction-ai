@@ -38,9 +38,28 @@ valid_dates = counts[counts >= MIN_COUNT].index
 df = df[df["Date"].isin(valid_dates)].copy()
 
 # =========================
-# 🔥 基本リターン（短期寄せ）
+# 🔥 基本リターン
 # =========================
 df["Return_3"] = df.groupby("Ticker")["Close"].pct_change(3).shift(1)
+
+# =========================
+# 🔥 トレンド（追加）
+# =========================
+df["Trend_5"] = df.groupby("Ticker")["Close"].pct_change(5).shift(1)
+df["Trend_10"] = df.groupby("Ticker")["Close"].pct_change(10).shift(1)
+
+# =========================
+# 🔥 モメンタム安定性（追加）
+# =========================
+df["Momentum_Std"] = df.groupby("Ticker")["Close"].pct_change().shift(1).rolling(5).std()
+
+# =========================
+# 🔥 押し目（追加）
+# =========================
+rolling_max = df.groupby("Ticker")["Close"].transform(
+    lambda x: x.shift(1).rolling(20).max()
+)
+df["Drawdown"] = df["Close"].shift(1) / (rolling_max + 1e-9) - 1
 
 # =========================
 # 🔥 ボラ
@@ -56,28 +75,33 @@ vol_std  = df.groupby("Ticker")["Volume"].transform(lambda x: x.shift(1).rolling
 df["Volume_Z"] = (df["Volume"].shift(1) - vol_mean) / (vol_std + 1e-9)
 
 # =========================
-# 🔥 特徴量（4日戦略向け調整）
+# 🔥 特徴量（コア）
 # =========================
 
-# ① ブレイクアウト（少し短縮）
+# ブレイクアウト
 rolling_high = df.groupby("Ticker")["High"].transform(
     lambda x: x.shift(1).rolling(15).max()
 )
 df["Breakout"] = df["Close"].shift(1) / (rolling_high + 1e-9)
 
-# ② 出来高スパイク（短期化）
+# 出来高スパイク
 df["Volume_Spike"] = df["Volume_Z"] * df["Return_3"]
 
-# ③ ボラ拡大
+# ボラ拡大
 df["Vol_Expansion"] = df["Volatility"] * df["Return_3"].abs()
 
-# ④ ギャップ
+# ギャップ
 df["Gap"] = df["Open"] / df["Close"].shift(1) - 1
 
 # =========================
-# 🔥 正規化（クロスセクション）
+# 🔥 正規化（重要）
 # =========================
-for col in ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]:
+norm_cols = [
+    "Breakout", "Volume_Spike", "Vol_Expansion", "Gap",
+    "Trend_5", "Trend_10", "Momentum_Std", "Drawdown"
+]
+
+for col in norm_cols:
     df[col] = df.groupby("Date")[col].transform(
         lambda x: np.clip(
             (x - x.mean()) / (x.std() + 1e-9),
@@ -86,17 +110,20 @@ for col in ["Breakout", "Volume_Spike", "Vol_Expansion", "Gap"]:
     )
 
 # =========================
-# 🔥 最終スコア（やや安定寄せ）
+# 🔥 最終スコア（改善版）
 # =========================
 df["final_score"] = (
-    0.35 * df["Breakout"]
-    + 0.30 * df["Volume_Spike"]
-    + 0.20 * df["Vol_Expansion"]
-    + 0.15 * df["Gap"]
+    0.25 * df["Breakout"]
+    + 0.20 * df["Volume_Spike"]
+    + 0.15 * df["Vol_Expansion"]
+    + 0.10 * df["Gap"]
+    + 0.15 * df["Trend_5"]
+    + 0.10 * df["Trend_10"]
+    + 0.05 * (-df["Drawdown"])
 )
 
 # =========================
-# 🎯 Target（4日戦略）
+# 🎯 Target
 # =========================
 future_max = df.groupby("Ticker")["High"].shift(-1).rolling(HOLD_DAYS).max()
 
@@ -112,7 +139,12 @@ FEATURES = [
     "Breakout",
     "Volume_Spike",
     "Vol_Expansion",
-    "Gap"
+    "Gap",
+    "Trend_5",
+    "Trend_10",
+    "Momentum_Std",
+    "Drawdown",
+    "final_score"
 ]
 
 # =========================
@@ -129,4 +161,4 @@ predict_df = df[df["Date"] == latest_date].dropna(subset=FEATURES).reset_index(d
 train_df.to_parquet(TRAIN_SAVE_PATH)
 predict_df.to_parquet(PREDICT_SAVE_PATH)
 
-print("\n🔥 保存完了（4日戦略モデル）")
+print("\n🔥 保存完了（4日戦略・強化版）")
