@@ -37,15 +37,26 @@ missing = [c for c in FEATURES + ["TargetRank", "Date"] if c not in train_df.col
 if missing:
     raise ValueError(f"Missing columns in train: {missing}")
 
-train_df = train_df.dropna(subset=FEATURES + ["TargetRank"])
+train_df = train_df.dropna(subset=FEATURES + ["TargetRank"]).copy()
+
+# =========================
+# 🔥 ★重要：ラベルを整数化
+# =========================
+train_df["TargetRankInt"] = (train_df["TargetRank"] * 100).astype(int)
 
 X = train_df[FEATURES]
-y = train_df["TargetRank"]
+y = train_df["TargetRankInt"]
 
-# group（ランキング学習に必須）
+# =========================
+# 🔥 group（ランキング学習）
+# =========================
 group = train_df.groupby("Date").size().values
 
+# =========================
+# 🔥 モデル
+# =========================
 model = LGBMRanker(
+    objective="lambdarank",
     n_estimators=300,
     learning_rate=0.05,
     num_leaves=31,
