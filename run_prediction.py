@@ -32,7 +32,8 @@ FEATURES = [
     "Breakout",
     "Volume_Spike",
     "Vol_Expansion",
-    "Gap"
+    "Gap",
+    "final_score"   # ← 補助的に使う
 ]
 
 # =========================
