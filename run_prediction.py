@@ -42,7 +42,12 @@ train_df = train_df.dropna(subset=FEATURES + ["TargetRank"]).copy()
 # =========================
 # 🔥 ★重要：ラベルを整数化
 # =========================
-train_df["TargetRankInt"] = (train_df["TargetRank"] * 100).astype(int)
+train_df["TargetRankInt"] = pd.qcut(
+    train_df["TargetRank"],
+    q=10,
+    labels=False,
+    duplicates="drop"
+).astype(int)
 
 X = train_df[FEATURES]
 y = train_df["TargetRankInt"]
