@@ -22,6 +22,10 @@ FEATURES = [
     "Volume_Spike",
     "Vol_Expansion",
     "Gap",
+    "Trend_5",
+    "Trend_10",
+    "Momentum_Std",
+    "Drawdown",
     "final_score"
 ]
 
