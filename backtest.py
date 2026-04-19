@@ -1,52 +1,50 @@
 import pandas as pd
 import numpy as np
+import pickle
 
 # =========================
-# 設定
+# 設定（AI主体・4日戦略）
 # =========================
-TOP_N_BASE = 3
-MAX_POSITIONS = 5
-HOLD_DAYS = 7
+DATA_PATH = "ml_dataset_4d.parquet"
+MODEL_PATH = "model.pkl"
+
+HOLD_DAYS = 4
+TOP_N = 3
+TOP_RATE = 0.02
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
-
-DATA_PATH = "ml_dataset_7d.parquet"
 
 # =========================
 # データ
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-df["Year"] = df["Date"].dt.year
+df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# 🔥 爆発検出スコア
+# モデル読み込み
 # =========================
-
-# ① 爆発の核（最重要）
-df["Score_Explosion"] = (
-    df["Trend_20_z"]
-    * df["Momentum_20"]
-    * df["Volume_Z"]
-)
-
-# ② 初動検出（加速）
-df["Score_Accel"] = df["Momentum_accel"]
-
-# ③ 押し目（浅いDD）
-df["Score_Pullback"] = -df["DD_20"]
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
 
 # =========================
-# 🔥 正規化（必須）
+# 特徴量
 # =========================
-for col in ["Score_Explosion", "Score_Accel", "Score_Pullback"]:
-    df[col] = df.groupby("Date")[col].transform(
-        lambda x: np.clip(
-            (x - x.mean()) / (x.std() + 1e-9),
-            -3, 3
-        )
-    )
+FEATURES = [
+    "Breakout",
+    "Volume_Spike",
+    "Vol_Expansion",
+    "Gap",
+    "final_score"
+]
+
+df = df.dropna(subset=FEATURES).copy()
+
+# =========================
+# 🔥 AI予測
+# =========================
+df["pred_score"] = model.predict(df[FEATURES])
 
 # =========================
 # 価格辞書
@@ -54,181 +52,102 @@ for col in ["Score_Explosion", "Score_Accel", "Score_Pullback"]:
 price_open = {(r.Date, r.Ticker): r.Open for r in df.itertuples()}
 
 # =========================
-# 分割
+# 日付処理
 # =========================
-splits = [
-    (2018, 2020, 2021),
-    (2019, 2021, 2022),
-    (2020, 2022, 2023),
-]
-
-results = []
+dates = sorted(df["Date"].unique())
+date_groups = dict(tuple(df.groupby("Date")))
 
 # =========================
 # バックテスト
 # =========================
-for train_start, train_end, test_year in splits:
+capital = INITIAL_CAPITAL
+positions = []
+equity = []
 
-    print(f"\n=== {train_start}-{train_end} → {test_year} ===")
+for i in range(len(dates) - HOLD_DAYS - 1):
 
-    test_df = df[df["Year"] == test_year].copy()
+    today = dates[i]
+    next_day = dates[i + 1]
+    df_today = date_groups[today].copy()
 
-    dates = sorted(test_df["Date"].unique())
-    date_groups = dict(tuple(test_df.groupby("Date")))
+    # =========================
+    # EXIT
+    # =========================
+    daily_return = 0
+    new_pos = []
 
-    capital = INITIAL_CAPITAL
-    positions = []
-    equity = []
-
-    for i in range(len(dates) - HOLD_DAYS - 1):
-
-        today = dates[i]
-        next_day = dates[i + 1]
-        df_today = date_groups[today].copy()
-
-        # =========================
-        # 🔥 市場フィルター（緩め）
-        # =========================
-        market_trend = df_today["Market_Trend"].iloc[0]
-
-        if market_trend < -0.03:
-            continue  # 完全回避
-
-        # =========================
-        # 🔥 レジーム
-        # =========================
-        if market_trend > 0.02:
-            TOP_N = 5
-            w_exp = 0.6
-            w_acc = 0.3
+    for p in positions:
+        if i == p["exit_idx"]:
+            price = price_open.get((today, p["Ticker"]))
+            if price is not None:
+                ret = (price / p["entry"] - 1) - FEE
+                daily_return += ret * p["w"]
         else:
-            TOP_N = TOP_N_BASE
-            w_exp = 0.5
-            w_acc = 0.3
+            new_pos.append(p)
 
-        # =========================
-        # 🔥 最終スコア（爆発特化）
-        # =========================
-        df_today["final_score"] = (
-            w_exp * df_today["Score_Explosion"]
-            + w_acc * df_today["Score_Accel"]
-            + 0.2 * df_today["Score_Pullback"]
-        )
+    positions = new_pos
 
-        # =========================
-        # EXIT
-        # =========================
-        daily_return = 0
-        new_pos = []
+    # =========================
+    # ENTRY（AI主体）
+    # =========================
+    df_today["pred_rank"] = df_today["pred_score"].rank(ascending=False, pct=True)
 
-        for p in positions:
-            if i == p["exit_idx"]:
-                price = price_open.get((today, p["Ticker"]))
-                if price is not None:
-                    ret = (price / p["entry"] - 1) - FEE
-                    daily_return += ret * p["w"]
-            else:
-                new_pos.append(p)
+    candidates = df_today[df_today["pred_rank"] <= TOP_RATE]
 
-        positions = new_pos
-
-        # =========================
-        # ENTRY（爆発狙い）
-        # =========================
-        candidates = df_today.sort_values("final_score", ascending=False).head(10)
-
-        if len(candidates) == 0:
-            continue
-
-        # 🔥 爆発フィルター（超重要）
-        candidates = candidates[
-            (candidates["Score_Explosion"] > 0.5)
-        ]
-
-        if len(candidates) == 0:
-            continue
-
-        # =========================
-        # 分散
-        # =========================
-        candidates["bucket"] = pd.qcut(
-            candidates["TrendVol"],
-            q=min(3, len(candidates)),
-            labels=False,
-            duplicates="drop"
-        )
-
-        selected = []
-
-        for b in sorted(candidates["bucket"].dropna().unique()):
-            tmp = candidates[candidates["bucket"] == b]
-            if len(tmp) > 0:
-                selected.append(tmp.head(1))
-
-        if len(selected) > 0:
-            selected = pd.concat(selected)
-        else:
-            selected = candidates.head(TOP_N)
-
-        if len(selected) < TOP_N:
-            remain = candidates[~candidates.index.isin(selected.index)]
-            selected = pd.concat([selected, remain.head(TOP_N - len(selected))])
-
-        slots = MAX_POSITIONS - len(positions)
-
-        if slots > 0:
-            entries = selected.head(slots)
-
-            # 🔥 爆発重み（かなり尖らせる）
-            weights = np.exp(entries["final_score"] * 3.0)
-            weights /= weights.sum()
-
-            for (_, r), w in zip(entries.iterrows(), weights):
-                price = price_open.get((next_day, r["Ticker"]))
-                if price is not None:
-                    positions.append({
-                        "Ticker": r["Ticker"],
-                        "entry": price * (1 + FEE),
-                        "exit_idx": i + HOLD_DAYS,
-                        "w": w
-                    })
-
-        # =========================
-        # 正規化
-        # =========================
-        if positions:
-            s = sum(p["w"] for p in positions)
-            for p in positions:
-                p["w"] /= s
-
-        # =========================
-        # 資産更新
-        # =========================
+    if len(candidates) == 0:
         capital *= (1 + daily_return)
         equity.append(capital)
-
-    equity = pd.Series(equity)
-
-    if len(equity) == 0:
-        print("⚠️ トレードなし")
         continue
 
-    ret = equity.pct_change().fillna(0)
+    selected = candidates.sort_values("pred_score", ascending=False).head(TOP_N)
 
-    CAGR = equity.iloc[-1] ** (252 / len(equity)) - 1
-    Sharpe = ret.mean() / (ret.std() + 1e-9) * np.sqrt(252)
-    MaxDD = (equity / equity.cummax() - 1).min()
+    # =========================
+    # ポジション追加
+    # =========================
+    slots = TOP_N - len(positions)
 
-    print(f"CAGR  : {CAGR:.4f}")
-    print(f"Sharpe: {Sharpe:.4f}")
-    print(f"MaxDD : {MaxDD:.4f}")
+    if slots > 0:
+        entries = selected.head(slots)
 
-    results.append({
-        "Period": f"{train_start}-{train_end}→{test_year}",
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD
-    })
+        weights = np.exp(entries["pred_score"])
+        weights /= weights.sum()
 
-print("\n=== SUMMARY ===")
-print(pd.DataFrame(results))
+        for (_, r), w in zip(entries.iterrows(), weights):
+            price = price_open.get((next_day, r["Ticker"]))
+            if price is not None:
+                positions.append({
+                    "Ticker": r["Ticker"],
+                    "entry": price * (1 + FEE),
+                    "exit_idx": i + HOLD_DAYS,
+                    "w": w
+                })
+
+    # =========================
+    # 正規化
+    # =========================
+    if positions:
+        s = sum(p["w"] for p in positions)
+        for p in positions:
+            p["w"] /= s
+
+    # =========================
+    # 資産更新
+    # =========================
+    capital *= (1 + daily_return)
+    equity.append(capital)
+
+# =========================
+# 評価
+# =========================
+equity = pd.Series(equity)
+
+ret = equity.pct_change().fillna(0)
+
+CAGR = equity.iloc[-1] ** (252 / len(equity)) - 1
+Sharpe = ret.mean() / (ret.std() + 1e-9) * np.sqrt(252)
+MaxDD = (equity / equity.cummax() - 1).min()
+
+print("\n=== RESULT（AI主体・4日戦略） ===")
+print(f"CAGR  : {CAGR:.4f}")
+print(f"Sharpe: {Sharpe:.4f}")
+print(f"MaxDD : {MaxDD:.4f}")
