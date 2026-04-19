@@ -8,8 +8,8 @@ from lightgbm import LGBMRanker
 DATA_PATH = "ml_dataset_4d.parquet"
 
 HOLD_DAYS = 4
-TOP_N = 3
-TOP_RATE = 0.02
+TOP_N_BASE = 3
+TOP_RATE_BASE = 0.02
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
@@ -21,6 +21,14 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df["Year"] = df["Date"].dt.year
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
+
+# =========================
+# 🔥 市場トレンド（追加）
+# =========================
+market = df.groupby("Date")["Close"].mean()
+market = market.pct_change(5)
+
+df = df.merge(market.rename("Market_Trend"), on="Date")
 
 # =========================
 # 特徴量
@@ -37,7 +45,7 @@ FEATURES = [
     "final_score"
 ]
 
-df = df.dropna(subset=FEATURES + ["TargetRank"]).copy()
+df = df.dropna(subset=FEATURES + ["TargetRank", "Market_Trend"]).copy()
 
 # =========================
 # 価格辞書
@@ -66,7 +74,7 @@ for train_start, train_end, test_year in splits:
     test_df = df[df["Year"] == test_year].copy()
 
     # =========================
-    # 🔥 ラベル（qcut）
+    # ラベル
     # =========================
     train_df["TargetRankInt"] = pd.qcut(
         train_df["TargetRank"],
@@ -95,13 +103,10 @@ for train_start, train_end, test_year in splits:
     model.fit(X, y, group=group)
 
     # =========================
-    # 🔥 テスト予測（ここ重要）
+    # 予測
     # =========================
     test_df["pred_score"] = model.predict(test_df[FEATURES])
 
-    # =========================
-    # 日付処理
-    # =========================
     dates = sorted(test_df["Date"].unique())
     date_groups = dict(tuple(test_df.groupby("Date")))
 
@@ -117,6 +122,25 @@ for train_start, train_end, test_year in splits:
         today = dates[i]
         next_day = dates[i + 1]
         df_today = date_groups[today].copy()
+
+        # =========================
+        # 🔥 レジーム判定
+        # =========================
+        market_trend = df_today["Market_Trend"].iloc[0]
+
+        # 完全回避（超重要）
+        if market_trend < -0.02:
+            capital *= (1 + 0)
+            equity.append(capital)
+            continue
+
+        # 攻め／守り
+        if market_trend > 0.02:
+            TOP_N = 5
+            TOP_RATE = 0.03
+        else:
+            TOP_N = TOP_N_BASE
+            TOP_RATE = TOP_RATE_BASE
 
         # =========================
         # EXIT
@@ -139,7 +163,6 @@ for train_start, train_end, test_year in splits:
         # ENTRY
         # =========================
         df_today["pred_rank"] = df_today["pred_score"].rank(ascending=False, pct=True)
-
         candidates = df_today[df_today["pred_rank"] <= TOP_RATE]
 
         if len(candidates) > 0:
@@ -151,7 +174,7 @@ for train_start, train_end, test_year in splits:
             if slots > 0:
                 entries = selected.head(slots)
 
-                weights = np.exp(entries["pred_score"])
+                weights = np.exp(entries["pred_score"] * 1.5)
                 weights /= weights.sum()
 
                 for (_, r), w in zip(entries.iterrows(), weights):
