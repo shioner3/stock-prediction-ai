@@ -23,7 +23,7 @@ df["Year"] = df["Date"].dt.year
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# 🔥 市場トレンド
+# 市場トレンド
 # =========================
 market = df.groupby("Date")["Close"].mean()
 market = market.pct_change(5)
@@ -113,6 +113,9 @@ for train_start, train_end, test_year in splits:
     positions = []
     equity = []
 
+    # 🔥 トレード数カウンター
+    trade_count = 0
+
     # =========================
     # バックテスト
     # =========================
@@ -123,7 +126,7 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 レジーム
+        # レジーム
         # =========================
         market_trend = df_today["Market_Trend"].iloc[0]
 
@@ -156,7 +159,7 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY（🔥改善ポイント）
+        # ENTRY
         # =========================
         df_today["pred_rank"] = df_today["pred_score"].rank(ascending=False, pct=True)
 
@@ -184,6 +187,8 @@ for train_start, train_end, test_year in splits:
                 for (_, r), w in zip(entries.iterrows(), weights):
                     price = price_open.get((next_day, r["Ticker"]))
                     if price is not None:
+                        trade_count += 1  # 🔥ここ追加
+
                         positions.append({
                             "Ticker": r["Ticker"],
                             "entry": price * (1 + FEE),
@@ -223,12 +228,14 @@ for train_start, train_end, test_year in splits:
     print(f"CAGR  : {CAGR:.4f}")
     print(f"Sharpe: {Sharpe:.4f}")
     print(f"MaxDD : {MaxDD:.4f}")
+    print(f"Trades: {trade_count}")  # 🔥表示
 
     results.append({
         "Period": f"{train_start}-{train_end}→{test_year}",
         "CAGR": CAGR,
         "Sharpe": Sharpe,
-        "MaxDD": MaxDD
+        "MaxDD": MaxDD,
+        "Trades": trade_count
     })
 
 print("\n=== SUMMARY ===")
