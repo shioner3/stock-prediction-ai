@@ -165,11 +165,7 @@ for train_start, train_end, test_year in splits:
 
         candidates = df_today[
             (df_today["pred_rank"] <= TOP_RATE) &
-            (df_today["pred_score"] > 0) &
-            (df_today["Trend_5"] > 0) &
-            (df_today["Volume_Spike"] > 0) &
-            (df_today["Return_3"] < 0.1) &
-            (df_today["Drawdown"] > -0.05)
+            (df_today["Volume_Spike"] > 0) 
         ]
 
         if len(candidates) > 0:
