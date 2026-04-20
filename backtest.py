@@ -23,11 +23,10 @@ df["Year"] = df["Date"].dt.year
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
 # =========================
-# 🔥 市場トレンド（追加）
+# 🔥 市場トレンド
 # =========================
 market = df.groupby("Date")["Close"].mean()
 market = market.pct_change(5)
-
 df = df.merge(market.rename("Market_Trend"), on="Date")
 
 # =========================
@@ -124,17 +123,14 @@ for train_start, train_end, test_year in splits:
         df_today = date_groups[today].copy()
 
         # =========================
-        # 🔥 レジーム判定
+        # 🔥 レジーム
         # =========================
         market_trend = df_today["Market_Trend"].iloc[0]
 
-        # 完全回避（超重要）
         if market_trend < -0.02:
-            capital *= (1 + 0)
             equity.append(capital)
             continue
 
-        # 攻め／守り
         if market_trend > 0.02:
             TOP_N = 5
             TOP_RATE = 0.03
@@ -160,10 +156,16 @@ for train_start, train_end, test_year in splits:
         positions = new_pos
 
         # =========================
-        # ENTRY
+        # ENTRY（🔥改善ポイント）
         # =========================
         df_today["pred_rank"] = df_today["pred_score"].rank(ascending=False, pct=True)
-        candidates = df_today[df_today["pred_rank"] <= TOP_RATE]
+
+        candidates = df_today[
+            (df_today["pred_rank"] <= TOP_RATE) &
+            (df_today["pred_score"] > 0) &
+            (df_today["Trend_5"] > 0) &
+            (df_today["Volume_Spike"] > 0)
+        ]
 
         if len(candidates) > 0:
 
