@@ -9,7 +9,7 @@ DATA_PATH = "ml_dataset_4d.parquet"
 
 HOLD_DAYS = 4
 TOP_N_BASE = 3
-TOP_RATE_BASE = 0.02
+TOP_RATE_BASE = 0.05
 
 INITIAL_CAPITAL = 1.0
 FEE = 0.001
