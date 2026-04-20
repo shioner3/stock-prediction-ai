@@ -127,7 +127,7 @@ for train_start, train_end, test_year in splits:
         # =========================
         market_trend = df_today["Market_Trend"].iloc[0]
 
-        if market_trend < -0.02:
+        if market_trend < 0.01:
             equity.append(capital)
             continue
 
