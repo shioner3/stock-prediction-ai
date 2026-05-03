@@ -11,14 +11,11 @@ SAVE_PATH = "stock_data/signals.parquet"
 # 読み込み
 # =========================
 df = pd.read_parquet(INPUT_PATH)
-
 df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
-# シグナル定義（コア）
+# シグナル定義（0/1）
 # =========================
-# 各シグナルは「1 or 0」で持つ
-
 df["sig_trend"] = (
     (df["close_ma5_ratio"] > 1.02) &
     (df["close_ma25_ratio"] > 1.00) &
@@ -62,8 +59,12 @@ df["sig_intraday_strength"] = (
 ).astype(int)
 
 # =========================
-# 総合スコア（最重要）
+# 🔥 シグナル強度（2段階化）
 # =========================
+# 0 = no signal
+# 1 = weak signal（部分一致）
+# 2 = strong signal（完全一致）
+
 df["signal_score"] = (
     df["sig_trend"] * 2 +
     df["sig_breakout"] * 2 +
@@ -76,21 +77,44 @@ df["signal_score"] = (
 )
 
 # =========================
-# エントリーシグナル
+# 強度2段階化
 # =========================
-df["signal_entry"] = (df["signal_score"] >= 4).astype(int)
+# 強い条件：複数コア同時成立
+df["signal_strong"] = (
+    (df["sig_trend"] == 1) &
+    (df["sig_volume"] == 1) &
+    (df["sig_intraday_strength"] == 1) &
+    (df["signal_score"] >= 6)
+).astype(int)
 
-# 上位フィルタ（強いシグナル）
-df["signal_strong_entry"] = (df["signal_score"] >= 6).astype(int)
+# 弱いシグナル：どれか刺さる
+df["signal_weak"] = (
+    (df["signal_score"] >= 3) &
+    (df["signal_strong"] == 0)
+).astype(int)
+
+# エントリー統合
+df["signal_entry"] = (
+    df["signal_strong"] * 2 +
+    df["signal_weak"] * 1
+)
 
 # =========================
-# シグナル品質確認用
+# フィルタ（実運用用）
 # =========================
-print("\n===== SIGNAL SUMMARY =====")
+df["signal_trade"] = (df["signal_entry"] >= 1).astype(int)
+
+# =========================
+# 検証用
+# =========================
+print("\n===== SIGNAL DISTRIBUTION =====")
 print(df["signal_entry"].value_counts())
 
 print("\n===== STRONG SIGNAL =====")
-print(df["signal_strong_entry"].value_counts())
+print(df["signal_strong"].value_counts())
+
+print("\n===== WEAK SIGNAL =====")
+print(df["signal_weak"].value_counts())
 
 # =========================
 # 保存
