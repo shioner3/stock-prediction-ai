@@ -1,4 +1,4 @@
-name: Backtest Pipeline
+name: Signal Backtest Pipeline
 
 on:
   workflow_dispatch:
@@ -57,35 +57,28 @@ jobs:
           python feature_engineering.py
 
       # =========================
-      # 7️⃣ MLデータセット生成
+      # 7️⃣ forward return生成（最重要）
       # =========================
-      - name: Create ML Dataset
+      - name: Create Dataset (Forward Returns)
         run: |
           python create_ml_dataset.py
 
       # =========================
-      # 8️⃣ Ranker学習
+      # 8️⃣ シグナル生成
       # =========================
-      - name: Train Ranker
+      - name: Generate Signals
         run: |
-          python train_ranker.py
+          python signal_engine.py
 
       # =========================
-      # 9️⃣ 最新予測
-      # =========================
-      - name: Run Prediction
-        run: |
-          python run_prediction.py
-
-      # =========================
-      # 🔟 バックテスト
+      # 9️⃣ バックテスト（ML削除）
       # =========================
       - name: Run Backtest
         run: |
           python backtest.py
 
       # =========================
-      # 11️⃣ 出力確認
+      # 10️⃣ 出力確認
       # =========================
       - name: Check Outputs
         run: |
@@ -94,15 +87,15 @@ jobs:
           ls -lh stock_data/
 
           echo ""
-          echo "===== PREDICTIONS ====="
-          cat stock_data/predictions.csv || echo "No predictions"
+          echo "===== SIGNALS ====="
+          ls -lh stock_data/signals.parquet || echo "No signals file"
 
           echo ""
           echo "===== EQUITY CURVE ====="
           head stock_data/equity_curve.csv || echo "No equity curve"
 
       # =========================
-      # 12️⃣ キャッシュ保存
+      # 11️⃣ キャッシュ保存
       # =========================
       - name: Save Price Cache
         uses: actions/cache@v3
@@ -111,7 +104,7 @@ jobs:
           key: price-cache-v1
 
       # =========================
-      # 13️⃣ 結果コミット
+      # 12️⃣ 結果コミット
       # =========================
       - name: Commit Results
         run: |
@@ -119,10 +112,10 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add stock_data/predictions.csv || true
+          git add stock_data/signals.parquet || true
           git add stock_data/equity_curve.csv || true
           git add stock_data/ml_dataset.parquet || true
 
-          git commit -m "update pipeline results [skip ci]" || echo "No changes"
+          git commit -m "update signal pipeline results [skip ci]" || echo "No changes"
 
           git push origin HEAD:main
