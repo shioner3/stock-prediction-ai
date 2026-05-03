@@ -12,6 +12,8 @@ MODEL_PATH = "stock_data/lgbm_ranker.pkl"
 INITIAL_CAPITAL = 1.0
 
 TOP_N = 3
+MAX_POSITIONS = 5
+
 HOLD_DAYS = 5
 
 STOP_LOSS = -0.07
@@ -96,7 +98,7 @@ df["pred_score"] = model.predict(
 )
 
 # =========================
-# 日次rank
+# 日次順位
 # =========================
 df["pred_rank"] = (
     df.groupby("Date")["pred_score"]
@@ -107,7 +109,7 @@ df["pred_rank"] = (
 )
 
 # =========================
-# 過熱除外
+# フィルタ
 # =========================
 print("Applying filters...")
 
@@ -131,84 +133,165 @@ df = df[
     df["atr_ratio"] < 0.12
 ]
 
-# =========================
-# 流動性フィルタ
-# =========================
-if "volume_ratio_20d" in df.columns:
-
-    df = df[
-        df["volume_ratio_20d"] > 0.3
-    ]
+df = df[
+    df["volume_ratio_20d"] > 0.3
+]
 
 # =========================
-# TOP N
+# 候補
 # =========================
-top_df = df[
+candidate_df = df[
     df["pred_rank"] <= TOP_N
 ].copy()
 
 # =========================
-# 現実的リターン
+# 日付一覧
 # =========================
-print("Calculating realistic returns...")
-
-# 基本リターン
-top_df["strategy_return"] = (
-    top_df["target_return"]
+dates = sorted(
+    candidate_df["Date"].unique()
 )
 
 # =========================
-# ストップ高対策
-# 急騰銘柄を少し抑制
+# バックテスト
 # =========================
-top_df["strategy_return"] = np.where(
-    top_df["strategy_return"] > 1.0,
-    1.0,
-    top_df["strategy_return"]
-)
+print("Running realistic backtest...")
+
+capital = INITIAL_CAPITAL
+
+equity_curve = []
+
+daily_returns_list = []
+
+positions = []
+
+trade_log = []
 
 # =========================
-# 損切り
+# メインループ
 # =========================
-top_df["strategy_return"] = np.where(
-    top_df["strategy_return"] < STOP_LOSS,
-    STOP_LOSS,
-    top_df["strategy_return"]
-)
+for current_date in dates:
+
+    # =====================
+    # 保有ポジション処理
+    # =====================
+    realized_returns = []
+
+    remaining_positions = []
+
+    for pos in positions:
+
+        hold_days = (
+            current_date - pos["entry_date"]
+        ).days
+
+        # =================
+        # exit
+        # =================
+        if hold_days >= HOLD_DAYS:
+
+            ret = pos["return"]
+
+            # 損切り
+            ret = max(ret, STOP_LOSS)
+
+            # 利確上限
+            ret = min(ret, 1.0)
+
+            # コスト
+            ret -= (
+                SLIPPAGE
+                + COMMISSION
+            )
+
+            realized_returns.append(ret)
+
+            trade_log.append({
+                "Date": current_date,
+                "Ticker": pos["Ticker"],
+                "Return": ret
+            })
+
+        else:
+            remaining_positions.append(pos)
+
+    positions = remaining_positions
+
+    # =====================
+    # 空き枠
+    # =====================
+    slots = (
+        MAX_POSITIONS
+        - len(positions)
+    )
+
+    # =====================
+    # 新規エントリー
+    # =====================
+    if slots > 0:
+
+        day_candidates = candidate_df[
+            candidate_df["Date"]
+            == current_date
+        ].sort_values(
+            "pred_rank"
+        )
+
+        entries = day_candidates.head(slots)
+
+        for _, row in entries.iterrows():
+
+            positions.append({
+
+                "Ticker": row["Ticker"],
+
+                # 翌日始値エントリー前提
+                "entry_date": current_date,
+
+                "return": row["target_return"]
+            })
+
+    # =====================
+    # 日次リターン
+    # =====================
+    if len(realized_returns) > 0:
+
+        daily_ret = np.mean(
+            realized_returns
+        )
+
+    else:
+        daily_ret = 0
+
+    capital *= (
+        1 + daily_ret
+    )
+
+    daily_returns_list.append({
+        "Date": current_date,
+        "Return": daily_ret,
+        "Capital": capital
+    })
+
+    equity_curve.append(capital)
 
 # =========================
-# コスト控除
+# DataFrame化
 # =========================
-total_cost = (
-    SLIPPAGE
-    + COMMISSION
+daily_df = pd.DataFrame(
+    daily_returns_list
 )
 
-top_df["strategy_return"] = (
-    top_df["strategy_return"]
-    - total_cost
+daily_df["Date"] = pd.to_datetime(
+    daily_df["Date"]
 )
 
-# =========================
-# 日次平均
-# =========================
-daily_returns = (
-    top_df.groupby("Date")["strategy_return"]
-    .mean()
+daily_df = daily_df.set_index(
+    "Date"
 )
 
-# =========================
-# 欠損日対策
-# =========================
-daily_returns = daily_returns.fillna(0)
+daily_returns = daily_df["Return"]
 
-# =========================
-# Equity Curve
-# =========================
-equity_curve = (
-    INITIAL_CAPITAL
-    * (1 + daily_returns).cumprod()
-)
+equity_curve = daily_df["Capital"]
 
 # =========================
 # CAGR
@@ -223,10 +306,12 @@ years = days / 365
 final_value = equity_curve.iloc[-1]
 
 if years > 0:
+
     cagr = (
         final_value ** (1 / years)
         - 1
     )
+
 else:
     cagr = 0
 
@@ -244,7 +329,7 @@ else:
     sharpe = 0
 
 # =========================
-# Max Drawdown
+# Drawdown
 # =========================
 rolling_max = (
     equity_curve.cummax()
@@ -259,31 +344,41 @@ drawdown = (
 max_dd = drawdown.min()
 
 # =========================
-# Calmar Ratio
+# Calmar
 # =========================
 if abs(max_dd) > 0:
-    calmar = cagr / abs(max_dd)
+
+    calmar = (
+        cagr / abs(max_dd)
+    )
+
 else:
     calmar = 0
 
 # =========================
 # 勝率
 # =========================
-win_rate = (
-    (top_df["strategy_return"] > 0)
-    .mean()
-)
+trade_df = pd.DataFrame(trade_log)
+
+if len(trade_df) > 0:
+
+    win_rate = (
+        (trade_df["Return"] > 0)
+        .mean()
+    )
+
+    avg_return = (
+        trade_df["Return"]
+        .mean()
+    )
+
+else:
+
+    win_rate = 0
+    avg_return = 0
 
 # =========================
-# 平均利益
-# =========================
-avg_return = (
-    top_df["strategy_return"]
-    .mean()
-)
-
-# =========================
-# 年別成績
+# 年別
 # =========================
 yearly_result = []
 
@@ -302,23 +397,28 @@ for year, group in daily_returns.groupby(
     )
 
     if group.std() > 0:
+
         yearly_sharpe = (
             group.mean()
             / group.std()
         ) * np.sqrt(252)
+
     else:
         yearly_sharpe = 0
 
     yearly_result.append({
+
         "Year": year,
         "Return": yearly_return,
         "Sharpe": yearly_sharpe
     })
 
-yearly_df = pd.DataFrame(yearly_result)
+yearly_df = pd.DataFrame(
+    yearly_result
+)
 
 # =========================
-# 月別成績
+# 月別
 # =========================
 monthly_returns = (
     daily_returns
@@ -330,18 +430,21 @@ monthly_returns = (
 )
 
 # =========================
-# 結果表示
+# 表示
 # =========================
 print("\n=== BACKTEST RESULT ===")
 
 print(f"CAGR        : {cagr:.4f}")
+
 print(f"Sharpe      : {sharpe:.4f}")
+
 print(f"Calmar      : {calmar:.4f}")
+
 print(f"MaxDD       : {max_dd:.4f}")
 
 print(f"\nFinal Capital : {final_value:.4f}")
 
-print(f"\nTrades        : {len(top_df)}")
+print(f"\nTrades        : {len(trade_df)}")
 
 print(f"Win Rate      : {win_rate:.4f}")
 
@@ -367,6 +470,7 @@ print(
 # 保存
 # =========================
 equity_curve_df = pd.DataFrame({
+
     "Date": equity_curve.index,
     "Equity": equity_curve.values
 })
@@ -383,6 +487,11 @@ yearly_df.to_csv(
 
 monthly_returns.to_csv(
     "stock_data/monthly_returns.csv"
+)
+
+trade_df.to_csv(
+    "stock_data/trade_log.csv",
+    index=False
 )
 
 # =========================
