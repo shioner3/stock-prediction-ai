@@ -193,24 +193,33 @@ for test_start, test_end in TEST_WINDOWS:
 
         losers = trade_df[trade_df["Return"] < 0].copy()
 
+        # =====================
+        # 追加：特徴量分布分析
+        # =====================
         if len(losers) > 0:
 
-            # 統計
-            loser_stats = {
+            print("\n===== LOSING FEATURE ANALYSIS =====")
+
+            # mergeして特徴量付与
+            losers_full = losers.merge(
+                df_window[["Date", "Ticker"] + FEATURES],
+                on=["Date", "Ticker"],
+                how="left"
+            )
+
+            for col in FEATURES:
+                print(f"\n--- {col} ---")
+                print(losers_full[col].describe())
+
+            all_losing_trades.append({
+                "window": f"{test_start}->{test_end}",
                 "avg_return": losers["Return"].mean(),
                 "median": losers["Return"].median(),
-                "count": len(losers),
-            }
-
-            # 仮の特徴量分布分析（あれば使う）
-            if "Ticker" in losers.columns:
-                all_losing_trades.append({
-                    "window": f"{test_start}->{test_end}",
-                    **loser_stats
-                })
+                "count": len(losers)
+            })
 
     # =========================
-    # 保存
+    # 結果保存
     # =========================
     all_results.append({
         "window": f"{test_start}->{test_end}",
@@ -221,9 +230,10 @@ for test_start, test_end in TEST_WINDOWS:
     })
 
 # =========================
-# 結果
+# 集計
 # =========================
 result_df = pd.DataFrame(all_results)
+loser_df = pd.DataFrame(all_losing_trades)
 
 print("\n===== WALK FORWARD RESULT =====")
 print(result_df)
@@ -231,16 +241,7 @@ print(result_df)
 print("\n===== AVG =====")
 print(result_df.mean(numeric_only=True))
 
-# =========================
-# 負けトレード
-# =========================
-loser_df = pd.DataFrame(all_losing_trades)
-
-print("\n===== LOSING TRADE ANALYSIS =====")
-
-if len(loser_df) > 0:
-    print(loser_df)
-    print("\nAVG LOSER STATS")
-    print(loser_df.mean(numeric_only=True))
-else:
-    print("No losing trades found")
+print("\n===== LOSING TRADE SUMMARY =====")
+print(loser_df)
+print("\nAVG LOSER STATS")
+print(loser_df.mean(numeric_only=True))
