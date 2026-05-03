@@ -1,140 +1,184 @@
 import pandas as pd
 import numpy as np
-import os
-from lightgbm import LGBMRanker
+import pickle
 
 # =========================
-# 設定（4日戦略 AI主体）
+# 設定
 # =========================
-TOP_N = 3
-TOP_RATE = 0.02
+FEATURE_PATH = "stock_data/technical_features.parquet"
 
-BASE_DIR = os.path.dirname(__file__)
+MODEL_PATH = "stock_data/lgbm_ranker.pkl"
 
-TRAIN_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_4d.parquet")
-PREDICT_DATA_PATH = os.path.join(BASE_DIR, "ml_dataset_latest_4d.parquet")
+SAVE_PATH = "stock_data/predictions.csv"
+
+TOP_N = 10
 
 # =========================
 # 特徴量
 # =========================
 FEATURES = [
-    "Breakout",
-    "Volume_Spike",
-    "Vol_Expansion",
-    "Gap",
-    "Trend_5",
-    "Trend_10",
-    "Momentum_Std",
-    "Drawdown",
-    "final_score"
+
+    "close_ma5_ratio",
+    "close_ma25_ratio",
+    "ma25_slope",
+    "high_break_20d",
+
+    "return_5d",
+    "return_20d",
+    "relative_strength_20d",
+    "industry_rs_rank",
+
+    "volume_ratio_5d",
+    "volume_ratio_20d",
+    "turnover_ratio",
+    "volume_zscore",
+
+    "atr_ratio",
+    "bb_width",
+    "range_compression_5d",
+
+    "nikkei_return_5d",
+    "topix_trend",
+    "growth_index_strength",
+
+    "return_rank_daily",
+    "volume_rank_daily",
+    "volatility_rank",
+    "marketcap_rank",
+    "rs_rank_cross_section",
+
+    "upper_shadow_ratio",
+    "gap_up_ratio",
+    "bb_position"
 ]
 
 # =========================
+# データ読み込み
 # =========================
-# 🔥 ① 学習
-# =========================
-# =========================
+print("Loading features...")
 
-train_df = pd.read_parquet(TRAIN_DATA_PATH).copy()
+df = pd.read_parquet(FEATURE_PATH)
 
-missing = [c for c in FEATURES + ["TargetRank", "Date"] if c not in train_df.columns]
-if missing:
-    raise ValueError(f"Missing columns in train: {missing}")
-
-train_df = train_df.dropna(subset=FEATURES + ["TargetRank"]).copy()
+df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
-# 🔥 ★重要：ラベルを整数化
+# 最新日取得
 # =========================
-train_df["TargetRankInt"] = pd.qcut(
-    train_df["TargetRank"],
-    q=10,
-    labels=False,
-    duplicates="drop"
-).astype(int)
+latest_date = df["Date"].max()
 
-X = train_df[FEATURES]
-y = train_df["TargetRankInt"]
+latest_df = df[
+    df["Date"] == latest_date
+].copy()
+
+print(f"Prediction Date: {latest_date}")
 
 # =========================
-# 🔥 group（ランキング学習）
+# 欠損除去
 # =========================
-group = train_df.groupby("Date").size().values
-
-# =========================
-# 🔥 モデル
-# =========================
-model = LGBMRanker(
-    objective="lambdarank",
-    n_estimators=300,
-    learning_rate=0.05,
-    num_leaves=31,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42
+latest_df = latest_df.dropna(
+    subset=FEATURES
 )
 
-model.fit(X, y, group=group)
-
-print("✅ モデル学習完了")
-
 # =========================
+# モデル読み込み
 # =========================
-# 🔥 ② 予測
-# =========================
-# =========================
+print("Loading model...")
 
-df = pd.read_parquet(PREDICT_DATA_PATH).copy()
-
-missing = [c for c in FEATURES if c not in df.columns]
-if missing:
-    raise ValueError(f"Missing columns in predict: {missing}")
-
-df = df.dropna(subset=FEATURES).copy()
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
 
 # =========================
-# 🔥 AI予測
+# prediction
 # =========================
-df["pred_score"] = model.predict(df[FEATURES])
+print("Predicting...")
+
+latest_df["pred_score"] = model.predict(
+    latest_df[FEATURES]
+)
 
 # =========================
-# 🔥 ランク化
+# rank
 # =========================
-df["pred_rank"] = df["pred_score"].rank(ascending=False, pct=True)
+latest_df = latest_df.sort_values(
+    "pred_score",
+    ascending=False
+)
+
+latest_df["rank"] = np.arange(
+    1,
+    len(latest_df) + 1
+)
 
 # =========================
-# 🔥 上位フィルター
+# 過熱除外フィルタ
 # =========================
-df = df[df["pred_rank"] <= TOP_RATE].copy()
+latest_df = latest_df[
+    latest_df["return_5d"] < 0.30
+]
 
-if len(df) == 0:
-    print("⚠️ 条件満たす銘柄なし")
-    exit()
+latest_df = latest_df[
+    latest_df["gap_up_ratio"] < 0.10
+]
+
+latest_df = latest_df[
+    latest_df["upper_shadow_ratio"] < 0.05
+]
+
+latest_df = latest_df[
+    latest_df["bb_position"] < 0.98
+]
+
+latest_df = latest_df[
+    latest_df["atr_ratio"] < 0.15
+]
 
 # =========================
-# 🔥 最終選定
+# TOP N
 # =========================
-df = df.sort_values("pred_score", ascending=False).head(TOP_N).copy()
-df["rank"] = range(1, len(df) + 1)
+result_df = latest_df.head(TOP_N)
 
 # =========================
-# 🔥 weight
+# 表示列
 # =========================
-df["weight"] = np.exp(df["pred_score"])
-df["weight"] /= df["weight"].sum()
+display_cols = [
 
-# =========================
-# 出力
-# =========================
-print("\n=== 今日の銘柄（AI主体モデル） ===")
-
-print(df[[
+    "rank",
     "Ticker",
     "pred_score",
-    "Breakout",
-    "Volume_Spike",
-    "Vol_Expansion",
-    "Gap",
-    "weight",
-    "rank"
-]])
+
+    "return_5d",
+    "return_20d",
+
+    "volume_zscore",
+
+    "atr_ratio",
+
+    "bb_position",
+
+    "gap_up_ratio",
+
+    "upper_shadow_ratio"
+]
+
+# 存在する列のみ
+display_cols = [
+    col for col in display_cols
+    if col in result_df.columns
+]
+
+# =========================
+# 保存
+# =========================
+print("\n=== TOP PICKS ===")
+
+print(
+    result_df[display_cols]
+)
+
+result_df[display_cols].to_csv(
+    SAVE_PATH,
+    index=False
+)
+
+print(f"\nSaved: {SAVE_PATH}")
+print("Done.")
