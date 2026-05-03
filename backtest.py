@@ -138,6 +138,16 @@ df = df[
 ]
 
 # =========================
+# target_return clip
+# =========================
+print("Applying return clip...")
+
+df["target_return"] = (
+    df["target_return"]
+    .clip(-0.3, 0.5)
+)
+
+# =========================
 # 候補
 # =========================
 candidate_df = df[
@@ -193,9 +203,6 @@ for current_date in dates:
 
             # 損切り
             ret = max(ret, STOP_LOSS)
-
-            # 利確上限
-            ret = min(ret, 1.0)
 
             # コスト
             ret -= (
