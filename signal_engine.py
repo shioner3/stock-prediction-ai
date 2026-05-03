@@ -14,7 +14,7 @@ df = pd.read_parquet(INPUT_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
-# 安全なBB（完全修正）
+# BB（安全版）
 # =========================
 bb_ma = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(20).mean())
 bb_std = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(20).std())
@@ -25,40 +25,35 @@ bb_lower = bb_ma - 2 * bb_std
 df["bb_width"] = (bb_upper - bb_lower) / bb_ma
 
 # =========================
-# シグナル
+# シグナル（0/1）
 # =========================
 df["sig_trend"] = (
-    (df["close_ma5_ratio"] > 1.02) &
+    (df["close_ma5_ratio"] > 1.01) &
     (df["close_ma25_ratio"] > 1.00) &
     (df["ma25_slope"] > 0)
 ).astype(int)
 
 df["sig_breakout"] = (
-    (df["high_break_20d"] == 1) &
-    (df["return_5d"] > 0)
+    (df["high_break_20d"] == 1)
 ).astype(int)
 
 df["sig_momentum"] = (
-    (df["return_5d"] > 0.03) &
-    (df["return_20d"] > 0)
+    (df["return_5d"] > 0)
 ).astype(int)
 
 df["sig_volume"] = (
-    (df["volume_ratio_5d"] > 1.1) &
-    (df["volume_ratio_20d"] > 1.0) &
-    (df["volume_zscore"] > 0)
+    (df["volume_ratio_5d"] > 1.05) &
+    (df["volume_rank_daily"] > 0.4)
 ).astype(int)
 
 df["sig_low_volatility_entry"] = (
-    (df["atr_ratio"] < 0.12) &
-    (df["range_compression_5d"] < 1.05)
+    (df["atr_ratio"] < 0.12)
 ).astype(int)
 
-# ★ 修正：groupby rollingに変更
 bb_mean_50 = df.groupby("Ticker")["bb_width"].transform(lambda x: x.rolling(50).mean())
 
 df["sig_bb_setup"] = (
-    (df["bb_position"] > 0.7) &
+    (df["bb_position"] > 0.65) &
     (df["bb_width"] < bb_mean_50)
 ).astype(int)
 
@@ -68,42 +63,48 @@ df["sig_gap_support"] = (
 ).astype(int)
 
 df["sig_intraday_strength"] = (
-    (df["return_rank_daily"] > 0.7) &
+    (df["return_rank_daily"] > 0.6) &
     (df["volume_rank_daily"] > 0.5)
 ).astype(int)
 
 # =========================
-# コアスコア（分解能改善）
+# 🔥 スコア（分散を作る核心）
 # =========================
-df["core_score"] = (
-    df["sig_trend"] * 3 +
-    df["sig_volume"] * 2 +
-    df["sig_intraday_strength"] * 2 +
-    df["sig_breakout"] * 2 +
-    df["sig_momentum"] * 1 +
-    df["sig_low_volatility_entry"] * 1 +
-    df["sig_bb_setup"] * 1 +
-    df["sig_gap_support"] * 1
+df["signal_score"] = (
+    df["sig_trend"] * 2.5 +
+    df["sig_volume"] * 2.0 +
+    df["sig_intraday_strength"] * 2.0 +
+    df["sig_breakout"] * 1.5 +
+    df["sig_momentum"] * 1.5 +
+    df["sig_low_volatility_entry"] * 1.0 +
+    df["sig_bb_setup"] * 1.0 +
+    df["sig_gap_support"] * 0.8
 )
 
 # =========================
-# 強シグナル（厳格化）
+# 🔥 分散補正（重要）
+# → 横並びにならないように日次標準化
+# =========================
+df["signal_score"] = df.groupby("Date")["signal_score"].transform(
+    lambda x: (x - x.mean()) / (x.std() + 1e-9)
+)
+
+# =========================
+# 🔥 strong（緩める）
 # =========================
 df["signal_strong"] = (
+    (df["signal_score"] > 1.0) &   # ← 閾値型に変更
     (df["sig_trend"] == 1) &
-    (df["sig_volume"] == 1) &
-    (df["sig_intraday_strength"] == 1) &
-    (df["sig_breakout"] == 1) &
-    (df["sig_momentum"] == 1) &
-    (df["core_score"] >= 7)
+    (df["sig_volume"] == 1)
 ).astype(int)
 
 # =========================
-# 弱シグナル
+# 🔥 weak（意味あるものに）
 # =========================
 df["signal_weak"] = (
-    (df["core_score"] >= 3) &
-    (df["signal_strong"] == 0)
+    (df["signal_score"] > 0.3) &      # 初動だけ拾う
+    (df["signal_score"] <= 1.0) &
+    (df["sig_volume"] == 1)           # 出来高必須
 ).astype(int)
 
 # =========================
@@ -122,11 +123,14 @@ df["signal_trade"] = (df["signal_entry"] >= 1).astype(int)
 print("\n===== SIGNAL DISTRIBUTION =====")
 print(df["signal_entry"].value_counts())
 
-print("\n===== STRONG SIGNAL =====")
+print("\n===== STRONG =====")
 print(df["signal_strong"].value_counts())
 
-print("\n===== WEAK SIGNAL =====")
+print("\n===== WEAK =====")
 print(df["signal_weak"].value_counts())
+
+print("\n===== SCORE STATS =====")
+print(df["signal_score"].describe())
 
 # =========================
 # 保存
