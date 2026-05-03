@@ -4,34 +4,27 @@ import numpy as np
 DATA_PATH = "stock_data/signals.parquet"
 
 HOLD_DAYS = 5
-MAX_POSITIONS = 10
+MAX_POSITIONS = 5
+
+MAX_NEW_ENTRIES_PER_DAY = 2   # ★重要
+ENTRY_THRESHOLD = 0.25        # ★厳しめ
 
 SLIPPAGE = 0.002
 COMMISSION = 0.001
-
-# ★調整ポイント（トレード増やす方向）
-ENTRY_THRESHOLD = 0.15   # ↓下げる（重要）
-STRONG_THRESHOLD = 1.5
 
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
-# =========================
-# backtest
-# =========================
 dates = sorted(df["Date"].unique())
 
 positions = []
 logs = []
 
-# ★追加：統計用
-trade_count_per_day = []
-
 for date in dates:
 
     # =====================
-    # exit
+    # exit（固定 + 劣化判定）
     # =====================
     new_positions = []
 
@@ -39,7 +32,8 @@ for date in dates:
 
         hold = (date - p["entry"]).days
 
-        if hold >= HOLD_DAYS:
+        # 固定ホールド or スコア劣化でexit
+        if hold >= HOLD_DAYS or p["score"] < ENTRY_THRESHOLD:
 
             ret = p["ret"] - (SLIPPAGE + COMMISSION)
 
@@ -60,36 +54,32 @@ for date in dates:
     # =====================
     today = df[df["Date"] == date].copy()
 
-    # ---------------------
-    # ① threshold（緩めてトレード増やす）
-    # ---------------------
-    candidates = today[
-        today["signal_score"] > ENTRY_THRESHOLD
-    ].copy()
-
-    # ★追加：候補数記録
-    trade_count_per_day.append(len(candidates))
+    # ★① 厳選候補
+    candidates = today[today["signal_score"] > ENTRY_THRESHOLD]
 
     if len(candidates) == 0:
         continue
 
-    # ---------------------
-    # ② ranking
-    # ---------------------
-    candidates = candidates.sort_values(
-        ["signal_score", "ret_rank"],
-        ascending=False
-    )
+    # ★② 上位だけ
+    candidates = candidates.sort_values("signal_score", ascending=False).head(50)
+
+    # ★③ さらに制限
+    candidates = candidates[candidates["ret_rank"] > 0.8]
 
     slots = MAX_POSITIONS - len(positions)
-
     if slots <= 0:
         continue
 
-    # ---------------------
-    # ③ entry
-    # ---------------------
-    for _, row in candidates.head(slots).iterrows():
+    # ★④ 1日最大エントリー制限
+    entry_count = 0
+
+    for _, row in candidates.iterrows():
+
+        if entry_count >= MAX_NEW_ENTRIES_PER_DAY:
+            break
+
+        if len(positions) >= MAX_POSITIONS:
+            break
 
         positions.append({
             "entry": date,
@@ -97,6 +87,9 @@ for date in dates:
             "signal": row["signal_entry"],
             "score": row["signal_score"]
         })
+
+        entry_count += 1
+
 
 # =========================
 # result
@@ -111,14 +104,6 @@ print("\nWin Rate:", (res["Return"] > 0).mean())
 print("\nSharpe:",
       res["Return"].mean() / (res["Return"].std() + 1e-9))
 
-# =========================
-# ★トレード数分析（重要追加）
-# =========================
-print("\n===== TRADE STATISTICS =====")
-
+print("\n===== STATS =====")
 print("Total Trades:", len(res))
-print("Avg Trades Per Day:", np.mean(trade_count_per_day))
-print("Max Trades Per Day:", np.max(trade_count_per_day))
-print("Min Trades Per Day:", np.min(trade_count_per_day))
-
-print("\nActive Days:", len([x for x in trade_count_per_day if x > 0]))
+print("Avg Trade Return:", res["Return"].mean())
