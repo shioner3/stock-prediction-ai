@@ -15,12 +15,11 @@ MAX_POSITIONS = 5
 HOLD_DAYS = 5
 
 STOP_LOSS = -0.07
-
 SLIPPAGE = 0.002
 COMMISSION = 0.001
 
 # =========================
-# walk-forward設定
+# walk-forward
 # =========================
 TEST_WINDOWS = [
     ("2022-01-01", "2022-12-31"),
@@ -29,7 +28,7 @@ TEST_WINDOWS = [
 ]
 
 # =========================
-# 特徴量
+# features
 # =========================
 FEATURES = [
     "close_ma5_ratio","close_ma25_ratio","ma25_slope","high_break_20d",
@@ -42,25 +41,23 @@ FEATURES = [
 ]
 
 # =========================
-# データ & モデル
+# load
 # =========================
-print("Loading dataset...")
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
 
-print("Loading model...")
 with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
 
 # =========================
-# 結果格納
+# store
 # =========================
 all_results = []
-all_losing_trades = []
+all_trade_logs = []
 
 # =========================
-# WALK FORWARD LOOP
+# walk forward
 # =========================
 for test_start, test_end in TEST_WINDOWS:
 
@@ -72,7 +69,7 @@ for test_start, test_end in TEST_WINDOWS:
     ].copy()
 
     # =====================
-    # 予測
+    # predict
     # =====================
     df_window["pred_score"] = model.predict(df_window[FEATURES])
 
@@ -82,7 +79,7 @@ for test_start, test_end in TEST_WINDOWS:
     )
 
     # =====================
-    # フィルタ
+    # filters
     # =====================
     df_window = df_window[
         (df_window["return_5d"] < 0.25) &
@@ -93,31 +90,25 @@ for test_start, test_end in TEST_WINDOWS:
         (df_window["volume_ratio_20d"] > 0.3)
     ]
 
-    # =====================
-    # target clip
-    # =====================
     df_window["target_return"] = df_window["target_return"].clip(-0.3, 0.5)
 
-    # =====================
-    # バックテスト
-    # =====================
     dates = sorted(df_window["Date"].unique())
 
     capital = INITIAL_CAPITAL
     positions = []
 
     equity_curve = []
-    daily_returns_list = []
     trade_log = []
 
+    # =====================
+    # backtest
+    # =====================
     for current_date in dates:
 
         realized_returns = []
         remaining_positions = []
 
-        # =====================
         # EXIT
-        # =====================
         for pos in positions:
 
             hold_days = (current_date - pos["entry_date"]).days
@@ -132,8 +123,10 @@ for test_start, test_end in TEST_WINDOWS:
 
                 trade_log.append({
                     "Date": current_date,
+                    "Ticker": pos["Ticker"],
                     "Return": ret,
-                    "Ticker": pos["Ticker"]
+                    "pred_score": pos["pred_score"],
+                    "rank": pos["rank"]
                 })
 
             else:
@@ -141,9 +134,7 @@ for test_start, test_end in TEST_WINDOWS:
 
         positions = remaining_positions
 
-        # =====================
         # ENTRY
-        # =====================
         slots = MAX_POSITIONS - len(positions)
 
         if slots > 0:
@@ -157,24 +148,21 @@ for test_start, test_end in TEST_WINDOWS:
                 positions.append({
                     "Ticker": row["Ticker"],
                     "entry_date": current_date,
-                    "return": row["target_return"]
+                    "return": row["target_return"],
+                    "pred_score": row["pred_score"],
+                    "rank": row["pred_rank"]
                 })
 
-        # =====================
-        # DAILY RETURN
-        # =====================
         daily_ret = np.mean(realized_returns) if realized_returns else 0
         capital *= (1 + daily_ret)
-
-        daily_returns_list.append(capital)
+        equity_curve.append(capital)
 
     # =========================
-    # equity
+    # equity metrics
     # =========================
-    equity = pd.Series(daily_returns_list)
+    equity = pd.Series(equity_curve)
 
     final_value = equity.iloc[-1]
-
     cagr = final_value ** (365 / len(equity)) - 1 if len(equity) > 0 else 0
 
     sharpe = (
@@ -182,66 +170,75 @@ for test_start, test_end in TEST_WINDOWS:
         if len(equity) > 2 else 0
     )
 
-    max_dd = (equity / equity.cummax() - 1).min()
-
     # =========================
-    # 負けトレード分析
+    # trade df
     # =========================
     trade_df = pd.DataFrame(trade_log)
 
+    # ==========================================================
+    # ① 勝ち vs 負け差分
+    # ==========================================================
     if len(trade_df) > 0:
 
-        losers = trade_df[trade_df["Return"] < 0].copy()
+        winners = trade_df[trade_df["Return"] > 0]
+        losers = trade_df[trade_df["Return"] < 0]
 
-        # =====================
-        # 追加：特徴量分布分析
-        # =====================
-        if len(losers) > 0:
+        print("\n===== WIN vs LOSE DIFF (score / rank) =====")
 
-            print("\n===== LOSING FEATURE ANALYSIS =====")
+        if len(winners) > 0 and len(losers) > 0:
 
-            # mergeして特徴量付与
-            losers_full = losers.merge(
-                df_window[["Date", "Ticker"] + FEATURES],
-                on=["Date", "Ticker"],
-                how="left"
-            )
+            for col in ["pred_score", "rank"]:
 
-            for col in FEATURES:
                 print(f"\n--- {col} ---")
-                print(losers_full[col].describe())
+                print("WIN mean:", winners[col].mean())
+                print("LOSE mean:", losers[col].mean())
+                print("DIFF:", winners[col].mean() - losers[col].mean())
 
-            all_losing_trades.append({
-                "window": f"{test_start}->{test_end}",
-                "avg_return": losers["Return"].mean(),
-                "median": losers["Return"].median(),
-                "count": len(losers)
-            })
+    # ==========================================================
+    # ② pred_score分布比較
+    # ==========================================================
+    if len(trade_df) > 0:
+
+        print("\n===== PRED SCORE DISTRIBUTION =====")
+
+        print("WIN:")
+        print(winners["pred_score"].describe())
+
+        print("\nLOSE:")
+        print(losers["pred_score"].describe())
+
+    # ==========================================================
+    # ③ rank別勝率
+    # ==========================================================
+    if len(trade_df) > 0:
+
+        print("\n===== RANK WIN RATE =====")
+
+        rank_stats = trade_df.groupby("rank")["Return"].apply(
+            lambda x: (x > 0).mean()
+        )
+
+        print(rank_stats)
 
     # =========================
-    # 結果保存
+    # save
     # =========================
+    all_trade_logs.append(trade_df)
+
     all_results.append({
         "window": f"{test_start}->{test_end}",
         "CAGR": cagr,
         "Sharpe": sharpe,
-        "MaxDD": max_dd,
         "Final": final_value
     })
 
 # =========================
-# 集計
+# summary
 # =========================
 result_df = pd.DataFrame(all_results)
-loser_df = pd.DataFrame(all_losing_trades)
 
 print("\n===== WALK FORWARD RESULT =====")
 print(result_df)
 
 print("\n===== AVG =====")
 print(result_df.mean(numeric_only=True))
-
-print("\n===== LOSING TRADE SUMMARY =====")
-print(loser_df)
-print("\nAVG LOSER STATS")
-print(loser_df.mean(numeric_only=True))
