@@ -14,7 +14,7 @@ df = pd.read_parquet(INPUT_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
-# 安全なBB（groupby修正）
+# 安全なBB（完全修正）
 # =========================
 bb_ma = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(20).mean())
 bb_std = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(20).std())
@@ -25,7 +25,7 @@ bb_lower = bb_ma - 2 * bb_std
 df["bb_width"] = (bb_upper - bb_lower) / bb_ma
 
 # =========================
-# シグナル（0/1）
+# シグナル
 # =========================
 df["sig_trend"] = (
     (df["close_ma5_ratio"] > 1.02) &
@@ -54,9 +54,12 @@ df["sig_low_volatility_entry"] = (
     (df["range_compression_5d"] < 1.05)
 ).astype(int)
 
+# ★ 修正：groupby rollingに変更
+bb_mean_50 = df.groupby("Ticker")["bb_width"].transform(lambda x: x.rolling(50).mean())
+
 df["sig_bb_setup"] = (
     (df["bb_position"] > 0.7) &
-    (df["bb_width"] < df["bb_width"].rolling(50, min_periods=10).mean())
+    (df["bb_width"] < bb_mean_50)
 ).astype(int)
 
 df["sig_gap_support"] = (
@@ -70,28 +73,33 @@ df["sig_intraday_strength"] = (
 ).astype(int)
 
 # =========================
-# コア構造スコア（軽量化）
+# コアスコア（分解能改善）
 # =========================
 df["core_score"] = (
-    df["sig_trend"] * 2 +
+    df["sig_trend"] * 3 +
     df["sig_volume"] * 2 +
     df["sig_intraday_strength"] * 2 +
     df["sig_breakout"] * 2 +
-    df["sig_momentum"] * 1
+    df["sig_momentum"] * 1 +
+    df["sig_low_volatility_entry"] * 1 +
+    df["sig_bb_setup"] * 1 +
+    df["sig_gap_support"] * 1
 )
 
 # =========================
-# 強シグナル（構造ベース）
+# 強シグナル（厳格化）
 # =========================
 df["signal_strong"] = (
     (df["sig_trend"] == 1) &
     (df["sig_volume"] == 1) &
     (df["sig_intraday_strength"] == 1) &
-    (df["core_score"] >= 6)
+    (df["sig_breakout"] == 1) &
+    (df["sig_momentum"] == 1) &
+    (df["core_score"] >= 7)
 ).astype(int)
 
 # =========================
-# 弱シグナル（補助）
+# 弱シグナル
 # =========================
 df["signal_weak"] = (
     (df["core_score"] >= 3) &
