@@ -44,7 +44,6 @@ FEATURES = [
     "return_rank_daily",
     "volume_rank_daily",
     "volatility_rank",
-    "marketcap_rank",
     "rs_rank_cross_section",
 
     "upper_shadow_ratio",
