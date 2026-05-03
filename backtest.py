@@ -9,6 +9,10 @@ MAX_POSITIONS = 10
 SLIPPAGE = 0.002
 COMMISSION = 0.001
 
+# ★追加：重要パラメータ
+ENTRY_THRESHOLD = 0.2   # 弱すぎるシグナル除外
+STRONG_THRESHOLD = 1.5  # strong判定補助
+
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 
@@ -40,7 +44,8 @@ for date in dates:
             logs.append({
                 "Date": date,
                 "Return": ret,
-                "signal": p["signal"]
+                "signal": p["signal"],
+                "score": p["score"]
             })
 
         else:
@@ -49,26 +54,43 @@ for date in dates:
     positions = new_positions
 
     # =====================
-    # entry（TOP固定禁止）
+    # entry
     # =====================
-    today = df[df["Date"] == date]
+    today = df[df["Date"] == date].copy()
 
-    candidates = today[today["signal_entry"] > 0].copy()
+    # ---------------------
+    # ① thresholdフィルタ（重要）
+    # ---------------------
+    candidates = today[
+        today["signal_score"] > ENTRY_THRESHOLD
+    ].copy()
 
     if len(candidates) == 0:
         continue
 
-    # ランダム性防止でscore順
-    candidates = candidates.sort_values("signal_score", ascending=False)
+    # ---------------------
+    # ② ranking（質で並べる）
+    # ---------------------
+    candidates = candidates.sort_values(
+        ["signal_score", "ret_rank"],
+        ascending=False
+    )
 
     slots = MAX_POSITIONS - len(positions)
 
+    if slots <= 0:
+        continue
+
+    # ---------------------
+    # ③ entry
+    # ---------------------
     for _, row in candidates.head(slots).iterrows():
 
         positions.append({
             "entry": date,
             "ret": row["forward_return"],
-            "signal": row["signal_entry"]
+            "signal": row["signal_entry"],
+            "score": row["signal_score"]
         })
 
 # =========================
@@ -81,4 +103,5 @@ print(res["Return"].describe())
 
 print("\nWin Rate:", (res["Return"] > 0).mean())
 
-print("\nSharpe:", res["Return"].mean() / (res["Return"].std() + 1e-9))
+print("\nSharpe:",
+      res["Return"].mean() / (res["Return"].std() + 1e-9))
