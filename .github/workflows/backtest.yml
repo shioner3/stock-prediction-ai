@@ -1,4 +1,4 @@
-name: Signal Backtest Pipeline
+name: Backtest Pipeline
 
 on:
   workflow_dispatch:
