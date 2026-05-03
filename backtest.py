@@ -12,13 +12,14 @@ TEST_WINDOWS = [
     ("2024-01-01", "2024-12-31"),
 ]
 
-MAX_POSITIONS = 5
 HOLD_DAYS = 5
+MAX_POSITIONS = 10
+
 SLIPPAGE = 0.002
 COMMISSION = 0.001
 
-# ★追加：エントリー閾値
-ENTRY_THRESHOLD = 3.5
+STRONG_WEIGHT = 2.0
+WEAK_WEIGHT = 1.0
 
 # =========================
 # load
@@ -28,85 +29,40 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 # =========================
-# forward return（修正ポイント）
+# forward return（評価用のみ）
 # =========================
-df["fwd_ret_5d"] = (
-    df.groupby("Ticker")["Close"].shift(-5) / df["Close"] - 1
+df["forward_return"] = (
+    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
 # =========================
-# signal engine
+# signal_score（前工程で作られている前提）
 # =========================
-def generate_signal(row):
-
-    score = 0
-
-    if row["return_5d"] > 0:
-        score += 1
-    if row["return_rank_daily"] >= 0.7:
-        score += 1
-
-    if row["close_ma5_ratio"] > 1.01:
-        score += 1
-    if row["close_ma25_ratio"] > 1.00:
-        score += 1
-    if row["bb_position"] > 0.65:
-        score += 1
-
-    if row["volume_ratio_5d"] > 1.0:
-        score += 1
-    if row["volume_rank_daily"] > 0.4:
-        score += 1
-
-    if row["high_break_20d"] > 0:
-        score += 1
-
-    if row["gap_up_ratio"] < 0.05:
-        score += 0.5
-    if row["atr_ratio"] < 0.12:
-        score += 0.5
-
-    return score
-
+# ここでは存在前提（signal_engineの出力）
 
 # =========================
-# breakdown
+# cross-sectional ranking（最重要）
 # =========================
-def signal_breakdown(row):
-    return {
-        "momentum": int(row["return_5d"] > 0 and row["return_rank_daily"] >= 0.7),
-        "trend": int(
-            row["close_ma5_ratio"] > 1.01 and
-            row["close_ma25_ratio"] > 1.00 and
-            row["bb_position"] > 0.65
-        ),
-        "volume": int(
-            row["volume_ratio_5d"] > 1.0 and
-            row["volume_rank_daily"] > 0.4
-        ),
-        "breakout": int(row["high_break_20d"] > 0),
-        "risk_ok": int(
-            row["gap_up_ratio"] < 0.05 and
-            row["atr_ratio"] < 0.12
-        )
-    }
+df["score_rank"] = df.groupby("Date")["signal_score"].rank(pct=True)
 
+# =========================
+# 強弱分類（動的）
+# =========================
+df["signal_type"] = 0
+
+df.loc[df["score_rank"] >= 0.8, "signal_type"] = 2  # strong
+df.loc[(df["score_rank"] >= 0.5) & (df["score_rank"] < 0.8), "signal_type"] = 1  # weak
 
 # =========================
 # backtest
 # =========================
+all_results = []
+
 for start, end in TEST_WINDOWS:
 
     print(f"\n===== WINDOW {start} → {end} =====")
 
     d = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
-
-    d["score"] = d.apply(generate_signal, axis=1)
-
-    d["rank"] = d.groupby("Date")["score"].rank(ascending=False, method="first")
-
-    breakdown = d.apply(signal_breakdown, axis=1, result_type="expand")
-    d = pd.concat([d, breakdown], axis=1)
 
     dates = sorted(d["Date"].unique())
 
@@ -115,6 +71,9 @@ for start, end in TEST_WINDOWS:
 
     for date in dates:
 
+        # =========================
+        # exit処理
+        # =========================
         new_positions = []
 
         for p in positions:
@@ -130,12 +89,8 @@ for start, end in TEST_WINDOWS:
                     "Date": date,
                     "Ticker": p["Ticker"],
                     "Return": ret,
-                    "score": p["score"],
-                    "momentum": p["momentum"],
-                    "trend": p["trend"],
-                    "volume": p["volume"],
-                    "breakout": p["breakout"],
-                    "risk_ok": p["risk_ok"],
+                    "signal_type": p["signal_type"],
+                    "weight": p["weight"]
                 })
 
             else:
@@ -144,36 +99,42 @@ for start, end in TEST_WINDOWS:
         positions = new_positions
 
         # =========================
-        # 🔥 修正①：top固定エントリー禁止
+        # entry（ランキングのみ）
         # =========================
-        candidates = d[d["Date"] == date]
+        today = d[d["Date"] == date]
 
-        # =========================
-        # 🔥 修正②：score閾値
-        # =========================
-        candidates = candidates[candidates["score"] >= ENTRY_THRESHOLD]
+        # TOP制限なし（重要）
+        candidates = today[today["signal_type"] > 0].copy()
 
-        candidates = candidates.sort_values(
-            "score", ascending=False
-        ).head(MAX_POSITIONS)
+        if len(candidates) == 0:
+            continue
 
+        # 強い順にソート
+        candidates = candidates.sort_values("score_rank", ascending=False)
+
+        # ポジション枠
         slots = MAX_POSITIONS - len(positions)
 
-        if slots > 0:
+        if slots <= 0:
+            continue
 
-            for _, row in candidates.iterrows():
+        # =========================
+        # エントリー
+        # =========================
+        for _, row in candidates.head(slots).iterrows():
 
-                positions.append({
-                    "Ticker": row["Ticker"],
-                    "entry": date,
-                    "ret": row["fwd_ret_5d"],   # 🔥 修正③
-                    "score": row["score"],
-                    "momentum": row["momentum"],
-                    "trend": row["trend"],
-                    "volume": row["volume"],
-                    "breakout": row["breakout"],
-                    "risk_ok": row["risk_ok"],
-                })
+            if row["signal_type"] == 2:
+                weight = STRONG_WEIGHT
+            else:
+                weight = WEAK_WEIGHT
+
+            positions.append({
+                "Ticker": row["Ticker"],
+                "entry": date,
+                "ret": row["forward_return"],
+                "signal_type": row["signal_type"],
+                "weight": weight
+            })
 
     # =========================
     # result
@@ -184,18 +145,30 @@ for start, end in TEST_WINDOWS:
         print("No trades")
         continue
 
-    print("\n===== RESULT =====")
-    print(trade_df["Return"].describe())
+    # 重み付きリターン
+    trade_df["weighted_return"] = trade_df["Return"] * trade_df["weight"]
 
-    print("\nWin Rate:", (trade_df["Return"] > 0).mean())
-    print("Average Return:", trade_df["Return"].mean())
+    print("\n===== RESULT =====")
+    print(trade_df["weighted_return"].describe())
+
+    print("\nWin Rate:", (trade_df["weighted_return"] > 0).mean())
+
+    print("\nAverage Return:", trade_df["weighted_return"].mean())
 
     print("\nSharpe:",
-          trade_df["Return"].mean() / (trade_df["Return"].std() + 1e-9))
+          trade_df["weighted_return"].mean() /
+          (trade_df["weighted_return"].std() + 1e-9))
 
-    print("\n===== SIGNAL BREAKDOWN =====")
+    print("\n===== SIGNAL TYPE BREAKDOWN =====")
+    print(trade_df["signal_type"].value_counts())
 
-    for col in ["momentum", "trend", "volume", "breakout", "risk_ok"]:
-        win = trade_df[trade_df["Return"] > 0][col].mean()
-        lose = trade_df[trade_df["Return"] <= 0][col].mean()
-        print(f"{col}: WIN={win:.3f}, LOSE={lose:.3f}, DIFF={win-lose:.3f}")
+    all_results.append(trade_df)
+
+# =========================
+# global
+# =========================
+full = pd.concat(all_results)
+
+print("\n===== GLOBAL SUMMARY =====")
+print(full["weighted_return"].describe())
+print("\nGlobal Win Rate:", (full["weighted_return"] > 0).mean())
