@@ -15,8 +15,8 @@ df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 # forward return（最重要）
 # =========================
 df["forward_return"] = (
-    df.groupby("Ticker")["Close"]
-    .shift(-HOLD_DAYS) / df["Close"] - 1
+    df.groupby("Ticker")["close"]
+    .shift(-HOLD_DAYS) / df["close"] - 1
 )
 
 # =========================
