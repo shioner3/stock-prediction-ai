@@ -43,47 +43,54 @@ df["timing_score"] = (
     0.5 * df["high_break_20d"]
 )
 
-# volatility / risk
+# =========================
+# ④ RISK LAYER
+# =========================
 df["risk_score"] = (
     0.5 * df["risk_rank"] +
     0.5 * (1 - df["gap_up_ratio"].clip(0, 0.1))
 )
 
 # =========================
-# ④ FINAL ALPHA（構造型）
+# ⑤ FINAL SCORE（ここが本体）
 # =========================
-df["alpha_score"] = (
+df["signal_score"] = (
     0.5 * df["momentum_score"] +
     0.3 * df["timing_score"] +
     0.2 * df["risk_score"]
 )
 
 # =========================
-# ⑤ クロスセクション正規化（重要：1回だけ）
+# ⑥ クロスセクション正規化（1回だけ）
 # =========================
-df["alpha_score"] = g["alpha_score"].transform(
+df["signal_score"] = g["signal_score"].transform(
     lambda x: (x - x.mean()) / (x.std() + 1e-9)
 )
 
 # =========================
-# ⑥ 3層シグナル（本体）
+# ★重要：backtest互換性確保（パターン①）
+# =========================
+df["alpha_score"] = df["signal_score"]
+
+# =========================
+# ⑦ 3層シグナル
 # =========================
 
-# strong（条件型：方向 + 上位）
+# strong
 df["signal_strong"] = (
     (df["trend_filter"] == 1) &
     (df["alpha_score"] > 1.0) &
     (df["ret_rank"] > 0.75)
 ).astype(int)
 
-# weak（準エッジ：トレンドあり + 中位以上）
+# weak
 df["signal_weak"] = (
     (df["trend_filter"] == 1) &
     (df["alpha_score"] > 0.2) &
     (df["signal_strong"] == 0)
 ).astype(int)
 
-# noise filter（重要）
+# entry
 df["signal_entry"] = (
     df["signal_strong"] * 2 +
     df["signal_weak"]
@@ -92,7 +99,7 @@ df["signal_entry"] = (
 df["signal_trade"] = (df["signal_entry"] >= 1).astype(int)
 
 # =========================
-# ⑦ sanity check
+# sanity check
 # =========================
 print("\n===== SIGNAL DISTRIBUTION =====")
 print(df["signal_entry"].value_counts())
@@ -103,8 +110,8 @@ print(df["signal_strong"].mean())
 print("\n===== WEAK RATE =====")
 print(df["signal_weak"].mean())
 
-print("\n===== ALPHA STATS =====")
-print(df["alpha_score"].describe())
+print("\n===== SIGNAL_SCORE STATS =====")
+print(df["signal_score"].describe())
 
 # =========================
 # save
