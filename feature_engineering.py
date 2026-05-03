@@ -1,276 +1,333 @@
 import pandas as pd
 import numpy as np
-import duckdb
-import os
 
 # =========================
 # 設定
 # =========================
-PARQUET_FILE = "stock_data/prices.parquet"
+INPUT_PATH = "stock_data/prices.parquet"
 SAVE_PATH = "stock_data/technical_features.parquet"
-
-MIN_HISTORY = 100
 
 # =========================
 # データ読み込み
 # =========================
-print("Loading parquet...")
+print("Loading data...")
 
-df = duckdb.query(f"""
-    SELECT *
-    FROM read_parquet('{PARQUET_FILE}')
-""").to_df()
+df = pd.read_parquet(INPUT_PATH)
 
-# =========================
-# 前処理
-# =========================
 df["Date"] = pd.to_datetime(df["Date"])
 
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
-# 数値化
-cols = ["Open", "High", "Low", "Close", "Volume"]
-
-for c in cols:
-    df[c] = pd.to_numeric(df[c], errors="coerce")
-
 # =========================
-# 特徴量生成関数
+# 移動平均
 # =========================
-def create_features(g):
+print("Calculating moving averages...")
 
-    g = g.copy()
-
-    # =========================
-    # リターン系
-    # =========================
-    g["Return_1"] = g["Close"].pct_change(1)
-    g["Return_3"] = g["Close"].pct_change(3)
-    g["Return_5"] = g["Close"].pct_change(5)
-    g["Return_10"] = g["Close"].pct_change(10)
-    g["Return_20"] = g["Close"].pct_change(20)
-
-    # =========================
-    # 移動平均
-    # =========================
-    for w in [5, 10, 20, 25, 50, 75]:
-
-        g[f"SMA_{w}"] = g["Close"].rolling(w).mean()
-        g[f"EMA_{w}"] = g["Close"].ewm(span=w, adjust=False).mean()
-
-        # 乖離率
-        g[f"SMA_Gap_{w}"] = (
-            g["Close"] / g[f"SMA_{w}"] - 1
-        )
-
-        g[f"EMA_Gap_{w}"] = (
-            g["Close"] / g[f"EMA_{w}"] - 1
-        )
-
-    # =========================
-    # 高値・安値更新
-    # =========================
-    for w in [5, 10, 20, 60]:
-
-        g[f"High_{w}"] = g["High"].rolling(w).max()
-        g[f"Low_{w}"] = g["Low"].rolling(w).min()
-
-        g[f"Breakout_High_{w}"] = (
-            g["Close"] > g[f"High_{w}"].shift(1)
-        ).astype(int)
-
-        g[f"Breakout_Low_{w}"] = (
-            g["Close"] < g[f"Low_{w}"].shift(1)
-        ).astype(int)
-
-    # =========================
-    # ボラティリティ
-    # =========================
-    for w in [5, 10, 20]:
-
-        g[f"Volatility_{w}"] = (
-            g["Return_1"].rolling(w).std()
-        )
-
-    # =========================
-    # RSI
-    # =========================
-    delta = g["Close"].diff()
-
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-
-    gain = pd.Series(gain, index=g.index)
-    loss = pd.Series(loss, index=g.index)
-
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-
-    rs = avg_gain / (avg_loss + 1e-9)
-
-    g["RSI_14"] = 100 - (100 / (1 + rs))
-
-    # =========================
-    # MACD
-    # =========================
-    ema12 = g["Close"].ewm(span=12, adjust=False).mean()
-    ema26 = g["Close"].ewm(span=26, adjust=False).mean()
-
-    g["MACD"] = ema12 - ema26
-    g["MACD_Signal"] = g["MACD"].ewm(span=9, adjust=False).mean()
-    g["MACD_Hist"] = g["MACD"] - g["MACD_Signal"]
-
-    # =========================
-    # ボリンジャーバンド
-    # =========================
-    ma20 = g["Close"].rolling(20).mean()
-    std20 = g["Close"].rolling(20).std()
-
-    g["BB_Upper"] = ma20 + std20 * 2
-    g["BB_Lower"] = ma20 - std20 * 2
-
-    g["BB_Position"] = (
-        (g["Close"] - g["BB_Lower"]) /
-        (g["BB_Upper"] - g["BB_Lower"] + 1e-9)
-    )
-
-    # =========================
-    # 出来高
-    # =========================
-    for w in [5, 20]:
-
-        g[f"Volume_MA_{w}"] = g["Volume"].rolling(w).mean()
-
-        g[f"Volume_Ratio_{w}"] = (
-            g["Volume"] / (g[f"Volume_MA_{w}"] + 1e-9)
-        )
-
-    # =========================
-    # ローソク足
-    # =========================
-    g["Body"] = (
-        g["Close"] - g["Open"]
-    )
-
-    g["Body_Ratio"] = (
-        (g["Close"] - g["Open"]) /
-        (g["High"] - g["Low"] + 1e-9)
-    )
-
-    g["Upper_Shadow"] = (
-        g["High"] - g[["Open", "Close"]].max(axis=1)
-    )
-
-    g["Lower_Shadow"] = (
-        g[["Open", "Close"]].min(axis=1) - g["Low"]
-    )
-
-    # =========================
-    # ギャップ
-    # =========================
-    g["Gap"] = (
-        g["Open"] / g["Close"].shift(1) - 1
-    )
-
-    # =========================
-    # トレンド判定
-    # =========================
-    g["Trend_Up"] = (
-        (g["SMA_5"] > g["SMA_25"]) &
-        (g["SMA_25"] > g["SMA_75"])
-    ).astype(int)
-
-    g["Trend_Down"] = (
-        (g["SMA_5"] < g["SMA_25"]) &
-        (g["SMA_25"] < g["SMA_75"])
-    ).astype(int)
-
-    # =========================
-    # GC / DC
-    # =========================
-    g["Golden_Cross"] = (
-        (g["SMA_5"] > g["SMA_25"]) &
-        (g["SMA_5"].shift(1) <= g["SMA_25"].shift(1))
-    ).astype(int)
-
-    g["Dead_Cross"] = (
-        (g["SMA_5"] < g["SMA_25"]) &
-        (g["SMA_5"].shift(1) >= g["SMA_25"].shift(1))
-    ).astype(int)
-
-    # =========================
-    # 連騰・連落
-    # =========================
-    up = (g["Close"] > g["Close"].shift(1)).astype(int)
-    down = (g["Close"] < g["Close"].shift(1)).astype(int)
-
-    g["Up_Count_5"] = up.rolling(5).sum()
-    g["Down_Count_5"] = down.rolling(5).sum()
-
-    # =========================
-    # ATR
-    # =========================
-    tr1 = g["High"] - g["Low"]
-    tr2 = abs(g["High"] - g["Close"].shift(1))
-    tr3 = abs(g["Low"] - g["Close"].shift(1))
-
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    g["ATR_14"] = tr.rolling(14).mean()
-
-    # =========================
-    # squeeze系
-    # =========================
-    bb_width = (
-        (g["BB_Upper"] - g["BB_Lower"]) /
-        (ma20 + 1e-9)
-    )
-
-    g["BB_Width"] = bb_width
-
-    g["Squeeze"] = (
-        bb_width <
-        bb_width.rolling(50).quantile(0.2)
-    ).astype(int)
-
-    return g
-
-
-# =========================
-# 銘柄ごと処理
-# =========================
-print("Creating features...")
-
-df = (
-    df.groupby("Ticker", group_keys=False)
-    .filter(lambda x: len(x) >= MIN_HISTORY)
+df["ma5"] = (
+    df.groupby("Ticker")["Close"]
+    .transform(lambda x: x.rolling(5).mean())
 )
 
-df_feat = (
-    df.groupby("Ticker", group_keys=False)
-    .apply(create_features)
+df["ma25"] = (
+    df.groupby("Ticker")["Close"]
+    .transform(lambda x: x.rolling(25).mean())
 )
 
 # =========================
-# NaN整理
+# close_ma_ratio
 # =========================
-df_feat = df_feat.replace([np.inf, -np.inf], np.nan)
+df["close_ma5_ratio"] = df["Close"] / df["ma5"]
+
+df["close_ma25_ratio"] = df["Close"] / df["ma25"]
+
+# =========================
+# ma25 slope
+# =========================
+df["ma25_slope"] = (
+    df.groupby("Ticker")["ma25"]
+    .pct_change(5)
+)
+
+# =========================
+# high break
+# =========================
+rolling_high_20 = (
+    df.groupby("Ticker")["High"]
+    .transform(lambda x: x.shift(1).rolling(20).max())
+)
+
+df["high_break_20d"] = (
+    (df["Close"] > rolling_high_20)
+).astype(int)
+
+# =========================
+# return
+# =========================
+df["return_5d"] = (
+    df.groupby("Ticker")["Close"]
+    .pct_change(5)
+)
+
+df["return_20d"] = (
+    df.groupby("Ticker")["Close"]
+    .pct_change(20)
+)
+
+# =========================
+# relative strength
+# =========================
+market_return_20 = (
+    df.groupby("Date")["return_20d"]
+    .transform("mean")
+)
+
+df["relative_strength_20d"] = (
+    df["return_20d"] - market_return_20
+)
+
+# =========================
+# industry rs rank
+# =========================
+industry_mean = (
+    df.groupby(["Date", "Industry"])["return_20d"]
+    .transform("mean")
+)
+
+df["industry_rs_rank"] = (
+    industry_mean.groupby(df["Date"])
+    .rank(pct=True)
+)
+
+# =========================
+# volume ratios
+# =========================
+vol_ma5 = (
+    df.groupby("Ticker")["Volume"]
+    .transform(lambda x: x.rolling(5).mean())
+)
+
+vol_ma20 = (
+    df.groupby("Ticker")["Volume"]
+    .transform(lambda x: x.rolling(20).mean())
+)
+
+df["volume_ratio_5d"] = (
+    df["Volume"] / vol_ma5
+)
+
+df["volume_ratio_20d"] = (
+    df["Volume"] / vol_ma20
+)
+
+# =========================
+# turnover ratio
+# =========================
+df["turnover_ratio"] = (
+    df["Volume"] / df["SharesOutstanding"]
+)
+
+# =========================
+# volume zscore
+# =========================
+vol_std20 = (
+    df.groupby("Ticker")["Volume"]
+    .transform(lambda x: x.rolling(20).std())
+)
+
+df["volume_zscore"] = (
+    (df["Volume"] - vol_ma20)
+    / vol_std20
+)
+
+# =========================
+# ATR
+# =========================
+prev_close = (
+    df.groupby("Ticker")["Close"]
+    .shift(1)
+)
+
+tr1 = df["High"] - df["Low"]
+
+tr2 = (df["High"] - prev_close).abs()
+
+tr3 = (df["Low"] - prev_close).abs()
+
+tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+atr20 = (
+    tr.groupby(df["Ticker"])
+    .transform(lambda x: x.rolling(20).mean())
+)
+
+df["atr_ratio"] = atr20 / df["Close"]
+
+# =========================
+# Bollinger Bands
+# =========================
+ma20 = (
+    df.groupby("Ticker")["Close"]
+    .transform(lambda x: x.rolling(20).mean())
+)
+
+std20 = (
+    df.groupby("Ticker")["Close"]
+    .transform(lambda x: x.rolling(20).std())
+)
+
+bb_upper = ma20 + 2 * std20
+bb_lower = ma20 - 2 * std20
+
+df["bb_width"] = (
+    (bb_upper - bb_lower)
+    / ma20
+)
+
+df["bb_position"] = (
+    (df["Close"] - bb_lower)
+    / (bb_upper - bb_lower)
+)
+
+# =========================
+# range compression
+# =========================
+daily_range = (
+    (df["High"] - df["Low"])
+    / df["Close"]
+)
+
+range_ma5 = (
+    daily_range.groupby(df["Ticker"])
+    .transform(lambda x: x.rolling(5).mean())
+)
+
+range_ma20 = (
+    daily_range.groupby(df["Ticker"])
+    .transform(lambda x: x.rolling(20).mean())
+)
+
+df["range_compression_5d"] = (
+    range_ma5 / range_ma20
+)
+
+# =========================
+# market features
+# =========================
+df["nikkei_return_5d"] = (
+    df.groupby("Date")["return_5d"]
+    .transform("mean")
+)
+
+df["topix_trend"] = (
+    df.groupby("Date")["close_ma25_ratio"]
+    .transform("mean")
+)
+
+df["growth_index_strength"] = (
+    df.groupby("Date")["relative_strength_20d"]
+    .transform("mean")
+)
+
+# =========================
+# cross sectional ranks
+# =========================
+df["return_rank_daily"] = (
+    df.groupby("Date")["return_5d"]
+    .rank(pct=True)
+)
+
+df["volume_rank_daily"] = (
+    df.groupby("Date")["volume_ratio_20d"]
+    .rank(pct=True)
+)
+
+df["volatility_rank"] = (
+    df.groupby("Date")["atr_ratio"]
+    .rank(pct=True)
+)
+
+df["marketcap_rank"] = (
+    df.groupby("Date")["MarketCap"]
+    .rank(pct=True)
+)
+
+df["rs_rank_cross_section"] = (
+    df.groupby("Date")["relative_strength_20d"]
+    .rank(pct=True)
+)
+
+# =========================
+# upper shadow
+# =========================
+df["upper_shadow_ratio"] = (
+    (
+        df["High"]
+        - np.maximum(df["Open"], df["Close"])
+    )
+    / df["Close"]
+)
+
+# =========================
+# gap up
+# =========================
+df["gap_up_ratio"] = (
+    (df["Open"] - prev_close)
+    / prev_close
+)
 
 # =========================
 # 保存
 # =========================
-os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
+FEATURE_COLUMNS = [
+    "Date",
+    "Ticker",
 
-df_feat.to_parquet(SAVE_PATH, index=False)
+    "close_ma5_ratio",
+    "close_ma25_ratio",
+    "ma25_slope",
+    "high_break_20d",
+
+    "return_5d",
+    "return_20d",
+    "relative_strength_20d",
+    "industry_rs_rank",
+
+    "volume_ratio_5d",
+    "volume_ratio_20d",
+    "turnover_ratio",
+    "volume_zscore",
+
+    "atr_ratio",
+    "bb_width",
+    "range_compression_5d",
+
+    "nikkei_return_5d",
+    "topix_trend",
+    "growth_index_strength",
+
+    "return_rank_daily",
+    "volume_rank_daily",
+    "volatility_rank",
+    "marketcap_rank",
+    "rs_rank_cross_section",
+
+    "upper_shadow_ratio",
+    "gap_up_ratio",
+    "bb_position"
+]
+
+df = df[FEATURE_COLUMNS]
+
+df = df.replace([np.inf, -np.inf], np.nan)
+
+df = df.dropna()
 
 # =========================
-# 完了
+# 保存
 # =========================
-print("\n=== DONE ===")
-print(df_feat.shape)
+print("Saving features...")
 
-print("\nColumns:")
-print(df_feat.columns.tolist())
+df.to_parquet(SAVE_PATH, index=False)
 
-print("\nSaved:")
-print(SAVE_PATH)
+print("Done.")
+print(df.head())
