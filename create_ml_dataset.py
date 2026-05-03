@@ -62,7 +62,14 @@ prices["target_return"] = (
 # =========================
 prices["target_rank"] = (
     prices.groupby("Date")["target_return"]
-    .rank(pct=True)
+    .transform(
+        lambda x: pd.qcut(
+            x,
+            20,
+            labels=False,
+            duplicates="drop"
+        )
+    )
 )
 
 # =========================
