@@ -14,10 +14,12 @@ TEST_WINDOWS = [
 
 MAX_POSITIONS = 5
 HOLD_DAYS = 5
-STOP_LOSS = -0.07
 SLIPPAGE = 0.002
 COMMISSION = 0.001
-INITIAL_CAPITAL = 1.0
+
+# 強度配分
+STRONG_WEIGHT = 2.0
+WEAK_WEIGHT = 1.0
 
 # =========================
 # load
@@ -27,7 +29,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 # =========================
-# signal engine（そのまま使う）
+# signal engine（2段階版）
 # =========================
 def generate_signal(row):
 
@@ -50,8 +52,8 @@ def generate_signal(row):
     )
 
     breakout = (
-        row["high_break_20d"] > 0 or
-        row["bb_position"] > 0.7
+        (row["high_break_20d"] > 0) or
+        (row["bb_position"] > 0.7)
     )
 
     risk_ok = (
@@ -60,14 +62,28 @@ def generate_signal(row):
         row["range_compression_5d"] > 0.95
     )
 
-    if momentum and trend and volume and risk_ok:
-        return 1
+    # =========================
+    # 強シグナル（本命）
+    # =========================
+    strong = (
+        momentum and trend and volume and risk_ok
+    )
 
-    elif momentum and trend and breakout:
-        return 0.5
+    # =========================
+    # 弱シグナル（準エントリー）
+    # =========================
+    weak = (
+        momentum and trend and breakout
+    )
+
+    if strong:
+        return 2  # strong
+
+    elif weak:
+        return 1  # weak
 
     else:
-        return 0
+        return 0  # no signal
 
 
 # =========================
@@ -80,14 +96,17 @@ for start, end in TEST_WINDOWS:
     d = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
 
     # =========================
-    # signal生成（ML完全なし）
+    # signal生成
     # =========================
     d["signal"] = d.apply(generate_signal, axis=1)
 
-    d["rank"] = d.groupby("Date")["signal"].rank(ascending=False)
+    # 強い順でランキング
+    d["score"] = d["signal"]
+
+    d["rank"] = d.groupby("Date")["score"].rank(ascending=False, method="first")
 
     # =========================
-    # simple backtest
+    # backtest
     # =========================
     dates = sorted(d["Date"].unique())
 
@@ -99,7 +118,7 @@ for start, end in TEST_WINDOWS:
         new_positions = []
 
         # =====================
-        # ポジション管理
+        # exit処理
         # =====================
         for p in positions:
 
@@ -123,18 +142,23 @@ for start, end in TEST_WINDOWS:
         positions = new_positions
 
         # =====================
-        # エントリー
+        # entry処理
         # =====================
         slots = MAX_POSITIONS - len(positions)
 
         if slots > 0:
 
             picks = d[d["Date"] == date]
-            picks = picks.sort_values("rank", ascending=False).head(slots)
+
+            # 強 → 弱の順
+            picks = picks.sort_values(
+                ["signal", "rank"],
+                ascending=[False, True]
+            ).head(slots)
 
             for _, row in picks.iterrows():
 
-                # 仮のリターン（後で価格ベースに差し替え可）
+                # 仮リターン（後で価格ベースに差し替え可）
                 future_ret = row.get("return_5d", 0)
 
                 positions.append({
@@ -145,7 +169,7 @@ for start, end in TEST_WINDOWS:
                 })
 
     # =========================
-    # 結果集計
+    # 結果
     # =========================
     trade_df = pd.DataFrame(trade_log)
 
@@ -162,3 +186,6 @@ for start, end in TEST_WINDOWS:
 
     print("\nSharpe (simple):",
           trade_df["Return"].mean() / (trade_df["Return"].std() + 1e-9))
+
+    print("\n===== SIGNAL BREAKDOWN =====")
+    print(trade_df["signal"].value_counts())
