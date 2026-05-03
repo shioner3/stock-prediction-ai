@@ -48,44 +48,64 @@ def generate_signal(row):
     # ===== 出来高 =====
     if row["volume_ratio_5d"] > 1.0:
         score += 1
-    if row["volume_ratio_20d"] > 0.9:
-        score += 0.5
     if row["volume_rank_daily"] > 0.4:
         score += 1
 
     # ===== ブレイク =====
     if row["high_break_20d"] > 0:
         score += 1
-    if row["bb_position"] > 0.7:
-        score += 0.5
 
     # ===== リスク =====
     if row["gap_up_ratio"] < 0.05:
         score += 0.5
     if row["atr_ratio"] < 0.12:
         score += 0.5
-    if row["range_compression_5d"] > 0.95:
-        score += 0.5
 
     return score
 
 
 # =========================
+# 分解用シグナル定義
+# =========================
+def signal_breakdown(row):
+    return {
+        "momentum": int(row["return_5d"] > 0 and row["return_rank_daily"] >= 0.7),
+        "trend": int(
+            row["close_ma5_ratio"] > 1.01 and
+            row["close_ma25_ratio"] > 1.00 and
+            row["bb_position"] > 0.65
+        ),
+        "volume": int(
+            row["volume_ratio_5d"] > 1.0 and
+            row["volume_rank_daily"] > 0.4
+        ),
+        "breakout": int(row["high_break_20d"] > 0),
+        "risk_ok": int(
+            row["gap_up_ratio"] < 0.05 and
+            row["atr_ratio"] < 0.12
+        )
+    }
+
+
+# =========================
 # backtest
 # =========================
+all_signal_stats = []
+
 for start, end in TEST_WINDOWS:
 
     print(f"\n===== WINDOW {start} → {end} =====")
 
     d = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
 
-    # =========================
-    # signal生成（スコア化）
-    # =========================
+    # score
     d["score"] = d.apply(generate_signal, axis=1)
 
-    # 日次ランキング（これが本体）
     d["rank"] = d.groupby("Date")["score"].rank(ascending=False, method="first")
+
+    # シグナル分解列を追加
+    breakdown = d.apply(signal_breakdown, axis=1, result_type="expand")
+    d = pd.concat([d, breakdown], axis=1)
 
     # =========================
     # backtest
@@ -99,7 +119,6 @@ for start, end in TEST_WINDOWS:
 
         new_positions = []
 
-        # ===== exit =====
         for p in positions:
 
             hold = (date - p["entry"]).days
@@ -113,7 +132,12 @@ for start, end in TEST_WINDOWS:
                     "Date": date,
                     "Ticker": p["Ticker"],
                     "Return": ret,
-                    "score": p["score"]
+                    "score": p["score"],
+                    "momentum": p["momentum"],
+                    "trend": p["trend"],
+                    "volume": p["volume"],
+                    "breakout": p["breakout"],
+                    "risk_ok": p["risk_ok"],
                 })
 
             else:
@@ -121,29 +145,30 @@ for start, end in TEST_WINDOWS:
 
         positions = new_positions
 
-        # ===== entry =====
         slots = MAX_POSITIONS - len(positions)
 
         if slots > 0:
 
             picks = d[d["Date"] == date].sort_values(
-                "score",
-                ascending=False
+                "score", ascending=False
             ).head(slots)
 
             for _, row in picks.iterrows():
 
-                future_ret = row.get("return_5d", 0)
-
                 positions.append({
                     "Ticker": row["Ticker"],
                     "entry": date,
-                    "ret": future_ret,
-                    "score": row["score"]
+                    "ret": row.get("return_5d", 0),
+                    "score": row["score"],
+                    "momentum": row["momentum"],
+                    "trend": row["trend"],
+                    "volume": row["volume"],
+                    "breakout": row["breakout"],
+                    "risk_ok": row["risk_ok"],
                 })
 
     # =========================
-    # result
+    # 分析
     # =========================
     trade_df = pd.DataFrame(trade_log)
 
@@ -155,11 +180,30 @@ for start, end in TEST_WINDOWS:
     print(trade_df["Return"].describe())
 
     print("\nWin Rate:", (trade_df["Return"] > 0).mean())
+    print("Average Return:", trade_df["Return"].mean())
 
-    print("\nAverage Return:", trade_df["Return"].mean())
-
-    print("\nSharpe (simple):",
+    print("\nSharpe:",
           trade_df["Return"].mean() / (trade_df["Return"].std() + 1e-9))
 
-    print("\n===== SCORE STATS =====")
-    print(trade_df["score"].describe())
+    # =========================
+    # 🔥 シグナル別分解（ここが重要）
+    # =========================
+    print("\n===== SIGNAL BREAKDOWN =====")
+
+    for col in ["momentum", "trend", "volume", "breakout", "risk_ok"]:
+
+        win = trade_df[trade_df["Return"] > 0][col].mean()
+        lose = trade_df[trade_df["Return"] <= 0][col].mean()
+
+        print(f"{col}: WIN={win:.3f}, LOSE={lose:.3f}, DIFF={win-lose:.3f}")
+
+    all_signal_stats.append(trade_df)
+
+# =========================
+# 全体統合
+# =========================
+full = pd.concat(all_signal_stats)
+
+print("\n===== GLOBAL SUMMARY =====")
+print(full["Return"].describe())
+print("\nGlobal Win Rate:", (full["Return"] > 0).mean())
