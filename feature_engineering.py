@@ -14,6 +14,33 @@ print("Loading data...")
 
 df = pd.read_parquet(INPUT_PATH)
 
+# =========================
+# 🔥 追加：列確認（重要）
+# =========================
+print("\n===== RAW COLUMNS =====")
+print(df.columns.tolist())
+
+print("\n===== HEAD =====")
+print(df.head())
+
+# =========================
+# カラム統一（保険）
+# =========================
+df.columns = df.columns.str.strip()
+
+# =========================
+# 必須カラムチェック
+# =========================
+required_cols = ["Date", "Ticker", "Open", "High", "Low", "Close", "Volume"]
+
+missing = [c for c in required_cols if c not in df.columns]
+
+if len(missing) > 0:
+    raise ValueError(f"Missing columns: {missing}")
+
+# =========================
+# 日付処理
+# =========================
 df["Date"] = pd.to_datetime(df["Date"])
 
 df = df.sort_values(
@@ -25,15 +52,8 @@ df = df.sort_values(
 # =========================
 print("Calculating moving averages...")
 
-df["ma5"] = (
-    df.groupby("Ticker")["Close"]
-    .transform(lambda x: x.rolling(5).mean())
-)
-
-df["ma25"] = (
-    df.groupby("Ticker")["Close"]
-    .transform(lambda x: x.rolling(25).mean())
-)
+df["ma5"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(5).mean())
+df["ma25"] = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(25).mean())
 
 # =========================
 # close_ma_ratio
@@ -44,17 +64,13 @@ df["close_ma25_ratio"] = df["Close"] / df["ma25"]
 # =========================
 # ma25 slope
 # =========================
-df["ma25_slope"] = (
-    df.groupby("Ticker")["ma25"]
-    .pct_change(5, fill_method=None)
-)
+df["ma25_slope"] = df.groupby("Ticker")["ma25"].pct_change(5, fill_method=None)
 
 # =========================
 # high break
 # =========================
-rolling_high_20 = (
-    df.groupby("Ticker")["High"]
-    .transform(lambda x: x.shift(1).rolling(20).max())
+rolling_high_20 = df.groupby("Ticker")["High"].transform(
+    lambda x: x.shift(1).rolling(20).max()
 )
 
 df["high_break_20d"] = (df["Close"] > rolling_high_20).astype(int)
@@ -78,7 +94,6 @@ df["volume_ratio_20d"] = df["Volume"] / vol_ma20
 # volume zscore
 # =========================
 vol_std20 = df.groupby("Ticker")["Volume"].transform(lambda x: x.rolling(20).std())
-
 df["volume_zscore"] = (df["Volume"] - vol_ma20) / vol_std20
 
 # =========================
@@ -93,7 +108,6 @@ tr3 = (df["Low"] - prev_close).abs()
 tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
 atr20 = tr.groupby(df["Ticker"]).transform(lambda x: x.rolling(20).mean())
-
 df["atr_ratio"] = atr20 / df["Close"]
 
 # =========================
@@ -106,7 +120,6 @@ bb_upper = ma20 + 2 * std20
 bb_lower = ma20 - 2 * std20
 
 df["bb_width"] = (bb_upper - bb_lower) / ma20
-
 df["bb_position"] = (df["Close"] - bb_lower) / (bb_upper - bb_lower)
 
 # =========================
@@ -120,7 +133,7 @@ range_ma20 = daily_range.groupby(df["Ticker"]).transform(lambda x: x.rolling(20)
 df["range_compression_5d"] = range_ma5 / range_ma20
 
 # =========================
-# cross sectional ranks（残すのは2つだけ）
+# cross sectional ranks
 # =========================
 df["return_rank_daily"] = df.groupby("Date")["return_5d"].rank(pct=True)
 df["volume_rank_daily"] = df.groupby("Date")["volume_ratio_20d"].rank(pct=True)
@@ -139,7 +152,7 @@ df["upper_shadow_ratio"] = (
 df["gap_up_ratio"] = (df["Open"] - prev_close) / prev_close
 
 # =========================
-# 特徴量一覧（削除済み）
+# 特徴量一覧
 # =========================
 FEATURE_COLUMNS = [
 
@@ -172,10 +185,7 @@ FEATURE_COLUMNS = [
 # =========================
 print("Shifting features...")
 
-df[FEATURE_COLUMNS] = (
-    df.groupby("Ticker")[FEATURE_COLUMNS]
-    .shift(1)
-)
+df[FEATURE_COLUMNS] = df.groupby("Ticker")[FEATURE_COLUMNS].shift(1)
 
 # =========================
 # 保存
