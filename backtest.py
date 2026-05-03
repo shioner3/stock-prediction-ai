@@ -33,7 +33,6 @@ FEATURES = [
 
     "volume_ratio_5d",
     "volume_ratio_20d",
-    "turnover_ratio",
     "volume_zscore",
 
     "atr_ratio",
