@@ -24,6 +24,14 @@ TEST_WINDOWS = [
     ("2024-01-01","2024-12-31"),
 ]
 
+TOP_N = 3
+MAX_POSITIONS = 5
+HOLD_DAYS = 5
+STOP_LOSS = -0.07
+SLIPPAGE = 0.002
+COMMISSION = 0.001
+INITIAL_CAPITAL = 1.0
+
 # =========================
 # load
 # =========================
@@ -34,80 +42,152 @@ df = df.sort_values(["Date","Ticker"])
 with open(MODEL_PATH,"rb") as f:
     model = pickle.load(f)
 
-all_ic = []
+# =========================
+# 全結果格納
+# =========================
+all_feature_stats = []
 
 # =========================
-# walk forward
+# WALK FORWARD
 # =========================
 for start,end in TEST_WINDOWS:
 
-    print(f"\n===== {start} → {end} =====")
+    print(f"\n===== WINDOW {start} → {end} =====")
 
     d = df[(df["Date"]>=start)&(df["Date"]<=end)].copy()
 
     # =====================
-    # predict
+    # prediction
     # =====================
     d["pred"] = model.predict(d[FEATURES])
+    d["rank"] = d.groupby("Date")["pred"].rank(ascending=False)
 
     # =====================
-    # IC計算（日次cross-section）
+    # simple backtest
     # =====================
-    ic_list = []
+    dates = sorted(d["Date"].unique())
 
-    for date, g in d.groupby("Date"):
+    positions = []
+    trade_log = []
 
-        if len(g) < 5:
-            continue
+    for date in dates:
 
-        ic = g["pred"].corr(g["target_return"])
-        ic_list.append(ic)
+        realized = []
+        new_positions = []
 
-    ic_series = pd.Series(ic_list).dropna()
+        for p in positions:
+
+            hold = (date - p["entry"]).days
+
+            if hold >= HOLD_DAYS:
+
+                ret = max(p["ret"], STOP_LOSS)
+                ret -= (SLIPPAGE + COMMISSION)
+
+                realized.append(ret)
+
+                trade_log.append({
+                    "Date": date,
+                    "Ticker": p["Ticker"],
+                    "Return": ret
+                })
+
+            else:
+                new_positions.append(p)
+
+        positions = new_positions
+
+        slots = MAX_POSITIONS - len(positions)
+
+        if slots > 0:
+
+            picks = d[d["Date"]==date].sort_values("rank").head(slots)
+
+            for _, row in picks.iterrows():
+
+                positions.append({
+                    "Ticker": row["Ticker"],
+                    "entry": date,
+                    "ret": row["target_return"]
+                })
 
     # =====================
-    # IC統計
+    # merge feature
     # =====================
-    mean_ic = ic_series.mean()
-    std_ic = ic_series.std()
-    icir = mean_ic / std_ic if std_ic != 0 else 0
+    trade_df = pd.DataFrame(trade_log)
 
-    print("\n===== IC RESULT =====")
-    print(f"Mean IC : {mean_ic:.6f}")
-    print(f"IC STD  : {std_ic:.6f}")
-    print(f"ICIR    : {icir:.6f}")
-    print(f"Hit Rate (IC>0): {(ic_series>0).mean():.3f}")
+    if len(trade_df) == 0:
+        continue
 
-    # =====================
-    # 月次IC
-    # =====================
-    d["IC_date"] = d["Date"].dt.to_period("M")
-
-    monthly_ic = d.groupby("IC_date").apply(
-        lambda x: x["pred"].corr(x["target_return"])
+    trade_df = trade_df.merge(
+        d[["Date","Ticker"]+FEATURES],
+        on=["Date","Ticker"],
+        how="left"
     )
 
-    print("\n===== MONTHLY IC =====")
-    print(monthly_ic)
+    # =====================
+    # split win / lose
+    # =====================
+    wins = trade_df[trade_df["Return"] > 0]
+    loses = trade_df[trade_df["Return"] <= 0]
+
+    print("\n===== WIN vs LOSE FEATURE DIFFERENCE =====")
+
+    feature_diff = []
+
+    for col in FEATURES:
+
+        win_mean = wins[col].mean()
+        lose_mean = loses[col].mean()
+
+        diff = win_mean - lose_mean
+
+        # z-score差分（標準化）
+        pooled_std = trade_df[col].std()
+
+        z_diff = diff / pooled_std if pooled_std != 0 else 0
+
+        feature_diff.append({
+            "feature": col,
+            "win_mean": win_mean,
+            "lose_mean": lose_mean,
+            "diff": diff,
+            "z_diff": z_diff
+        })
+
+        print(f"\n--- {col} ---")
+        print(f"WIN : {win_mean:.4f}")
+        print(f"LOSE: {lose_mean:.4f}")
+        print(f"DIFF: {diff:.4f}")
+        print(f"Z-DIFF: {z_diff:.4f}")
+
+    feature_df = pd.DataFrame(feature_diff)
 
     # =====================
-    # 保存
+    # ranking（重要）
     # =====================
-    all_ic.append({
-        "window": f"{start}->{end}",
-        "mean_ic": mean_ic,
-        "ic_std": std_ic,
-        "icir": icir,
-        "hit_rate": (ic_series>0).mean()
-    })
+    feature_df = feature_df.sort_values("z_diff", ascending=False)
+
+    print("\n===== TOP POSITIVE SIGNALS =====")
+    print(feature_df.head(10))
+
+    print("\n===== NEGATIVE SIGNALS =====")
+    print(feature_df.tail(10))
+
+    # =====================
+    # store
+    # =====================
+    all_feature_stats.append(feature_df)
 
 # =========================
-# summary
+# 全体統合
 # =========================
-ic_df = pd.DataFrame(all_ic)
+full_df = pd.concat(all_feature_stats)
 
-print("\n===== IC SUMMARY =====")
-print(ic_df)
+summary = full_df.groupby("feature").agg({
+    "z_diff": ["mean","std"],
+    "diff": "mean"
+})
 
-print("\n===== AVG IC =====")
-print(ic_df.mean(numeric_only=True))
+print("\n===== GLOBAL SIGNAL SUMMARY =====")
+print(summary.sort_values(("z_diff","mean"), ascending=False))
