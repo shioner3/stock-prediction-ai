@@ -14,7 +14,18 @@ df = pd.read_parquet(INPUT_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
-# シグナル定義（0/1）
+# 安全なBB（groupby修正）
+# =========================
+bb_ma = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(20).mean())
+bb_std = df.groupby("Ticker")["Close"].transform(lambda x: x.rolling(20).std())
+
+bb_upper = bb_ma + 2 * bb_std
+bb_lower = bb_ma - 2 * bb_std
+
+df["bb_width"] = (bb_upper - bb_lower) / bb_ma
+
+# =========================
+# シグナル（0/1）
 # =========================
 df["sig_trend"] = (
     (df["close_ma5_ratio"] > 1.02) &
@@ -45,7 +56,7 @@ df["sig_low_volatility_entry"] = (
 
 df["sig_bb_setup"] = (
     (df["bb_position"] > 0.7) &
-    (df["bb_width"] < df["bb_width"].rolling(50).mean())
+    (df["bb_width"] < df["bb_width"].rolling(50, min_periods=10).mean())
 ).astype(int)
 
 df["sig_gap_support"] = (
@@ -59,53 +70,46 @@ df["sig_intraday_strength"] = (
 ).astype(int)
 
 # =========================
-# 🔥 シグナル強度（2段階化）
+# コア構造スコア（軽量化）
 # =========================
-# 0 = no signal
-# 1 = weak signal（部分一致）
-# 2 = strong signal（完全一致）
-
-df["signal_score"] = (
+df["core_score"] = (
     df["sig_trend"] * 2 +
+    df["sig_volume"] * 2 +
+    df["sig_intraday_strength"] * 2 +
     df["sig_breakout"] * 2 +
-    df["sig_momentum"] * 1.5 +
-    df["sig_volume"] * 1.5 +
-    df["sig_low_volatility_entry"] * 1.0 +
-    df["sig_bb_setup"] * 1.0 +
-    df["sig_gap_support"] * 1.0 +
-    df["sig_intraday_strength"] * 2
+    df["sig_momentum"] * 1
 )
 
 # =========================
-# 強度2段階化
+# 強シグナル（構造ベース）
 # =========================
-# 強い条件：複数コア同時成立
 df["signal_strong"] = (
     (df["sig_trend"] == 1) &
     (df["sig_volume"] == 1) &
     (df["sig_intraday_strength"] == 1) &
-    (df["signal_score"] >= 6)
+    (df["core_score"] >= 6)
 ).astype(int)
 
-# 弱いシグナル：どれか刺さる
+# =========================
+# 弱シグナル（補助）
+# =========================
 df["signal_weak"] = (
-    (df["signal_score"] >= 3) &
+    (df["core_score"] >= 3) &
     (df["signal_strong"] == 0)
 ).astype(int)
 
-# エントリー統合
+# =========================
+# 最終エントリー
+# =========================
 df["signal_entry"] = (
     df["signal_strong"] * 2 +
     df["signal_weak"] * 1
 )
 
-# =========================
-# フィルタ（実運用用）
-# =========================
 df["signal_trade"] = (df["signal_entry"] >= 1).astype(int)
 
 # =========================
-# 検証用
+# 分布確認
 # =========================
 print("\n===== SIGNAL DISTRIBUTION =====")
 print(df["signal_entry"].value_counts())
