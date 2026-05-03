@@ -6,7 +6,6 @@ import pickle
 # 設定
 # =========================
 DATA_PATH = "stock_data/ml_dataset.parquet"
-MODEL_PATH = "stock_data/lgbm_ranker.pkl"
 
 FEATURES = [
     "close_ma5_ratio","close_ma25_ratio","ma25_slope","high_break_20d",
