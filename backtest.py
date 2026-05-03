@@ -1,16 +1,7 @@
 import pandas as pd
 import numpy as np
 
-# =========================
-# 設定
-# =========================
-DATA_PATH = "stock_data/technical_features.parquet"
-
-TEST_WINDOWS = [
-    ("2022-01-01", "2022-12-31"),
-    ("2023-01-01", "2023-12-31"),
-    ("2024-01-01", "2024-12-31"),
-]
+DATA_PATH = "stock_data/signals.parquet"
 
 HOLD_DAYS = 5
 MAX_POSITIONS = 10
@@ -18,152 +9,76 @@ MAX_POSITIONS = 10
 SLIPPAGE = 0.002
 COMMISSION = 0.001
 
-STRONG_WEIGHT = 2.0
-WEAK_WEIGHT = 1.0
-
-# =========================
-# load
-# =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
+
 df = df.sort_values(["Date", "Ticker"])
-
-# =========================
-# forward return（評価用のみ）
-# =========================
-df["forward_return"] = (
-    df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
-)
-
-# =========================
-# cross-sectional ranking（最重要）
-# =========================
-df["score_rank"] = df.groupby("Date")["signal_score"].rank(pct=True)
-
-# =========================
-# 強弱分類（動的）
-# =========================
-df["signal_type"] = 0
-
-df.loc[df["score_rank"] >= 0.8, "signal_type"] = 2  # strong
-df.loc[(df["score_rank"] >= 0.5) & (df["score_rank"] < 0.8), "signal_type"] = 1  # weak
 
 # =========================
 # backtest
 # =========================
-all_results = []
+dates = sorted(df["Date"].unique())
 
-for start, end in TEST_WINDOWS:
+positions = []
+logs = []
 
-    print(f"\n===== WINDOW {start} → {end} =====")
+for date in dates:
 
-    d = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
+    # =====================
+    # exit
+    # =====================
+    new_positions = []
 
-    dates = sorted(d["Date"].unique())
+    for p in positions:
 
-    positions = []
-    trade_log = []
+        hold = (date - p["entry"]).days
 
-    for date in dates:
+        if hold >= HOLD_DAYS:
 
-        # =========================
-        # exit処理
-        # =========================
-        new_positions = []
+            ret = p["ret"] - (SLIPPAGE + COMMISSION)
 
-        for p in positions:
-
-            hold = (date - p["entry"]).days
-
-            if hold >= HOLD_DAYS:
-
-                ret = p["ret"]
-                ret -= (SLIPPAGE + COMMISSION)
-
-                trade_log.append({
-                    "Date": date,
-                    "Ticker": p["Ticker"],
-                    "Return": ret,
-                    "signal_type": p["signal_type"],
-                    "weight": p["weight"]
-                })
-
-            else:
-                new_positions.append(p)
-
-        positions = new_positions
-
-        # =========================
-        # entry（ランキングのみ）
-        # =========================
-        today = d[d["Date"] == date]
-
-        # TOP制限なし（重要）
-        candidates = today[today["signal_type"] > 0].copy()
-
-        if len(candidates) == 0:
-            continue
-
-        # 強い順にソート
-        candidates = candidates.sort_values("score_rank", ascending=False)
-
-        # ポジション枠
-        slots = MAX_POSITIONS - len(positions)
-
-        if slots <= 0:
-            continue
-
-        # =========================
-        # エントリー
-        # =========================
-        for _, row in candidates.head(slots).iterrows():
-
-            if row["signal_type"] == 2:
-                weight = STRONG_WEIGHT
-            else:
-                weight = WEAK_WEIGHT
-
-            positions.append({
-                "Ticker": row["Ticker"],
-                "entry": date,
-                "ret": row["forward_return"],
-                "signal_type": row["signal_type"],
-                "weight": weight
+            logs.append({
+                "Date": date,
+                "Return": ret,
+                "signal": p["signal"]
             })
 
-    # =========================
-    # result
-    # =========================
-    trade_df = pd.DataFrame(trade_log)
+        else:
+            new_positions.append(p)
 
-    if len(trade_df) == 0:
-        print("No trades")
+    positions = new_positions
+
+    # =====================
+    # entry（TOP固定禁止）
+    # =====================
+    today = df[df["Date"] == date]
+
+    candidates = today[today["signal_entry"] > 0].copy()
+
+    if len(candidates) == 0:
         continue
 
-    # 重み付きリターン
-    trade_df["weighted_return"] = trade_df["Return"] * trade_df["weight"]
+    # ランダム性防止でscore順
+    candidates = candidates.sort_values("signal_score", ascending=False)
 
-    print("\n===== RESULT =====")
-    print(trade_df["weighted_return"].describe())
+    slots = MAX_POSITIONS - len(positions)
 
-    print("\nWin Rate:", (trade_df["weighted_return"] > 0).mean())
+    for _, row in candidates.head(slots).iterrows():
 
-    print("\nAverage Return:", trade_df["weighted_return"].mean())
-
-    print("\nSharpe:",
-          trade_df["weighted_return"].mean() /
-          (trade_df["weighted_return"].std() + 1e-9))
-
-    print("\n===== SIGNAL TYPE BREAKDOWN =====")
-    print(trade_df["signal_type"].value_counts())
-
-    all_results.append(trade_df)
+        positions.append({
+            "entry": date,
+            "ret": row["forward_return"],
+            "signal": row["signal_entry"]
+        })
 
 # =========================
-# global
+# result
 # =========================
-full = pd.concat(all_results)
+res = pd.DataFrame(logs)
 
-print("\n===== GLOBAL SUMMARY =====")
-print(full["weighted_return"].describe())
-print("\nGlobal Win Rate:", (full["weighted_return"] > 0).mean())
+print("\n===== RESULT =====")
+print(res["Return"].describe())
+
+print("\nWin Rate:", (res["Return"] > 0).mean())
+
+print("\nSharpe:", res["Return"].mean() / (res["Return"].std() + 1e-9))
