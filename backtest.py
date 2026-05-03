@@ -9,13 +9,12 @@ MAX_POSITIONS = 10
 SLIPPAGE = 0.002
 COMMISSION = 0.001
 
-# ★追加：重要パラメータ
-ENTRY_THRESHOLD = 0.2   # 弱すぎるシグナル除外
-STRONG_THRESHOLD = 1.5  # strong判定補助
+# ★調整ポイント（トレード増やす方向）
+ENTRY_THRESHOLD = 0.05   # ↓下げる（重要）
+STRONG_THRESHOLD = 1.5
 
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
-
 df = df.sort_values(["Date", "Ticker"])
 
 # =========================
@@ -25,6 +24,9 @@ dates = sorted(df["Date"].unique())
 
 positions = []
 logs = []
+
+# ★追加：統計用
+trade_count_per_day = []
 
 for date in dates:
 
@@ -59,17 +61,20 @@ for date in dates:
     today = df[df["Date"] == date].copy()
 
     # ---------------------
-    # ① thresholdフィルタ（重要）
+    # ① threshold（緩めてトレード増やす）
     # ---------------------
     candidates = today[
         today["signal_score"] > ENTRY_THRESHOLD
     ].copy()
 
+    # ★追加：候補数記録
+    trade_count_per_day.append(len(candidates))
+
     if len(candidates) == 0:
         continue
 
     # ---------------------
-    # ② ranking（質で並べる）
+    # ② ranking
     # ---------------------
     candidates = candidates.sort_values(
         ["signal_score", "ret_rank"],
@@ -105,3 +110,15 @@ print("\nWin Rate:", (res["Return"] > 0).mean())
 
 print("\nSharpe:",
       res["Return"].mean() / (res["Return"].std() + 1e-9))
+
+# =========================
+# ★トレード数分析（重要追加）
+# =========================
+print("\n===== TRADE STATISTICS =====")
+
+print("Total Trades:", len(res))
+print("Avg Trades Per Day:", np.mean(trade_count_per_day))
+print("Max Trades Per Day:", np.max(trade_count_per_day))
+print("Min Trades Per Day:", np.min(trade_count_per_day))
+
+print("\nActive Days:", len([x for x in trade_count_per_day if x > 0]))
