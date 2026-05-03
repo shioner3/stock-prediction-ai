@@ -246,11 +246,6 @@ df["volatility_rank"] = (
     .rank(pct=True)
 )
 
-df["marketcap_rank"] = (
-    df.groupby("Date")["MarketCap"]
-    .rank(pct=True)
-)
-
 df["rs_rank_cross_section"] = (
     df.groupby("Date")["relative_strength_20d"]
     .rank(pct=True)
@@ -308,7 +303,6 @@ FEATURE_COLUMNS = [
     "return_rank_daily",
     "volume_rank_daily",
     "volatility_rank",
-    "marketcap_rank",
     "rs_rank_cross_section",
 
     "upper_shadow_ratio",
