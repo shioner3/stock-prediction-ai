@@ -8,10 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # =========================
       # 1️⃣ リポジトリ取得
       # =========================
-      - uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
       # =========================
       # 2️⃣ Python環境
@@ -22,9 +24,9 @@ jobs:
           python-version: "3.10"
 
       # =========================
-      # 3️⃣ キャッシュ復元（価格データ）
+      # 3️⃣ キャッシュ復元
       # =========================
-      - name: Restore price cache
+      - name: Restore Price Cache
         uses: actions/cache@v3
         with:
           path: stock_data/prices.parquet
@@ -35,7 +37,7 @@ jobs:
       # =========================
       # 4️⃣ 依存関係
       # =========================
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements_ai.txt
@@ -43,32 +45,37 @@ jobs:
       # =========================
       # 5️⃣ データ取得
       # =========================
-      - name: Download prices
+      - name: Download Prices
         run: |
           python download_prices.py
 
       # =========================
-      # 6️⃣ 特徴量作成
+      # 6️⃣ 特徴量生成
       # =========================
       - name: Feature Engineering
         run: |
           python feature_engineering.py
 
       # =========================
-      # 8️⃣ モデル学習・予測生成（🔥追加・超重要）
+      # 7️⃣ MLデータセット生成
+      # =========================
+      - name: Create ML Dataset
+        run: |
+          python create_ml_dataset.py
+
+      # =========================
+      # 8️⃣ Ranker学習
+      # =========================
+      - name: Train Ranker
+        run: |
+          python train_ranker.py
+
+      # =========================
+      # 9️⃣ 最新予測
       # =========================
       - name: Run Prediction
         run: |
           python run_prediction.py
-
-      # =========================
-      # 9️⃣ キャッシュ保存
-      # =========================
-      - name: Save price cache
-        uses: actions/cache@v3
-        with:
-          path: stock_data/prices.parquet
-          key: price-cache-v1
 
       # =========================
       # 🔟 バックテスト
@@ -78,27 +85,44 @@ jobs:
           python backtest.py
 
       # =========================
-      # 11️⃣ デバッグ
+      # 11️⃣ 出力確認
       # =========================
-      - name: Check outputs
+      - name: Check Outputs
         run: |
-          echo "===== FILES ====="
-          ls -l
 
-          echo "===== BACKTEST RESULT ====="
-          cat backtest_summary.csv || echo "no result file"
+          echo "===== STOCK DATA ====="
+          ls -lh stock_data/
+
+          echo ""
+          echo "===== PREDICTIONS ====="
+          cat stock_data/predictions.csv || echo "No predictions"
+
+          echo ""
+          echo "===== EQUITY CURVE ====="
+          head stock_data/equity_curve.csv || echo "No equity curve"
 
       # =========================
-      # 12️⃣ 結果保存
+      # 12️⃣ キャッシュ保存
       # =========================
-      - name: Commit backtest results
+      - name: Save Price Cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data/prices.parquet
+          key: price-cache-v1
+
+      # =========================
+      # 13️⃣ 結果コミット
+      # =========================
+      - name: Commit Results
         run: |
+
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add rolling_backtest_realistic_v2.csv || true
-          git add backtest_summary.csv || true
-          git add predictions.csv || true
+          git add stock_data/predictions.csv || true
+          git add stock_data/equity_curve.csv || true
+          git add stock_data/ml_dataset.parquet || true
 
-          git commit -m "update full pipeline results [skip ci]" || echo "no change"
+          git commit -m "update pipeline results [skip ci]" || echo "No changes"
+
           git push origin HEAD:main
