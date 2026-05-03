@@ -1,238 +1,285 @@
 import pandas as pd
 import numpy as np
-from lightgbm import LGBMRanker
+import pickle
 
 # =========================
-# 設定（AI主体・4日戦略）
+# 設定
 # =========================
-DATA_PATH = "ml_dataset_4d.parquet"
+DATA_PATH = "stock_data/ml_dataset.parquet"
 
-HOLD_DAYS = 4
-TOP_N_BASE = 3
-TOP_RATE_BASE = 0.05
+MODEL_PATH = "stock_data/lgbm_ranker.pkl"
 
 INITIAL_CAPITAL = 1.0
-FEE = 0.001
 
-# =========================
-# データ
-# =========================
-df = pd.read_parquet(DATA_PATH)
-df["Date"] = pd.to_datetime(df["Date"])
-df["Year"] = df["Date"].dt.year
-df = df.sort_values(["Date", "Ticker"]).reset_index(drop=True)
+TOP_N = 3
+HOLD_DAYS = 5
 
-# =========================
-# 市場トレンド
-# =========================
-market = df.groupby("Date")["Close"].mean()
-market = market.pct_change(5)
-df = df.merge(market.rename("Market_Trend"), on="Date")
+STOP_LOSS = -0.07
 
 # =========================
 # 特徴量
 # =========================
 FEATURES = [
-    "Breakout",
-    "Volume_Spike",
-    "Vol_Expansion",
-    "Gap",
-    "Trend_5",
-    "Trend_10",
-    "Momentum_Std",
-    "Drawdown",
-    "final_score"
+
+    "close_ma5_ratio",
+    "close_ma25_ratio",
+    "ma25_slope",
+    "high_break_20d",
+
+    "return_5d",
+    "return_20d",
+    "relative_strength_20d",
+    "industry_rs_rank",
+
+    "volume_ratio_5d",
+    "volume_ratio_20d",
+    "turnover_ratio",
+    "volume_zscore",
+
+    "atr_ratio",
+    "bb_width",
+    "range_compression_5d",
+
+    "nikkei_return_5d",
+    "topix_trend",
+    "growth_index_strength",
+
+    "return_rank_daily",
+    "volume_rank_daily",
+    "volatility_rank",
+    "marketcap_rank",
+    "rs_rank_cross_section",
+
+    "upper_shadow_ratio",
+    "gap_up_ratio",
+    "bb_position"
 ]
 
-df = df.dropna(subset=FEATURES + ["TargetRank", "Market_Trend"]).copy()
+# =========================
+# データ読み込み
+# =========================
+print("Loading dataset...")
+
+df = pd.read_parquet(DATA_PATH)
+
+df["Date"] = pd.to_datetime(df["Date"])
+
+df = df.sort_values(
+    ["Date", "Ticker"]
+).reset_index(drop=True)
 
 # =========================
-# 価格辞書
+# テスト期間
 # =========================
-price_open = {(r.Date, r.Ticker): r.Open for r in df.itertuples()}
+TEST_START_DATE = "2024-01-01"
+
+df = df[
+    df["Date"] >= TEST_START_DATE
+].copy()
 
 # =========================
-# 期間分割
+# モデル読み込み
 # =========================
-splits = [
-    (2018, 2021, 2022),
-    (2019, 2022, 2023),
-    (2020, 2023, 2024),
+print("Loading model...")
+
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
+
+# =========================
+# prediction
+# =========================
+print("Predicting scores...")
+
+df["pred_score"] = model.predict(
+    df[FEATURES]
+)
+
+# =========================
+# rank
+# =========================
+df["pred_rank"] = (
+    df.groupby("Date")["pred_score"]
+    .rank(ascending=False)
+)
+
+# =========================
+# 過熱除外
+# =========================
+df = df[
+    df["return_5d"] < 0.30
 ]
 
-results = []
+df = df[
+    df["gap_up_ratio"] < 0.10
+]
+
+df = df[
+    df["upper_shadow_ratio"] < 0.05
+]
+
+df = df[
+    df["bb_position"] < 0.98
+]
+
+df = df[
+    df["atr_ratio"] < 0.15
+]
 
 # =========================
-# ループ
+# TOP N
 # =========================
-for train_start, train_end, test_year in splits:
+top_df = df[
+    df["pred_rank"] <= TOP_N
+].copy()
 
-    print(f"\n=== {train_start}-{train_end} → {test_year} ===")
+# =========================
+# リターン計算
+# =========================
+print("Calculating returns...")
 
-    train_df = df[(df["Year"] >= train_start) & (df["Year"] <= train_end)].copy()
-    test_df = df[df["Year"] == test_year].copy()
+top_df["strategy_return"] = top_df["target_return"]
 
-    # =========================
-    # ラベル
-    # =========================
-    train_df["TargetRankInt"] = pd.qcut(
-        train_df["TargetRank"],
-        q=10,
-        labels=False,
-        duplicates="drop"
-    ).astype(int)
+# =========================
+# 損切り適用
+# =========================
+top_df["strategy_return"] = np.where(
+    top_df["strategy_return"] < STOP_LOSS,
+    STOP_LOSS,
+    top_df["strategy_return"]
+)
 
-    # =========================
-    # 学習
-    # =========================
-    X = train_df[FEATURES]
-    y = train_df["TargetRankInt"]
-    group = train_df.groupby("Date").size().values
+# =========================
+# 日次平均
+# =========================
+daily_returns = (
+    top_df.groupby("Date")["strategy_return"]
+    .mean()
+)
 
-    model = LGBMRanker(
-        objective="lambdarank",
-        n_estimators=300,
-        learning_rate=0.05,
-        num_leaves=31,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
+# =========================
+# 累積リターン
+# =========================
+equity_curve = (
+    1 + daily_returns
+).cumprod()
+
+# =========================
+# CAGR
+# =========================
+days = (
+    equity_curve.index.max()
+    - equity_curve.index.min()
+).days
+
+years = days / 365
+
+final_value = equity_curve.iloc[-1]
+
+cagr = (
+    final_value ** (1 / years)
+    - 1
+)
+
+# =========================
+# Sharpe
+# =========================
+sharpe = (
+    daily_returns.mean()
+    / daily_returns.std()
+) * np.sqrt(252)
+
+# =========================
+# Max Drawdown
+# =========================
+rolling_max = equity_curve.cummax()
+
+drawdown = (
+    equity_curve
+    / rolling_max
+    - 1
+)
+
+max_dd = drawdown.min()
+
+# =========================
+# 年別成績
+# =========================
+yearly_result = []
+
+for year, group in daily_returns.groupby(
+    daily_returns.index.year
+):
+
+    yearly_curve = (
+        1 + group
+    ).cumprod()
+
+    yearly_return = (
+        yearly_curve.iloc[-1]
+        - 1
     )
 
-    model.fit(X, y, group=group)
+    yearly_sharpe = (
+        group.mean()
+        / group.std()
+    ) * np.sqrt(252)
 
-    # =========================
-    # 予測
-    # =========================
-    test_df["pred_score"] = model.predict(test_df[FEATURES])
-
-    dates = sorted(test_df["Date"].unique())
-    date_groups = dict(tuple(test_df.groupby("Date")))
-
-    capital = INITIAL_CAPITAL
-    positions = []
-    equity = []
-
-    # 🔥 トレード数カウンター
-    trade_count = 0
-
-    # =========================
-    # バックテスト
-    # =========================
-    for i in range(len(dates) - HOLD_DAYS - 1):
-
-        today = dates[i]
-        next_day = dates[i + 1]
-        df_today = date_groups[today].copy()
-
-        # =========================
-        # レジーム
-        # =========================
-        market_trend = df_today["Market_Trend"].iloc[0]
-
-        if market_trend < 0.01:
-            equity.append(capital)
-            continue
-
-        if market_trend > 0.02:
-            TOP_N = 5
-            TOP_RATE = 0.03
-        else:
-            TOP_N = TOP_N_BASE
-            TOP_RATE = TOP_RATE_BASE
-
-        # =========================
-        # EXIT
-        # =========================
-        daily_return = 0
-        new_pos = []
-
-        for p in positions:
-            if i == p["exit_idx"]:
-                price = price_open.get((today, p["Ticker"]))
-                if price is not None:
-                    ret = (price / p["entry"] - 1) - FEE
-                    daily_return += ret * p["w"]
-            else:
-                new_pos.append(p)
-
-        positions = new_pos
-
-        # =========================
-        # ENTRY
-        # =========================
-        df_today["pred_rank"] = df_today["pred_score"].rank(ascending=False, pct=True)
-
-        candidates = df_today[
-            (df_today["pred_rank"] <= TOP_RATE) &
-            (df_today["Volume_Spike"] > 0) 
-        ]
-
-        if len(candidates) > 0:
-
-            selected = candidates.sort_values("pred_score", ascending=False).head(TOP_N)
-
-            slots = TOP_N - len(positions)
-
-            if slots > 0:
-                entries = selected.head(slots)
-
-                weights = np.exp(entries["pred_score"] * 1.5)
-                weights /= weights.sum()
-
-                for (_, r), w in zip(entries.iterrows(), weights):
-                    price = price_open.get((next_day, r["Ticker"]))
-                    if price is not None:
-                        trade_count += 1  # 🔥ここ追加
-
-                        positions.append({
-                            "Ticker": r["Ticker"],
-                            "entry": price * (1 + FEE),
-                            "exit_idx": i + HOLD_DAYS,
-                            "w": w
-                        })
-
-        # =========================
-        # 正規化
-        # =========================
-        if positions:
-            s = sum(p["w"] for p in positions)
-            for p in positions:
-                p["w"] /= s
-
-        # =========================
-        # 資産更新
-        # =========================
-        capital *= (1 + daily_return)
-        equity.append(capital)
-
-    # =========================
-    # 評価
-    # =========================
-    equity = pd.Series(equity)
-
-    if len(equity) == 0:
-        print("⚠️ トレードなし")
-        continue
-
-    ret = equity.pct_change().fillna(0)
-
-    CAGR = equity.iloc[-1] ** (252 / len(equity)) - 1
-    Sharpe = ret.mean() / (ret.std() + 1e-9) * np.sqrt(252)
-    MaxDD = (equity / equity.cummax() - 1).min()
-
-    print(f"CAGR  : {CAGR:.4f}")
-    print(f"Sharpe: {Sharpe:.4f}")
-    print(f"MaxDD : {MaxDD:.4f}")
-    print(f"Trades: {trade_count}")  # 🔥表示
-
-    results.append({
-        "Period": f"{train_start}-{train_end}→{test_year}",
-        "CAGR": CAGR,
-        "Sharpe": Sharpe,
-        "MaxDD": MaxDD,
-        "Trades": trade_count
+    yearly_result.append({
+        "Year": year,
+        "Return": yearly_return,
+        "Sharpe": yearly_sharpe
     })
 
-print("\n=== SUMMARY ===")
-print(pd.DataFrame(results))
+yearly_df = pd.DataFrame(yearly_result)
+
+# =========================
+# 月別成績
+# =========================
+monthly_returns = (
+    daily_returns
+    .resample("M")
+    .apply(lambda x: (1 + x).prod() - 1)
+)
+
+# =========================
+# 結果表示
+# =========================
+print("\n=== BACKTEST RESULT ===")
+
+print(f"CAGR     : {cagr:.4f}")
+print(f"Sharpe   : {sharpe:.4f}")
+print(f"MaxDD    : {max_dd:.4f}")
+
+print(f"\nFinal Capital : {final_value:.4f}")
+
+print(f"\nTrades : {len(top_df)}")
+
+# =========================
+# 年別
+# =========================
+print("\n=== YEARLY PERFORMANCE ===")
+
+print(yearly_df)
+
+# =========================
+# 月別
+# =========================
+print("\n=== MONTHLY RETURNS ===")
+
+print(monthly_returns.tail(12))
+
+# =========================
+# Equity Curve保存
+# =========================
+equity_curve_df = pd.DataFrame({
+    "Date": equity_curve.index,
+    "Equity": equity_curve.values
+})
+
+equity_curve_df.to_csv(
+    "stock_data/equity_curve.csv",
+    index=False
+)
+
+print("\nSaved equity curve.")
+print("Done.")
