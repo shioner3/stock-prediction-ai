@@ -119,12 +119,6 @@ df["volume_ratio_20d"] = (
     df["Volume"] / vol_ma20
 )
 
-# =========================
-# turnover ratio
-# =========================
-df["turnover_ratio"] = (
-    df["Volume"] / df["SharesOutstanding"]
-)
 
 # =========================
 # volume zscore
@@ -289,7 +283,6 @@ FEATURE_COLUMNS = [
 
     "volume_ratio_5d",
     "volume_ratio_20d",
-    "turnover_ratio",
     "volume_zscore",
 
     "atr_ratio",
