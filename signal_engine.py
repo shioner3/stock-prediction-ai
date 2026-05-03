@@ -11,7 +11,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 # 🔥 ① クロスセクション正規化（核心）
 # =========================
 df["ret_rank"] = df.groupby("Date")["return_5d"].rank(pct=True)
-df["vol_rank"] = df.groupby("Date")["volume_ratio_5d"].rank(pct=True)
+df["volume_rank_daily"] = df.groupby("Date")["volume_ratio_5d"].rank(pct=True)
 df["bb_rank"] = df.groupby("Date")["bb_position"].rank(pct=True)
 df["trend_rank"] = df.groupby("Date")["close_ma5_ratio"].rank(pct=True)
 
