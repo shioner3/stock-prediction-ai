@@ -16,7 +16,9 @@ df = pd.read_parquet(INPUT_PATH)
 
 df["Date"] = pd.to_datetime(df["Date"])
 
-df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+df = df.sort_values(
+    ["Ticker", "Date"]
+).reset_index(drop=True)
 
 # =========================
 # 移動平均
@@ -36,28 +38,36 @@ df["ma25"] = (
 # =========================
 # close_ma_ratio
 # =========================
-df["close_ma5_ratio"] = df["Close"] / df["ma5"]
+df["close_ma5_ratio"] = (
+    df["Close"] / df["ma5"]
+)
 
-df["close_ma25_ratio"] = df["Close"] / df["ma25"]
+df["close_ma25_ratio"] = (
+    df["Close"] / df["ma25"]
+)
 
 # =========================
 # ma25 slope
 # =========================
 df["ma25_slope"] = (
     df.groupby("Ticker")["ma25"]
-    .pct_change(5)
+    .pct_change(5, fill_method=None)
 )
 
 # =========================
 # high break
+# 「当日高値」を使わない
 # =========================
 rolling_high_20 = (
     df.groupby("Ticker")["High"]
-    .transform(lambda x: x.shift(1).rolling(20).max())
+    .transform(
+        lambda x:
+        x.shift(1).rolling(20).max()
+    )
 )
 
 df["high_break_20d"] = (
-    (df["Close"] > rolling_high_20)
+    df["Close"] > rolling_high_20
 ).astype(int)
 
 # =========================
@@ -65,12 +75,12 @@ df["high_break_20d"] = (
 # =========================
 df["return_5d"] = (
     df.groupby("Ticker")["Close"]
-    .pct_change(5)
+    .pct_change(5, fill_method=None)
 )
 
 df["return_20d"] = (
     df.groupby("Ticker")["Close"]
-    .pct_change(20)
+    .pct_change(20, fill_method=None)
 )
 
 # =========================
@@ -82,14 +92,17 @@ market_return_20 = (
 )
 
 df["relative_strength_20d"] = (
-    df["return_20d"] - market_return_20
+    df["return_20d"]
+    - market_return_20
 )
 
 # =========================
 # industry rs rank
 # =========================
 industry_mean = (
-    df.groupby(["Date", "Industry"])["return_20d"]
+    df.groupby(
+        ["Date", "Industry"]
+    )["return_20d"]
     .transform("mean")
 )
 
@@ -119,7 +132,6 @@ df["volume_ratio_20d"] = (
     df["Volume"] / vol_ma20
 )
 
-
 # =========================
 # volume zscore
 # =========================
@@ -141,20 +153,31 @@ prev_close = (
     .shift(1)
 )
 
-tr1 = df["High"] - df["Low"]
+tr1 = (
+    df["High"] - df["Low"]
+)
 
-tr2 = (df["High"] - prev_close).abs()
+tr2 = (
+    df["High"] - prev_close
+).abs()
 
-tr3 = (df["Low"] - prev_close).abs()
+tr3 = (
+    df["Low"] - prev_close
+).abs()
 
-tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+tr = pd.concat(
+    [tr1, tr2, tr3],
+    axis=1
+).max(axis=1)
 
 atr20 = (
     tr.groupby(df["Ticker"])
     .transform(lambda x: x.rolling(20).mean())
 )
 
-df["atr_ratio"] = atr20 / df["Close"]
+df["atr_ratio"] = (
+    atr20 / df["Close"]
+)
 
 # =========================
 # Bollinger Bands
@@ -251,7 +274,10 @@ df["rs_rank_cross_section"] = (
 df["upper_shadow_ratio"] = (
     (
         df["High"]
-        - np.maximum(df["Open"], df["Close"])
+        - np.maximum(
+            df["Open"],
+            df["Close"]
+        )
     )
     / df["Close"]
 )
@@ -265,11 +291,9 @@ df["gap_up_ratio"] = (
 )
 
 # =========================
-# 保存
+# 特徴量一覧
 # =========================
 FEATURE_COLUMNS = [
-    "Date",
-    "Ticker",
 
     "close_ma5_ratio",
     "close_ma25_ratio",
@@ -303,10 +327,39 @@ FEATURE_COLUMNS = [
     "bb_position"
 ]
 
-df = df[FEATURE_COLUMNS]
+# =========================
+# 🔥 超重要
+# 全特徴量を1日shift
+# 「翌日寄りで使える情報」に統一
+# =========================
+print("Shifting features to avoid leakage...")
 
-df = df.replace([np.inf, -np.inf], np.nan)
+df[FEATURE_COLUMNS] = (
+    df.groupby("Ticker")[FEATURE_COLUMNS]
+    .shift(1)
+)
 
+# =========================
+# 保存列
+# =========================
+SAVE_COLUMNS = [
+    "Date",
+    "Ticker"
+] + FEATURE_COLUMNS
+
+df = df[SAVE_COLUMNS]
+
+# =========================
+# inf除去
+# =========================
+df = df.replace(
+    [np.inf, -np.inf],
+    np.nan
+)
+
+# =========================
+# 欠損除去
+# =========================
 df = df.dropna()
 
 # =========================
@@ -314,7 +367,17 @@ df = df.dropna()
 # =========================
 print("Saving features...")
 
-df.to_parquet(SAVE_PATH, index=False)
+df.to_parquet(
+    SAVE_PATH,
+    index=False
+)
 
+# =========================
+# 完了
+# =========================
 print("Done.")
+
 print(df.head())
+
+print("\nShape:")
+print(df.shape)
