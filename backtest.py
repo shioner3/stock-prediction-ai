@@ -36,13 +36,6 @@ df["forward_return"] = (
 )
 
 # =========================
-# signal_score（前工程で作られている前提）
-# =========================
-df = pd.read_parquet("stock_data/technical_features.parquet")
-
-df["signal_score"] = df.apply(generate_signal, axis=1)
-
-# =========================
 # cross-sectional ranking（最重要）
 # =========================
 df["score_rank"] = df.groupby("Date")["signal_score"].rank(pct=True)
