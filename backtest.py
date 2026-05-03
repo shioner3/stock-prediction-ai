@@ -16,6 +16,11 @@ HOLD_DAYS = 5
 
 STOP_LOSS = -0.07
 
+SLIPPAGE = 0.002
+COMMISSION = 0.001
+
+TEST_START_DATE = "2024-01-01"
+
 # =========================
 # 特徴量
 # =========================
@@ -69,8 +74,6 @@ df = df.sort_values(
 # =========================
 # テスト期間
 # =========================
-TEST_START_DATE = "2024-01-01"
-
 df = df[
     df["Date"] >= TEST_START_DATE
 ].copy()
@@ -93,35 +96,49 @@ df["pred_score"] = model.predict(
 )
 
 # =========================
-# rank
+# 日次rank
 # =========================
 df["pred_rank"] = (
     df.groupby("Date")["pred_score"]
-    .rank(ascending=False)
+    .rank(
+        ascending=False,
+        method="first"
+    )
 )
 
 # =========================
 # 過熱除外
 # =========================
+print("Applying filters...")
+
 df = df[
-    df["return_5d"] < 0.30
+    df["return_5d"] < 0.25
 ]
 
 df = df[
-    df["gap_up_ratio"] < 0.10
+    df["gap_up_ratio"] < 0.08
 ]
 
 df = df[
-    df["upper_shadow_ratio"] < 0.05
+    df["upper_shadow_ratio"] < 0.04
 ]
 
 df = df[
-    df["bb_position"] < 0.98
+    df["bb_position"] < 0.95
 ]
 
 df = df[
-    df["atr_ratio"] < 0.15
+    df["atr_ratio"] < 0.12
 ]
+
+# =========================
+# 流動性フィルタ
+# =========================
+if "volume_ratio_20d" in df.columns:
+
+    df = df[
+        df["volume_ratio_20d"] > 0.3
+    ]
 
 # =========================
 # TOP N
@@ -131,19 +148,45 @@ top_df = df[
 ].copy()
 
 # =========================
-# リターン計算
+# 現実的リターン
 # =========================
-print("Calculating returns...")
+print("Calculating realistic returns...")
 
-top_df["strategy_return"] = top_df["target_return"]
+# 基本リターン
+top_df["strategy_return"] = (
+    top_df["target_return"]
+)
 
 # =========================
-# 損切り適用
+# ストップ高対策
+# 急騰銘柄を少し抑制
+# =========================
+top_df["strategy_return"] = np.where(
+    top_df["strategy_return"] > 1.0,
+    1.0,
+    top_df["strategy_return"]
+)
+
+# =========================
+# 損切り
 # =========================
 top_df["strategy_return"] = np.where(
     top_df["strategy_return"] < STOP_LOSS,
     STOP_LOSS,
     top_df["strategy_return"]
+)
+
+# =========================
+# コスト控除
+# =========================
+total_cost = (
+    SLIPPAGE
+    + COMMISSION
+)
+
+top_df["strategy_return"] = (
+    top_df["strategy_return"]
+    - total_cost
 )
 
 # =========================
@@ -155,11 +198,17 @@ daily_returns = (
 )
 
 # =========================
-# 累積リターン
+# 欠損日対策
+# =========================
+daily_returns = daily_returns.fillna(0)
+
+# =========================
+# Equity Curve
 # =========================
 equity_curve = (
-    1 + daily_returns
-).cumprod()
+    INITIAL_CAPITAL
+    * (1 + daily_returns).cumprod()
+)
 
 # =========================
 # CAGR
@@ -173,23 +222,33 @@ years = days / 365
 
 final_value = equity_curve.iloc[-1]
 
-cagr = (
-    final_value ** (1 / years)
-    - 1
-)
+if years > 0:
+    cagr = (
+        final_value ** (1 / years)
+        - 1
+    )
+else:
+    cagr = 0
 
 # =========================
 # Sharpe
 # =========================
-sharpe = (
-    daily_returns.mean()
-    / daily_returns.std()
-) * np.sqrt(252)
+if daily_returns.std() > 0:
+
+    sharpe = (
+        daily_returns.mean()
+        / daily_returns.std()
+    ) * np.sqrt(252)
+
+else:
+    sharpe = 0
 
 # =========================
 # Max Drawdown
 # =========================
-rolling_max = equity_curve.cummax()
+rolling_max = (
+    equity_curve.cummax()
+)
 
 drawdown = (
     equity_curve
@@ -198,6 +257,30 @@ drawdown = (
 )
 
 max_dd = drawdown.min()
+
+# =========================
+# Calmar Ratio
+# =========================
+if abs(max_dd) > 0:
+    calmar = cagr / abs(max_dd)
+else:
+    calmar = 0
+
+# =========================
+# 勝率
+# =========================
+win_rate = (
+    (top_df["strategy_return"] > 0)
+    .mean()
+)
+
+# =========================
+# 平均利益
+# =========================
+avg_return = (
+    top_df["strategy_return"]
+    .mean()
+)
 
 # =========================
 # 年別成績
@@ -209,18 +292,22 @@ for year, group in daily_returns.groupby(
 ):
 
     yearly_curve = (
-        1 + group
-    ).cumprod()
+        (1 + group)
+        .cumprod()
+    )
 
     yearly_return = (
         yearly_curve.iloc[-1]
         - 1
     )
 
-    yearly_sharpe = (
-        group.mean()
-        / group.std()
-    ) * np.sqrt(252)
+    if group.std() > 0:
+        yearly_sharpe = (
+            group.mean()
+            / group.std()
+        ) * np.sqrt(252)
+    else:
+        yearly_sharpe = 0
 
     yearly_result.append({
         "Year": year,
@@ -235,8 +322,11 @@ yearly_df = pd.DataFrame(yearly_result)
 # =========================
 monthly_returns = (
     daily_returns
-    .resample("M")
-    .apply(lambda x: (1 + x).prod() - 1)
+    .resample("ME")
+    .apply(
+        lambda x:
+        (1 + x).prod() - 1
+    )
 )
 
 # =========================
@@ -244,13 +334,18 @@ monthly_returns = (
 # =========================
 print("\n=== BACKTEST RESULT ===")
 
-print(f"CAGR     : {cagr:.4f}")
-print(f"Sharpe   : {sharpe:.4f}")
-print(f"MaxDD    : {max_dd:.4f}")
+print(f"CAGR        : {cagr:.4f}")
+print(f"Sharpe      : {sharpe:.4f}")
+print(f"Calmar      : {calmar:.4f}")
+print(f"MaxDD       : {max_dd:.4f}")
 
 print(f"\nFinal Capital : {final_value:.4f}")
 
-print(f"\nTrades : {len(top_df)}")
+print(f"\nTrades        : {len(top_df)}")
+
+print(f"Win Rate      : {win_rate:.4f}")
+
+print(f"Average Return: {avg_return:.4f}")
 
 # =========================
 # 年別
@@ -264,10 +359,12 @@ print(yearly_df)
 # =========================
 print("\n=== MONTHLY RETURNS ===")
 
-print(monthly_returns.tail(12))
+print(
+    monthly_returns.tail(12)
+)
 
 # =========================
-# Equity Curve保存
+# 保存
 # =========================
 equity_curve_df = pd.DataFrame({
     "Date": equity_curve.index,
@@ -279,5 +376,18 @@ equity_curve_df.to_csv(
     index=False
 )
 
-print("\nSaved equity curve.")
+yearly_df.to_csv(
+    "stock_data/yearly_result.csv",
+    index=False
+)
+
+monthly_returns.to_csv(
+    "stock_data/monthly_returns.csv"
+)
+
+# =========================
+# 完了
+# =========================
+print("\nSaved results.")
+
 print("Done.")
