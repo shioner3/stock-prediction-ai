@@ -10,7 +10,7 @@ SLIPPAGE = 0.002
 COMMISSION = 0.001
 
 # ★調整ポイント（トレード増やす方向）
-ENTRY_THRESHOLD = 0.05   # ↓下げる（重要）
+ENTRY_THRESHOLD = 0.15   # ↓下げる（重要）
 STRONG_THRESHOLD = 1.5
 
 df = pd.read_parquet(DATA_PATH)
