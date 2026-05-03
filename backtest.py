@@ -17,10 +17,6 @@ HOLD_DAYS = 5
 SLIPPAGE = 0.002
 COMMISSION = 0.001
 
-# 強度配分
-STRONG_WEIGHT = 2.0
-WEAK_WEIGHT = 1.0
-
 # =========================
 # load
 # =========================
@@ -29,61 +25,49 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 # =========================
-# signal engine（2段階版）
+# signal engine（改善版）
 # =========================
 def generate_signal(row):
 
-    momentum = (
-        row["return_5d"] > 0 and
-        row["return_rank_daily"] >= 0.7
-    )
+    score = 0
 
-    trend = (
-        row["close_ma5_ratio"] > 1.01 and
-        row["close_ma25_ratio"] > 1.00 and
-        row["bb_position"] > 0.65
-    )
+    # ===== モメンタム =====
+    if row["return_5d"] > 0:
+        score += 1
+    if row["return_rank_daily"] >= 0.7:
+        score += 1
 
-    volume = (
-        row["volume_ratio_5d"] > 1.0 and
-        row["volume_ratio_20d"] > 0.9 and
-        row["volume_zscore"] > -0.5 and
-        row["volume_rank_daily"] > 0.4
-    )
+    # ===== トレンド =====
+    if row["close_ma5_ratio"] > 1.01:
+        score += 1
+    if row["close_ma25_ratio"] > 1.00:
+        score += 1
+    if row["bb_position"] > 0.65:
+        score += 1
 
-    breakout = (
-        (row["high_break_20d"] > 0) or
-        (row["bb_position"] > 0.7)
-    )
+    # ===== 出来高 =====
+    if row["volume_ratio_5d"] > 1.0:
+        score += 1
+    if row["volume_ratio_20d"] > 0.9:
+        score += 0.5
+    if row["volume_rank_daily"] > 0.4:
+        score += 1
 
-    risk_ok = (
-        row["gap_up_ratio"] < 0.05 and
-        row["atr_ratio"] < 0.12 and
-        row["range_compression_5d"] > 0.95
-    )
+    # ===== ブレイク =====
+    if row["high_break_20d"] > 0:
+        score += 1
+    if row["bb_position"] > 0.7:
+        score += 0.5
 
-    # =========================
-    # 強シグナル（本命）
-    # =========================
-    strong = (
-        momentum and trend and volume and risk_ok
-    )
+    # ===== リスク =====
+    if row["gap_up_ratio"] < 0.05:
+        score += 0.5
+    if row["atr_ratio"] < 0.12:
+        score += 0.5
+    if row["range_compression_5d"] > 0.95:
+        score += 0.5
 
-    # =========================
-    # 弱シグナル（準エントリー）
-    # =========================
-    weak = (
-        momentum and trend and breakout
-    )
-
-    if strong:
-        return 2  # strong
-
-    elif weak:
-        return 1  # weak
-
-    else:
-        return 0  # no signal
+    return score
 
 
 # =========================
@@ -96,13 +80,11 @@ for start, end in TEST_WINDOWS:
     d = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
 
     # =========================
-    # signal生成
+    # signal生成（スコア化）
     # =========================
-    d["signal"] = d.apply(generate_signal, axis=1)
+    d["score"] = d.apply(generate_signal, axis=1)
 
-    # 強い順でランキング
-    d["score"] = d["signal"]
-
+    # 日次ランキング（これが本体）
     d["rank"] = d.groupby("Date")["score"].rank(ascending=False, method="first")
 
     # =========================
@@ -117,9 +99,7 @@ for start, end in TEST_WINDOWS:
 
         new_positions = []
 
-        # =====================
-        # exit処理
-        # =====================
+        # ===== exit =====
         for p in positions:
 
             hold = (date - p["entry"]).days
@@ -133,7 +113,7 @@ for start, end in TEST_WINDOWS:
                     "Date": date,
                     "Ticker": p["Ticker"],
                     "Return": ret,
-                    "signal": p["signal"]
+                    "score": p["score"]
                 })
 
             else:
@@ -141,35 +121,29 @@ for start, end in TEST_WINDOWS:
 
         positions = new_positions
 
-        # =====================
-        # entry処理
-        # =====================
+        # ===== entry =====
         slots = MAX_POSITIONS - len(positions)
 
         if slots > 0:
 
-            picks = d[d["Date"] == date]
-
-            # 強 → 弱の順
-            picks = picks.sort_values(
-                ["signal", "rank"],
-                ascending=[False, True]
+            picks = d[d["Date"] == date].sort_values(
+                "score",
+                ascending=False
             ).head(slots)
 
             for _, row in picks.iterrows():
 
-                # 仮リターン（後で価格ベースに差し替え可）
                 future_ret = row.get("return_5d", 0)
 
                 positions.append({
                     "Ticker": row["Ticker"],
                     "entry": date,
                     "ret": future_ret,
-                    "signal": row["signal"]
+                    "score": row["score"]
                 })
 
     # =========================
-    # 結果
+    # result
     # =========================
     trade_df = pd.DataFrame(trade_log)
 
@@ -187,5 +161,5 @@ for start, end in TEST_WINDOWS:
     print("\nSharpe (simple):",
           trade_df["Return"].mean() / (trade_df["Return"].std() + 1e-9))
 
-    print("\n===== SIGNAL BREAKDOWN =====")
-    print(trade_df["signal"].value_counts())
+    print("\n===== SCORE STATS =====")
+    print(trade_df["score"].describe())
