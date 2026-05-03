@@ -38,8 +38,6 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date","Ticker"])
 
-with open(MODEL_PATH,"rb") as f:
-    model = pickle.load(f)
 
 # =========================
 # 全結果格納
