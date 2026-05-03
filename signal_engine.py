@@ -4,7 +4,7 @@ import numpy as np
 # =========================
 # 設定
 # =========================
-INPUT_PATH = "stock_data/technical_features.parquet"
+INPUT_PATH = "stock_data/ml_dataset.parquet"
 SAVE_PATH = "stock_data/signals.parquet"
 
 # =========================
