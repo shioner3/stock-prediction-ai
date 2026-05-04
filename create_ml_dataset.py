@@ -18,6 +18,18 @@ df["forward_return"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
+# 異常値除去（必須）
+df["forward_return"] = df["forward_return"].clip(-0.5, 0.5)
+
+# log化（推奨）
+df["forward_return"] = np.log1p(df["forward_return"])
+
+# 低位株除外
+df = df[df["Close"] > 100]
+
+# 流動性フィルタ
+df = df[df["Volume"] > 100000]
+
 # =========================
 # target（回帰・ランキング両対応）
 # =========================
