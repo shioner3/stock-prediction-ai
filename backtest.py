@@ -87,7 +87,15 @@ for start, end in REGIME_SPLITS:
                 new_positions.append(p)
 
         positions = new_positions
+        
+        # =====================
+        # entryの直前に追加
+        # =====================
+        today = d[d["Date"] == date].copy()
 
+        # ★追加：クロスセクションrank生成
+        today["score_rank"] = today["signal_score"].rank(pct=True)
+        
         # =====================
         # entry（動的閾値）
         # =====================
