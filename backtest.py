@@ -22,12 +22,18 @@ REGIME_SPLITS = [
 TOP_Q = 0.2
 MAX_TURNOVER_PER_DAY = 0.3
 
+# ★市場フィルタ（ON/OFF）
+USE_MARKET_FILTER = True
+
 # =========================
 # load
 # =========================
 df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
+
+# ★市場トレンド（事前に作ってる前提）
+df["market_trend"] = (df["market_return"] > 0).astype(int)
 
 all_logs = []
 trade_logs = []
@@ -67,6 +73,18 @@ for start, end in REGIME_SPLITS:
             continue
 
         # =========================
+        # ★市場フィルタ
+        # =========================
+        if USE_MARKET_FILTER:
+            if today["market_trend"].iloc[0] == 0:
+                # 弱い日は新規エントリー禁止
+                allow_entry = False
+            else:
+                allow_entry = True
+        else:
+            allow_entry = True
+
+        # =========================
         # exit
         # =========================
         new_positions = []
@@ -88,7 +106,8 @@ for start, end in REGIME_SPLITS:
                     "Return": ret,
                     "prob": p["prob"],
                     "ev": p["ev"],
-                    "weight": p["weight"]
+                    "weight": p["weight"],
+                    "market_return": p["market_return"]
                 })
 
                 turnover_cost += abs(ret) * 0.01
@@ -134,27 +153,30 @@ for start, end in REGIME_SPLITS:
         # =========================
         entry_count = 0
 
-        for _, row in candidates.iterrows():
+        if allow_entry:
 
-            if entry_count >= MAX_NEW_ENTRIES_PER_DAY:
-                break
+            for _, row in candidates.iterrows():
 
-            if len(positions) >= MAX_POSITIONS:
-                break
+                if entry_count >= MAX_NEW_ENTRIES_PER_DAY:
+                    break
 
-            if turnover_cost > MAX_TURNOVER_PER_DAY:
-                break
+                if len(positions) >= MAX_POSITIONS:
+                    break
 
-            positions.append({
-                "entry": date,
-                "ret": row["forward_return"],
-                "Ticker": row["Ticker"],
-                "weight": row["position_size"],
-                "prob": row["prob_entry"],
-                "ev": row["expected_return"]
-            })
+                if turnover_cost > MAX_TURNOVER_PER_DAY:
+                    break
 
-            entry_count += 1
+                positions.append({
+                    "entry": date,
+                    "ret": row["forward_return"],
+                    "Ticker": row["Ticker"],
+                    "weight": row["position_size"],
+                    "prob": row["prob_entry"],
+                    "ev": row["expected_return"],
+                    "market_return": row["market_return"]
+                })
+
+                entry_count += 1
 
         # =========================
         # daily summary
@@ -165,7 +187,8 @@ for start, end in REGIME_SPLITS:
             "n_entries": entry_count,
             "mean_prob": today["prob_entry"].mean(),
             "mean_ev": today["expected_return"].mean(),
-            "realized_return_sum": np.sum(realized_returns) if len(realized_returns) > 0 else 0.0
+            "realized_return_sum": np.sum(realized_returns) if len(realized_returns) > 0 else 0.0,
+            "market_return": today["market_return"].mean()
         })
 
     all_logs.extend(regime_logs)
@@ -185,37 +208,4 @@ print("Avg probability:", res["mean_prob"].mean())
 print("Avg expected value:", res["mean_ev"].mean())
 
 # =========================
-# 勝ち vs 負け
-# =========================
-tr = pd.DataFrame(trade_logs)
-
-win = tr[tr["Return"] > 0]
-lose = tr[tr["Return"] <= 0]
-
-print("\n===== WIN vs LOSE =====")
-print("win:", len(win), "lose:", len(lose))
-
-# =========================
-# ★ decile分析（超重要）
-# =========================
-print("\n===== DECILE ANALYSIS =====")
-
-# probベースで10分割
-tr["decile"] = pd.qcut(tr["prob"], 10, labels=False, duplicates="drop")
-
-decile_stats = tr.groupby("decile").agg({
-    "Return": ["mean", "count"],
-    "prob": "mean",
-    "ev": "mean"
-})
-
-# 勝率
-decile_stats["win_rate"] = tr.groupby("decile")["Return"].apply(lambda x: (x > 0).mean())
-
-print(decile_stats.sort_index())
-
-# =========================
-# DEBUG
-# =========================
-print("\n===== DEBUG RETURN =====")
-print(df["forward_return"].describe())
+# 勝ち vs 負
