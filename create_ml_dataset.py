@@ -12,26 +12,49 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Ticker", "Date"])
 
 # =========================
-# forward return（正しい定義）
+# forward return（銘柄）
 # =========================
-df["forward_return"] = (
+df["forward_return_raw"] = (
     df.groupby("Ticker")["Close"].shift(-HOLD_DAYS) / df["Close"] - 1
 )
 
-# 異常値除去（必須）
+# =========================
+# ★ 市場リターン（1306など）
+# =========================
+# 例：Ticker == "1306" を市場とする
+market = df[df["Ticker"] == "1306"][["Date", "Close"]].copy()
+market["market_return"] = (
+    market["Close"].shift(-HOLD_DAYS) / market["Close"] - 1
+)
+
+market = market[["Date", "market_return"]]
+
+# マージ
+df = df.merge(market, on="Date", how="left")
+
+# =========================
+# ★ 超重要：市場中立化
+# =========================
+df["forward_return"] = df["forward_return_raw"] - df["market_return"]
+
+# =========================
+# 異常値除去
+# =========================
 df["forward_return"] = df["forward_return"].clip(-0.5, 0.5)
 
-# log化（推奨）
+# =========================
+# log化
+# =========================
 df["forward_return"] = np.log1p(df["forward_return"])
 
-# 低位株除外
+# =========================
+# フィルタ
+# =========================
 df = df[df["Close"] > 100]
-
-# 流動性フィルタ
 df = df[df["Volume"] > 100000]
 
 # =========================
-# target（回帰・ランキング両対応）
+# target
 # =========================
 df["target"] = df["forward_return"]
 
