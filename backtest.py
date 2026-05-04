@@ -92,6 +92,15 @@ for start, end in REGIME_SPLITS:
         # entryの直前に追加
         # =====================
         today = d[d["Date"] == date].copy()
+        
+        # ★追加：edge_scoreをその場で生成
+        today["score_rank"] = today["signal_score"].rank(pct=True)
+        today["return_rank"] = today["forward_return"].rank(pct=True)
+
+        today["edge_score"] = (
+            0.7 * today["score_rank"] +
+            0.3 * today["return_rank"]
+        )
 
         # ★追加：クロスセクションrank生成
         today["score_rank"] = today["signal_score"].rank(pct=True)
