@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 # =========================
-# 設定（実運用寄り）
+# 設定
 # =========================
 DATA_PATH = "stock_data/signals.parquet"
 
@@ -11,11 +11,21 @@ MAX_POSITIONS = 5
 
 MAX_NEW_ENTRIES_PER_DAY = 2
 
-TOP_Q = 0.2            # 上位20%のみ対象
-DIVERSITY_LIMIT = 2    # 同一セクター代替用（なければTickerで代用）
-
 SLIPPAGE = 0.002
 COMMISSION = 0.001
+
+# ===== ① walk-forward（レジーム分割）
+REGIME_SPLITS = [
+    ("2022-01-01", "2022-12-31"),
+    ("2023-01-01", "2023-12-31"),
+    ("2024-01-01", "2024-12-31"),
+]
+
+# ===== ② 動的閾値（固定TOP廃止）
+TOP_Q = 0.2
+
+# ===== ④ turnover制御
+MAX_TURNOVER_PER_DAY = 0.3  # 資産の30%まで入れ替え
 
 # =========================
 # load
@@ -24,108 +34,138 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
-# =========================
-# ★重要：日次ランキングに統一（絶対値禁止）
-# =========================
-df["score_rank"] = df.groupby("Date")["signal_score"].rank(pct=True)
-
-df["return_rank"] = df.groupby("Date")["forward_return"].rank(pct=True)
+all_logs = []
 
 # =========================
-# エントリー候補（期待値ベース）
+# walk-forward loop
 # =========================
-df["edge_score"] = (
-    0.7 * df["score_rank"] +
-    0.3 * df["return_rank"]
-)
+for start, end in REGIME_SPLITS:
 
-dates = sorted(df["Date"].unique())
+    print(f"\n===== REGIME {start} → {end} =====")
 
-positions = []
-logs = []
+    d = df[(df["Date"] >= start) & (df["Date"] <= end)].copy()
+    dates = sorted(d["Date"].unique())
 
-for date in dates:
+    positions = []
+    logs = []
 
-    # =====================
-    # exit
-    # =====================
-    new_positions = []
+    # turnover tracking
+    prev_capital = 1.0
 
-    for p in positions:
+    for date in dates:
 
-        hold = (date - p["entry"]).days
-
-        if hold >= HOLD_DAYS:
-
-            ret = p["ret"] - (SLIPPAGE + COMMISSION)
-
-            logs.append({
-                "Date": date,
-                "Return": ret,
-                "signal": p["signal"],
-                "edge": p["edge"]
-            })
-
-        else:
-            new_positions.append(p)
-
-    positions = new_positions
-
-    # =====================
-    # entry
-    # =====================
-    today = df[df["Date"] == date].copy()
-
-    if len(today) == 0:
-        continue
-
-    # ★① 上位だけ（絶対閾値禁止）
-    candidates = today[today["score_rank"] >= (1 - TOP_Q)]
-
-    if len(candidates) == 0:
-        continue
-
-    # ★② エッジ順
-    candidates = candidates.sort_values("edge_score", ascending=False)
-
-    slots = MAX_POSITIONS - len(positions)
-    if slots <= 0:
-        continue
-
-    entry_count = 0
-    used_tickers = set()
-
-    # =====================
-    # entry制御（重要）
-    # =====================
-    for _, row in candidates.iterrows():
-
-        if entry_count >= MAX_NEW_ENTRIES_PER_DAY:
-            break
-
-        if len(positions) >= MAX_POSITIONS:
-            break
-
-        # 重複銘柄制限（実運用必須）
-        if row["Ticker"] in used_tickers:
+        today = d[d["Date"] == date].copy()
+        if len(today) == 0:
             continue
 
-        positions.append({
-            "entry": date,
-            "ret": row["forward_return"],
-            "signal": row["signal_entry"],
-            "edge": row["edge_score"],
-            "Ticker": row["Ticker"]
+        # =====================
+        # exit
+        # =====================
+        new_positions = []
+
+        turnover_cost = 0.0
+
+        for p in positions:
+
+            hold = (date - p["entry"]).days
+
+            if hold >= HOLD_DAYS:
+
+                ret = p["ret"] - (SLIPPAGE + COMMISSION)
+
+                logs.append({
+                    "Date": date,
+                    "Return": ret,
+                    "signal": p["signal"],
+                    "edge": p["edge"],
+                    "regime": start
+                })
+
+                turnover_cost += abs(ret) * 0.01  # 擬似売買コスト
+
+            else:
+                new_positions.append(p)
+
+        positions = new_positions
+
+        # =====================
+        # entry（動的閾値）
+        # =====================
+
+        # ★② TOP固定禁止 → 分位動的
+        threshold = today["score_rank"].quantile(1 - TOP_Q)
+
+        candidates = today[today["score_rank"] >= threshold].copy()
+
+        if len(candidates) == 0:
+            continue
+
+        # edge順
+        candidates = candidates.sort_values("edge_score", ascending=False)
+
+        # =====================
+        # ③ 約定モデル（簡易）
+        # =====================
+        # スリッページ増加（流動性低いほど悪化）
+        candidates["exec_slippage"] = SLIPPAGE * (1 + (1 - candidates["score_rank"]))
+
+        slots = MAX_POSITIONS - len(positions)
+        if slots <= 0:
+            continue
+
+        entry_count = 0
+        used = set()
+
+        for _, row in candidates.iterrows():
+
+            if entry_count >= MAX_NEW_ENTRIES_PER_DAY:
+                break
+
+            if len(positions) >= MAX_POSITIONS:
+                break
+
+            if row["Ticker"] in used:
+                continue
+
+            # =====================
+            # ④ turnover制御
+            # =====================
+            if turnover_cost > MAX_TURNOVER_PER_DAY:
+                break
+
+            positions.append({
+                "entry": date,
+                "ret": row["forward_return"],
+                "signal": row["signal_entry"],
+                "edge": row["edge_score"],
+                "Ticker": row["Ticker"],
+                "slip": row["exec_slippage"]
+            })
+
+            used.add(row["Ticker"])
+            entry_count += 1
+
+        # =====================
+        # portfolio risk tracking
+        # =====================
+        pos_value = len(positions)
+        turnover_ratio = pos_value / MAX_POSITIONS
+
+        logs.append({
+            "Date": date,
+            "Return": np.nan,
+            "signal": -1,
+            "edge": -1,
+            "turnover": turnover_ratio,
+            "regime": start
         })
 
-        used_tickers.add(row["Ticker"])
-        entry_count += 1
-
+    all_logs.extend(logs)
 
 # =========================
 # result
 # =========================
-res = pd.DataFrame(logs)
+res = pd.DataFrame(all_logs).dropna()
 
 print("\n===== RESULT =====")
 print(res["Return"].describe())
@@ -135,7 +175,10 @@ print("\nWin Rate:", (res["Return"] > 0).mean())
 print("\nSharpe:",
       res["Return"].mean() / (res["Return"].std() + 1e-9))
 
+print("\n===== RISK =====")
+print("Avg Turnover:", res["turnover"].mean())
+print("Max Turnover:", res["turnover"].max())
+
 print("\n===== STATS =====")
 print("Total Trades:", len(res))
 print("Avg Trade Return:", res["Return"].mean())
-print("Avg Trades / Day:", len(res) / len(dates))
