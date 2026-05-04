@@ -43,27 +43,27 @@ for start, end in REGIME_SPLITS:
     dates = sorted(d["Date"].unique())
 
     positions = []
-    logs = []
+
+    # ===== 集計用ログ（圧縮） =====
+    regime_logs = []
 
     for date in dates:
 
         today = d[d["Date"] == date].copy()
 
         # =========================
-        # ★ DEBUG① entry前状態
+        # ★圧縮デバッグ（異常時のみ）
         # =========================
         if len(today) > 0:
-            print(f"\n[DEBUG] {date}")
-            print("rows:", len(today))
+            fr = today["forward_return"]
+            ss = today["signal_score"]
 
-            if "forward_return" in today.columns:
-                print("forward_return mean:", today["forward_return"].mean())
+            # 異常検知だけ出す
+            if fr.isna().mean() > 0.5 or ss.std() < 1e-6:
+                print(f"[WARN] {date}")
+                print("forward_return nan%:", fr.isna().mean())
+                print("signal_score std:", ss.std())
 
-            if "signal_score" in today.columns:
-                print("signal_score mean:", today["signal_score"].mean())
-                print("signal_score max:", today["signal_score"].max())
-
-        # 空日はスキップ
         if len(today) == 0:
             continue
 
@@ -73,6 +73,8 @@ for start, end in REGIME_SPLITS:
         new_positions = []
         turnover_cost = 0.0
 
+        realized_returns = []
+
         for p in positions:
 
             hold = (date - p["entry"]).days
@@ -81,13 +83,7 @@ for start, end in REGIME_SPLITS:
 
                 ret = p["ret"] - (SLIPPAGE + COMMISSION)
 
-                logs.append({
-                    "Date": date,
-                    "Return": ret,
-                    "signal": p["signal"],
-                    "edge": p["edge"],
-                    "regime": start
-                })
+                realized_returns.append(ret)
 
                 turnover_cost += abs(ret) * 0.01
 
@@ -97,12 +93,7 @@ for start, end in REGIME_SPLITS:
         positions = new_positions
 
         # =========================
-        # entry前デバッグ②
-        # =========================
-        print("pre-entry len(today):", len(today))
-
-        # =========================
-        # ranking（ここで一回だけ作る）
+        # entry準備
         # =========================
         today["score_rank"] = today["signal_score"].rank(pct=True)
         today["return_rank"] = today["forward_return"].rank(pct=True)
@@ -112,11 +103,8 @@ for start, end in REGIME_SPLITS:
             0.3 * today["return_rank"]
         )
 
-        # =========================
-        # entry filter（動的）
-        # =========================
         threshold = today["score_rank"].quantile(1 - TOP_Q)
-        candidates = today[today["score_rank"] >= threshold].copy()
+        candidates = today[today["score_rank"] >= threshold]
 
         if len(candidates) == 0:
             continue
@@ -124,11 +112,7 @@ for start, end in REGIME_SPLITS:
         candidates = candidates.sort_values("edge_score", ascending=False)
 
         slots = MAX_POSITIONS - len(positions)
-        if slots <= 0:
-            continue
-
         entry_count = 0
-        used = set()
 
         for _, row in candidates.iterrows():
 
@@ -138,51 +122,41 @@ for start, end in REGIME_SPLITS:
             if len(positions) >= MAX_POSITIONS:
                 break
 
-            if row["Ticker"] in used:
-                continue
-
             if turnover_cost > MAX_TURNOVER_PER_DAY:
                 break
 
             positions.append({
                 "entry": date,
                 "ret": row["forward_return"],
-                "signal": row["signal_entry"],
-                "edge": row["edge_score"],
                 "Ticker": row["Ticker"]
             })
 
-            used.add(row["Ticker"])
             entry_count += 1
 
-        logs.append({
+        # =========================
+        # 日次ログ（圧縮）
+        # =========================
+        regime_logs.append({
             "Date": date,
-            "Return": np.nan,
-            "signal": -1,
-            "edge": -1,
-            "turnover": len(positions) / MAX_POSITIONS,
-            "regime": start
+            "n_positions": len(positions),
+            "n_entries": entry_count,
+            "mean_score": today["signal_score"].mean(),
+            "mean_forward_return": today["forward_return"].mean(),
+            "realized_return_sum": np.sum(realized_returns) if len(realized_returns) > 0 else 0.0
         })
 
-    all_logs.extend(logs)
+    all_logs.extend(regime_logs)
 
 # =========================
 # result
 # =========================
-res = pd.DataFrame(all_logs).dropna()
+res = pd.DataFrame(all_logs)
 
 print("\n===== RESULT =====")
-print(res["Return"].describe())
-
-print("\nWin Rate:", (res["Return"] > 0).mean())
-
-print("\nSharpe:",
-      res["Return"].mean() / (res["Return"].std() + 1e-9))
-
-print("\n===== RISK =====")
-print("Avg Turnover:", res["turnover"].mean())
-print("Max Turnover:", res["turnover"].max())
+print(res[["realized_return_sum"]].describe())
 
 print("\n===== STATS =====")
-print("Total Trades:", len(res))
-print("Avg Trade Return:", res["Return"].mean())
+print("Avg positions:", res["n_positions"].mean())
+print("Avg entries/day:", res["n_entries"].mean())
+print("Avg signal:", res["mean_score"].mean())
+print("Avg forward return:", res["mean_forward_return"].mean())
