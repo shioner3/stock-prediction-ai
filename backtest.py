@@ -38,6 +38,23 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 # =========================
+# ★ 利益/損失の基準（超重要）
+# =========================
+# 過去全体から固定推定（リークなし）
+pos_mean = df[df["forward_return"] > 0]["forward_return"].mean()
+neg_mean = abs(df[df["forward_return"] < 0]["forward_return"].mean())
+
+# fallback
+if np.isnan(pos_mean):
+    pos_mean = 0.05
+if np.isnan(neg_mean):
+    neg_mean = 0.03
+
+print("\n===== PAYOFF STRUCTURE =====")
+print("avg gain:", pos_mean)
+print("avg loss:", neg_mean)
+
+# =========================
 # walk-forward
 # =========================
 for start, end in REGIME_SPLITS:
@@ -57,7 +74,7 @@ for start, end in REGIME_SPLITS:
             continue
 
         # =========================
-        # exit（評価だけforward_return使用）
+        # exit
         # =========================
         new_positions = []
         realized_returns = []
@@ -88,17 +105,16 @@ for start, end in REGIME_SPLITS:
         today["prob_entry"] = sigmoid(score_z)
 
         # =========================
-        # ② expected_return（未来使わない）
+        # ② ★ expected_return（完全修正版）
         # =========================
-        # ★ proxy設計（重要）
+        # EV = p * gain - (1-p) * loss
         today["expected_return"] = (
-            0.5 * today["prob_entry"] +
-            0.3 * score_z +
-            0.2 * today["signal_score"]
+            today["prob_entry"] * pos_mean -
+            (1 - today["prob_entry"]) * neg_mean
         )
 
         # =========================
-        # ③ position sizing（未来なし）
+        # ③ position sizing（EVベース）
         # =========================
         today["position_size"] = np.clip(today["expected_return"], 0, None)
 
@@ -114,6 +130,7 @@ for start, end in REGIME_SPLITS:
         if len(candidates) == 0:
             continue
 
+        # ★EV順（ここが本質）
         candidates = candidates.sort_values("expected_return", ascending=False)
 
         # =========================
@@ -134,10 +151,11 @@ for start, end in REGIME_SPLITS:
 
             positions.append({
                 "entry": date,
-                "ret": row["forward_return"],  # ←ここだけOK（exit専用）
+                "ret": row["forward_return"],  # exit用のみOK
                 "Ticker": row["Ticker"],
                 "weight": row["position_size"],
-                "prob": row["prob_entry"]
+                "prob": row["prob_entry"],
+                "ev": row["expected_return"]
             })
 
             entry_count += 1
@@ -151,7 +169,7 @@ for start, end in REGIME_SPLITS:
             "n_entries": entry_count,
             "mean_signal": today["signal_score"].mean(),
             "mean_prob": today["prob_entry"].mean(),
-            "mean_expected_return": today["expected_return"].mean(),
+            "mean_ev": today["expected_return"].mean(),
             "realized_return_sum": np.sum(realized_returns) if len(realized_returns) > 0 else 0.0
         })
 
@@ -170,4 +188,4 @@ print("Avg positions:", res["n_positions"].mean())
 print("Avg entries/day:", res["n_entries"].mean())
 print("Avg signal:", res["mean_signal"].mean())
 print("Avg probability:", res["mean_prob"].mean())
-print("Avg expected return:", res["mean_expected_return"].mean())
+print("Avg expected value:", res["mean_ev"].mean())
