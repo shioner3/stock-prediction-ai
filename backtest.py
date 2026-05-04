@@ -8,7 +8,6 @@ DATA_PATH = "stock_data/signals.parquet"
 
 HOLD_DAYS = 5
 MAX_POSITIONS = 5
-
 MAX_NEW_ENTRIES_PER_DAY = 2
 
 SLIPPAGE = 0.002
@@ -33,7 +32,7 @@ df = df.sort_values(["Date", "Ticker"])
 all_logs = []
 
 # =========================
-# sigmoid（確率化）
+# sigmoid
 # =========================
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
@@ -54,15 +53,11 @@ for start, end in REGIME_SPLITS:
     for date in dates:
 
         today = d[d["Date"] == date].copy()
-
-        # =========================
-        # safety check
-        # =========================
         if len(today) == 0:
             continue
 
         # =========================
-        # exit
+        # exit（評価だけforward_return使用）
         # =========================
         new_positions = []
         realized_returns = []
@@ -75,7 +70,6 @@ for start, end in REGIME_SPLITS:
             if hold >= HOLD_DAYS:
 
                 ret = p["ret"] - (SLIPPAGE + COMMISSION)
-
                 realized_returns.append(ret)
 
                 turnover_cost += abs(ret) * 0.01
@@ -86,34 +80,33 @@ for start, end in REGIME_SPLITS:
         positions = new_positions
 
         # =========================
-        # ① signal → probability化（重要）
+        # ① signal → probability
         # =========================
         score = today["signal_score"]
-
-        # z-score化（安定化）
         score_z = (score - score.mean()) / (score.std() + 1e-9)
 
-        # ★確率化（ここが核心）
         today["prob_entry"] = sigmoid(score_z)
 
         # =========================
-        # ② expected returnベース
+        # ② expected_return（未来使わない）
         # =========================
+        # ★ proxy設計（重要）
         today["expected_return"] = (
-            today["prob_entry"] * today["forward_return"]
+            0.5 * today["prob_entry"] +
+            0.3 * score_z +
+            0.2 * today["signal_score"]
         )
 
         # =========================
-        # ③ position sizing（期待値ベース）
+        # ③ position sizing（未来なし）
         # =========================
-        today["position_size"] = today["prob_entry"] * np.abs(today["forward_return"])
+        today["position_size"] = np.clip(today["expected_return"], 0, None)
 
-        # 正規化（資金配分）
         if today["position_size"].sum() > 0:
             today["position_size"] /= today["position_size"].sum()
 
         # =========================
-        # entry universe（弱制約のみ）
+        # entry universe
         # =========================
         threshold = today["prob_entry"].quantile(1 - TOP_Q)
         candidates = today[today["prob_entry"] >= threshold].copy()
@@ -121,13 +114,11 @@ for start, end in REGIME_SPLITS:
         if len(candidates) == 0:
             continue
 
-        # expected value順
         candidates = candidates.sort_values("expected_return", ascending=False)
 
         # =========================
-        # entry execution
+        # entry
         # =========================
-        slots = MAX_POSITIONS - len(positions)
         entry_count = 0
 
         for _, row in candidates.iterrows():
@@ -141,12 +132,9 @@ for start, end in REGIME_SPLITS:
             if turnover_cost > MAX_TURNOVER_PER_DAY:
                 break
 
-            # =========================
-            # position sizing反映
-            # =========================
             positions.append({
                 "entry": date,
-                "ret": row["forward_return"],
+                "ret": row["forward_return"],  # ←ここだけOK（exit専用）
                 "Ticker": row["Ticker"],
                 "weight": row["position_size"],
                 "prob": row["prob_entry"]
