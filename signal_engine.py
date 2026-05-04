@@ -8,7 +8,18 @@ df = pd.read_parquet(INPUT_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 
 # =========================
-# cross-sectional rank（統一）
+# ★ 市場レジーム（追加）
+# =========================
+# market_return は前工程で作成済み前提
+# なければここで作る必要あり
+
+df["market_trend"] = (df["market_return"] > 0).astype(int)
+
+# 強さ（連続値）
+df["market_strength"] = df["market_return"]
+
+# =========================
+# cross-sectional rank
 # =========================
 g = df.groupby("Date")
 
@@ -19,7 +30,7 @@ df["bb_rank"] = g["bb_position"].rank(pct=True)
 df["risk_rank"] = 1 - g["atr_ratio"].rank(pct=True)
 
 # =========================
-# ① TREND LAYER（フィルタ）
+# ① TREND LAYER
 # =========================
 df["trend_filter"] = (
     (df["close_ma5_ratio"] > 1.01) &
@@ -27,8 +38,11 @@ df["trend_filter"] = (
     (df["ma25_slope"] > 0)
 ).astype(int)
 
+# ★ 市場フィルタ追加（超重要）
+df["trend_filter"] = df["trend_filter"] * df["market_trend"]
+
 # =========================
-# ② MOMENTUM LAYER（核）
+# ② MOMENTUM
 # =========================
 df["momentum_score"] = (
     0.6 * df["ret_rank"] +
@@ -36,7 +50,7 @@ df["momentum_score"] = (
 )
 
 # =========================
-# ③ TIMING LAYER（入口精度）
+# ③ TIMING
 # =========================
 df["timing_score"] = (
     0.5 * df["bb_rank"] +
@@ -44,7 +58,7 @@ df["timing_score"] = (
 )
 
 # =========================
-# ④ RISK LAYER
+# ④ RISK
 # =========================
 df["risk_score"] = (
     0.5 * df["risk_rank"] +
@@ -52,7 +66,7 @@ df["risk_score"] = (
 )
 
 # =========================
-# ⑤ FINAL SCORE（ここが本体）
+# ⑤ FINAL SCORE
 # =========================
 df["signal_score"] = (
     0.5 * df["momentum_score"] +
@@ -61,36 +75,38 @@ df["signal_score"] = (
 )
 
 # =========================
-# ⑥ クロスセクション正規化（1回だけ）
+# ★ 市場強度で重み付け（ここが効く）
+# =========================
+df["signal_score"] = df["signal_score"] * (1 + df["market_strength"])
+
+# =========================
+# 正規化
 # =========================
 df["signal_score"] = g["signal_score"].transform(
     lambda x: (x - x.mean()) / (x.std() + 1e-9)
 )
 
 # =========================
-# ★重要：backtest互換性確保（パターン①）
+# alpha
 # =========================
 df["alpha_score"] = df["signal_score"]
 
 # =========================
-# ⑦ 3層シグナル
+# ⑥ シグナル
 # =========================
 
-# strong
 df["signal_strong"] = (
     (df["trend_filter"] == 1) &
     (df["alpha_score"] > 1.0) &
     (df["ret_rank"] > 0.75)
 ).astype(int)
 
-# weak
 df["signal_weak"] = (
     (df["trend_filter"] == 1) &
     (df["alpha_score"] > 0.2) &
     (df["signal_strong"] == 0)
 ).astype(int)
 
-# entry
 df["signal_entry"] = (
     df["signal_strong"] * 2 +
     df["signal_weak"]
