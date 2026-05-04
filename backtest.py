@@ -99,19 +99,15 @@ for start, end in REGIME_SPLITS:
         positions = new_positions
 
         # =========================
-        # ★ prob（rankベース）
+        # ★ prob（rankそのまま）
         # =========================
-        rank = today["signal_score"].rank(pct=True)
-
-        # ★重要：非線形で差を広げる
-        today["prob_entry"] = rank ** 2
+        today["prob_entry"] = today["signal_score"].rank(pct=True)
 
         # =========================
-        # expected value
+        # ★ expected value（シンプル版）
         # =========================
         today["expected_return"] = (
-            today["prob_entry"] * pos_mean -
-            (1 - today["prob_entry"]) * neg_mean
+            today["prob_entry"] * pos_mean
         )
 
         # =========================
@@ -123,10 +119,10 @@ for start, end in REGIME_SPLITS:
             today["position_size"] /= today["position_size"].sum()
 
         # =========================
-        # entry universe
+        # ★ entry universe（EVベース）
         # =========================
-        threshold = today["prob_entry"].quantile(1 - TOP_Q)
-        candidates = today[today["prob_entry"] >= threshold].copy()
+        threshold = today["expected_return"].quantile(1 - TOP_Q)
+        candidates = today[today["expected_return"] >= threshold].copy()
 
         if len(candidates) == 0:
             continue
