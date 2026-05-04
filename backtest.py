@@ -30,13 +30,7 @@ df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
 all_logs = []
-trade_logs = []   # ★追加：トレード単位ログ
-
-# =========================
-# sigmoid
-# =========================
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+trade_logs = []
 
 # =========================
 # payoff推定
@@ -88,7 +82,6 @@ for start, end in REGIME_SPLITS:
                 ret = p["ret"] - (SLIPPAGE + COMMISSION)
                 realized_returns.append(ret)
 
-                # ★トレードログ保存
                 trade_logs.append({
                     "entry_date": p["entry"],
                     "exit_date": date,
@@ -106,12 +99,12 @@ for start, end in REGIME_SPLITS:
         positions = new_positions
 
         # =========================
-        # signal → prob
+        # ★ prob（rankベース）
         # =========================
-        score = today["signal_score"]
-        score_z = (score - score.mean()) / (score.std() + 1e-9)
+        rank = today["signal_score"].rank(pct=True)
 
-        today["prob_entry"] = sigmoid(score_z)
+        # ★重要：非線形で差を広げる
+        today["prob_entry"] = rank ** 2
 
         # =========================
         # expected value
@@ -197,7 +190,7 @@ print("Avg probability:", res["mean_prob"].mean())
 print("Avg expected value:", res["mean_ev"].mean())
 
 # =========================
-# ★ 勝ち vs 負け分析
+# 勝ち vs 負け分析
 # =========================
 tr = pd.DataFrame(trade_logs)
 
