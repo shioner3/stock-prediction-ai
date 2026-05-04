@@ -99,12 +99,12 @@ for start, end in REGIME_SPLITS:
         positions = new_positions
 
         # =========================
-        # ★ prob（rankそのまま）
+        # prob（rank）
         # =========================
         today["prob_entry"] = today["signal_score"].rank(pct=True)
 
         # =========================
-        # ★ expected value（シンプル版）
+        # expected value
         # =========================
         today["expected_return"] = (
             today["prob_entry"] * pos_mean
@@ -119,7 +119,7 @@ for start, end in REGIME_SPLITS:
             today["position_size"] /= today["position_size"].sum()
 
         # =========================
-        # ★ entry universe（EVベース）
+        # entry universe
         # =========================
         threshold = today["expected_return"].quantile(1 - TOP_Q)
         candidates = today[today["expected_return"] >= threshold].copy()
@@ -163,7 +163,6 @@ for start, end in REGIME_SPLITS:
             "Date": date,
             "n_positions": len(positions),
             "n_entries": entry_count,
-            "mean_signal": today["signal_score"].mean(),
             "mean_prob": today["prob_entry"].mean(),
             "mean_ev": today["expected_return"].mean(),
             "realized_return_sum": np.sum(realized_returns) if len(realized_returns) > 0 else 0.0
@@ -186,7 +185,7 @@ print("Avg probability:", res["mean_prob"].mean())
 print("Avg expected value:", res["mean_ev"].mean())
 
 # =========================
-# 勝ち vs 負け分析
+# 勝ち vs 負け
 # =========================
 tr = pd.DataFrame(trade_logs)
 
@@ -194,22 +193,26 @@ win = tr[tr["Return"] > 0]
 lose = tr[tr["Return"] <= 0]
 
 print("\n===== WIN vs LOSE =====")
-
-print("\n--- COUNT ---")
 print("win:", len(win), "lose:", len(lose))
 
-print("\n--- MEAN ---")
-print("WIN")
-print(win[["Return", "prob", "ev", "weight"]].mean())
+# =========================
+# ★ decile分析（超重要）
+# =========================
+print("\n===== DECILE ANALYSIS =====")
 
-print("\nLOSE")
-print(lose[["Return", "prob", "ev", "weight"]].mean())
+# probベースで10分割
+tr["decile"] = pd.qcut(tr["prob"], 10, labels=False, duplicates="drop")
 
-print("\n--- DISTRIBUTION ---")
-for c in ["prob", "ev", "weight"]:
-    print(f"\n=== {c} ===")
-    print("WIN:", win[c].describe())
-    print("LOSE:", lose[c].describe())
+decile_stats = tr.groupby("decile").agg({
+    "Return": ["mean", "count"],
+    "prob": "mean",
+    "ev": "mean"
+})
+
+# 勝率
+decile_stats["win_rate"] = tr.groupby("decile")["Return"].apply(lambda x: (x > 0).mean())
+
+print(decile_stats.sort_index())
 
 # =========================
 # DEBUG
