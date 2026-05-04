@@ -7,10 +7,11 @@ import numpy as np
 INPUT_PATH = "stock_data/prices.parquet"
 SAVE_PATH = "stock_data/technical_features.parquet"
 
-# ★異常値パラメータ
-RETURN_CLIP = (-0.5, 1.0)     # -50%〜+100%
-Z_THRESHOLD = 5.0             # Zスコア閾値
-VOLUME_CLIP = (0, 10)         # 出来高倍率制限
+MARKET_TICKER = "1306"  # ★日経ETF
+
+RETURN_CLIP = (-0.5, 1.0)
+Z_THRESHOLD = 5.0
+VOLUME_CLIP = (0, 10)
 
 # =========================
 # データ読み込み
@@ -27,6 +28,40 @@ if missing:
 
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+
+# =========================
+# ★ 市場データ抽出（1306）
+# =========================
+market = df[df["Ticker"] == MARKET_TICKER].copy()
+
+# =========================
+# ★ 市場特徴量作成
+# =========================
+market["mkt_return_5d"] = market["Close"].pct_change(5)
+market["mkt_return_20d"] = market["Close"].pct_change(20)
+
+market["mkt_ma25"] = market["Close"].rolling(25).mean()
+market["mkt_trend"] = market["mkt_ma25"].pct_change(5)
+
+market["mkt_volatility"] = market["Close"].pct_change().rolling(20).std()
+
+# 異常値軽く処理
+market["mkt_return_5d"] = market["mkt_return_5d"].clip(*RETURN_CLIP)
+market["mkt_return_20d"] = market["mkt_return_20d"].clip(*RETURN_CLIP)
+
+# 必要列だけ
+market = market[[
+    "Date",
+    "mkt_return_5d",
+    "mkt_return_20d",
+    "mkt_trend",
+    "mkt_volatility"
+]]
+
+# =========================
+# ★ 全銘柄に横結合
+# =========================
+df = df.merge(market, on="Date", how="left")
 
 # =========================
 # 移動平均
@@ -51,12 +86,11 @@ rolling_high_20 = df.groupby("Ticker")["High"].transform(
 df["high_break_20d"] = (df["Close"] > rolling_high_20).astype(int)
 
 # =========================
-# return（ここ重要）
+# return
 # =========================
 df["return_5d"] = df.groupby("Ticker")["Close"].pct_change(5)
 df["return_20d"] = df.groupby("Ticker")["Close"].pct_change(20)
 
-# ★異常値クリップ
 df["return_5d"] = df["return_5d"].clip(*RETURN_CLIP)
 df["return_20d"] = df["return_20d"].clip(*RETURN_CLIP)
 
@@ -144,7 +178,12 @@ FEATURE_COLUMNS = [
     "volume_rank_daily",
     "upper_shadow_ratio",
     "gap_up_ratio",
-    "bb_position"
+    "bb_position",
+    # ★市場特徴量追加
+    "mkt_return_5d",
+    "mkt_return_20d",
+    "mkt_trend",
+    "mkt_volatility"
 ]
 
 # =========================
@@ -153,7 +192,7 @@ FEATURE_COLUMNS = [
 df[FEATURE_COLUMNS] = df.groupby("Ticker")[FEATURE_COLUMNS].shift(1)
 
 # =========================
-# ★Zスコア異常値除去（超重要）
+# Zスコア除去
 # =========================
 def remove_outliers_z(df, cols, z_th=5.0):
     for c in cols:
@@ -164,7 +203,7 @@ def remove_outliers_z(df, cols, z_th=5.0):
 df = remove_outliers_z(df, FEATURE_COLUMNS, Z_THRESHOLD)
 
 # =========================
-# 最終整理
+# 整形
 # =========================
 BASE_COLS = ["Date", "Ticker", "Open", "High", "Low", "Close", "Volume"]
 
