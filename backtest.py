@@ -189,3 +189,12 @@ print("Avg entries/day:", res["n_entries"].mean())
 print("Avg signal:", res["mean_signal"].mean())
 print("Avg probability:", res["mean_prob"].mean())
 print("Avg expected value:", res["mean_ev"].mean())
+
+print("\n===== DEBUG RETURN =====")
+print(df["forward_return"].describe())
+
+print("\nTOP 10 returns")
+print(df["forward_return"].sort_values(ascending=False).head(10))
+
+print("\nBOTTOM 10 returns")
+print(df["forward_return"].sort_values().head(10))
