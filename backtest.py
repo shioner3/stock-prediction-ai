@@ -22,7 +22,6 @@ REGIME_SPLITS = [
 TOP_Q = 0.2
 MAX_TURNOVER_PER_DAY = 0.3
 
-# ★市場フィルタ（ON/OFF）
 USE_MARKET_FILTER = True
 
 # =========================
@@ -32,8 +31,25 @@ df = pd.read_parquet(DATA_PATH)
 df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Date", "Ticker"])
 
-# ★市場トレンド（事前に作ってる前提）
+# =========================
+# ★デバッグ①：market_return存在確認
+# =========================
+if "market_return" not in df.columns:
+    raise ValueError("❌ market_return が存在しない（特徴量で作れてない）")
+
+print("\n===== MARKET RETURN STATS =====")
+print(df["market_return"].describe())
+
+# =========================
+# 市場トレンド
+# =========================
 df["market_trend"] = (df["market_return"] > 0).astype(int)
+
+# =========================
+# ★デバッグ②：トレンド分布
+# =========================
+print("\n===== MARKET TREND DISTRIBUTION =====")
+print(df["market_trend"].value_counts(normalize=True))
 
 all_logs = []
 trade_logs = []
@@ -66,19 +82,24 @@ for start, end in REGIME_SPLITS:
     positions = []
     regime_logs = []
 
+    blocked_days = 0
+    total_days = 0
+
     for date in dates:
 
         today = d[d["Date"] == date].copy()
         if len(today) == 0:
             continue
 
+        total_days += 1
+
         # =========================
-        # ★市場フィルタ
+        # 市場フィルタ
         # =========================
         if USE_MARKET_FILTER:
             if today["market_trend"].iloc[0] == 0:
-                # 弱い日は新規エントリー禁止
                 allow_entry = False
+                blocked_days += 1
             else:
                 allow_entry = True
         else:
@@ -118,16 +139,14 @@ for start, end in REGIME_SPLITS:
         positions = new_positions
 
         # =========================
-        # prob（rank）
+        # prob
         # =========================
         today["prob_entry"] = today["signal_score"].rank(pct=True)
 
         # =========================
         # expected value
         # =========================
-        today["expected_return"] = (
-            today["prob_entry"] * pos_mean
-        )
+        today["expected_return"] = today["prob_entry"] * pos_mean
 
         # =========================
         # position sizing
@@ -179,8 +198,11 @@ for start, end in REGIME_SPLITS:
                 entry_count += 1
 
         # =========================
-        # daily summary
+        # ★デバッグ③：entry抑制確認
         # =========================
+        if not allow_entry and entry_count > 0:
+            print(f"⚠️ FILTER ERROR {date}: 弱い日にエントリーしてる")
+
         regime_logs.append({
             "Date": date,
             "n_positions": len(positions),
@@ -188,8 +210,14 @@ for start, end in REGIME_SPLITS:
             "mean_prob": today["prob_entry"].mean(),
             "mean_ev": today["expected_return"].mean(),
             "realized_return_sum": np.sum(realized_returns) if len(realized_returns) > 0 else 0.0,
-            "market_return": today["market_return"].mean()
+            "market_return": today["market_return"].mean(),
+            "allow_entry": allow_entry
         })
+
+    print(f"\n--- FILTER STATS ---")
+    print("blocked_days:", blocked_days)
+    print("total_days:", total_days)
+    print("blocked_ratio:", blocked_days / total_days if total_days > 0 else 0)
 
     all_logs.extend(regime_logs)
 
@@ -208,4 +236,54 @@ print("Avg probability:", res["mean_prob"].mean())
 print("Avg expected value:", res["mean_ev"].mean())
 
 # =========================
-# 勝ち vs 負
+# 勝ち vs 負け
+# =========================
+tr = pd.DataFrame(trade_logs)
+
+win = tr[tr["Return"] > 0]
+lose = tr[tr["Return"] <= 0]
+
+print("\n===== WIN vs LOSE =====")
+print("win:", len(win), "lose:", len(lose))
+
+# =========================
+# 市場別分析
+# =========================
+bull = tr[tr["market_return"] > 0]
+bear = tr[tr["market_return"] <= 0]
+
+print("\n===== BULL =====")
+print(bull["Return"].describe())
+
+print("\n===== BEAR =====")
+print(bear["Return"].describe())
+
+# =========================
+# ★デバッグ④：市場別勝率
+# =========================
+print("\n===== MARKET WIN RATE =====")
+print("BULL:", (bull["Return"] > 0).mean())
+print("BEAR:", (bear["Return"] > 0).mean())
+
+# =========================
+# decile分析
+# =========================
+print("\n===== DECILE ANALYSIS =====")
+
+tr["decile"] = pd.qcut(tr["prob"], 10, labels=False, duplicates="drop")
+
+decile_stats = tr.groupby("decile").agg({
+    "Return": ["mean", "count"],
+    "prob": "mean",
+    "ev": "mean"
+})
+
+decile_stats["win_rate"] = tr.groupby("decile")["Return"].apply(lambda x: (x > 0).mean())
+
+print(decile_stats.sort_index())
+
+# =========================
+# DEBUG
+# =========================
+print("\n===== DEBUG RETURN =====")
+print(df["forward_return"].describe())
