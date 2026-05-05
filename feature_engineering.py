@@ -92,6 +92,7 @@ df["volatility_rank"] = df.groupby("Date")["volatility_5"].rank(pct=True)
 # =========================
 # 市場トレンド（簡易）
 # =========================
+# 市場リターン
 market = (
     df.groupby("Date")["return_1d"]
     .mean()
@@ -100,11 +101,15 @@ market = (
 
 df = df.merge(market, on="Date", how="left")
 
+# 市場トレンド
 df["market_trend_5"] = (
     df["market_return"]
     .rolling(5)
     .mean()
 )
+
+# 未来リーク防止
+df["market_trend_5"] = df["market_trend_5"].shift(1)
 
 # =========================
 # シフト（未来リーク防止）
