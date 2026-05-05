@@ -57,13 +57,6 @@ jobs:
           python feature_engineering.py
 
       # =========================
-      # 7️⃣ forward return生成（最重要）
-      # =========================
-      - name: Create Dataset (Forward Returns)
-        run: |
-          python create_ml_dataset.py
-
-      # =========================
       # 8️⃣ シグナル生成
       # =========================
       - name: Generate Signals
