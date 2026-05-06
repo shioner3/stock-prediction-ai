@@ -84,17 +84,16 @@ for _, row in trades.iterrows():
     entry_date = row["Date"]
     exit_date = entry_date + pd.Timedelta(days=HOLD_DAYS)
 
+    # ★ 修正ポイント
+    daily_ret = (1 + row["ret"]) ** (1 / HOLD_DAYS) - 1
+
     positions.append({
         "entry_date": entry_date,
         "exit_date": exit_date,
-        "ret": row["ret"]
+        "daily_ret": daily_ret
     })
 
 pos_df = pd.DataFrame(positions)
-
-if len(pos_df) == 0:
-    print("❌ No positions")
-    exit()
 
 # =========================
 # 日次シミュレーション
@@ -115,23 +114,15 @@ for date in dates:
         equity_curve.append(capital)
         continue
 
-    # 均等配分（最大ポジション制限）
+    # 均等配分
     n = min(len(active), MAX_POSITIONS)
-    weight = 1 / n
 
-    # 平均リターン
-    daily_ret = active["ret"].mean() * weight
+    daily_ret = active["daily_ret"].mean()
 
     capital *= (1 + daily_ret)
 
     equity_curve.append(capital)
-
-equity = pd.Series(equity_curve, index=dates)
-
-if len(equity) == 0:
-    print("❌ equity empty")
-    exit()
-
+    
 # =========================
 # 指標
 # =========================
