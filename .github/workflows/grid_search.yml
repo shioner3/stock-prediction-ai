@@ -1,0 +1,86 @@
+name: Backtest Grid Search Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  grid-search:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # =========================
+      # 1️⃣ checkout
+      # =========================
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      # =========================
+      # 2️⃣ python
+      # =========================
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # =========================
+      # 3️⃣ cache
+      # =========================
+      - name: Restore Price Cache
+        uses: actions/cache@v3
+        with:
+          path: stock_data/prices.parquet
+          key: price-cache-v1
+
+      # =========================
+      # 4️⃣ install
+      # =========================
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements_ai.txt
+
+      # =========================
+      # 5️⃣ data
+      # =========================
+      - name: Download Prices
+        run: |
+          python download_prices.py
+
+      # =========================
+      # 6️⃣ features
+      # =========================
+      - name: Feature Engineering
+        run: |
+          python feature_engineering.py
+
+      # =========================
+      # 7️⃣ GRID SEARCH（追加）
+      # =========================
+      - name: Run Grid Search Optimization
+        run: |
+          python grid_search.py
+
+      # =========================
+      # 8️⃣ best result check
+      # =========================
+      - name: Show Best Result
+        run: |
+          echo "===== TOP RESULTS ====="
+          head stock_data/grid_search_results.csv
+
+      # =========================
+      # 9️⃣ commit results
+      # =========================
+      - name: Commit Results
+        run: |
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add stock_data/grid_search_results.csv || true
+          git add stock_data/best_params.json || true
+
+          git commit -m "grid search update [skip ci]" || echo "No changes"
+
+          git push origin HEAD:main
