@@ -8,19 +8,19 @@ from signal_engine import generate_signals
 # =========================
 FEATURE_PATH = "stock_data/features.parquet"
 
-MAX_HOLD_DAYS = 15   # ← 可変の最大保有
+MAX_HOLD_DAYS = 15
 MAX_POSITIONS = 1
 INITIAL_CAPITAL = 1.0
 COST = 0.001
 
 # =========================
-# Exit関数（追加）
+# Exit関数（改良済み）
 # =========================
 def get_exit_date(df_ticker, entry_idx, max_hold=15):
 
     entry_price = df_ticker.iloc[entry_idx + 1]["Open"]
 
-    for i in range(1, max_hold+1):
+    for i in range(1, max_hold + 1):
 
         if entry_idx + i >= len(df_ticker):
             break
@@ -30,11 +30,11 @@ def get_exit_date(df_ticker, entry_idx, max_hold=15):
         current_price = row["Close"]
         current_ret = current_price / entry_price - 1
 
-        # 利確（伸ばす）
+        # 利確
         if current_ret > 0.15:
             return row["Date"]
 
-        # 損切り（緩め）
+        # 損切り（やや緩め）
         if (
             (row["return_3d"] < -0.02) or
             (row["ma5_diff"] < -0.03) or
@@ -77,7 +77,9 @@ if len(trades) == 0:
     print("❌ No trades generated")
     exit()
 
-# ランキング制限
+# =========================
+# A: 同時ポジション制御（強制1）
+# =========================
 trades["rank"] = (
     trades.groupby("Date")["signal_score"]
     .rank(ascending=False, method="first")
@@ -92,26 +94,32 @@ if len(trades) == 0:
     exit()
 
 # =========================
-# グループ（Ticker別）
+# B: 保有中重複エントリー禁止
 # =========================
 grouped = df.groupby("Ticker")
 
-# =========================
-# ポジション展開（可変exit）
-# =========================
+last_exit = {}
+
 positions = []
 
+# =========================
+# ポジション生成
+# =========================
 for _, row in trades.iterrows():
 
     ticker = row["Ticker"]
     entry_date = row["Date"]
+
+    # ★保有中スキップ
+    if ticker in last_exit:
+        if entry_date <= last_exit[ticker]:
+            continue
 
     try:
         df_t = grouped.get_group(ticker).reset_index(drop=True)
     except:
         continue
 
-    # entry index取得
     idx_list = df_t.index[df_t["Date"] == entry_date]
 
     if len(idx_list) == 0:
@@ -119,35 +127,35 @@ for _, row in trades.iterrows():
 
     entry_idx = idx_list[0]
 
-    # 翌日エントリーできるか確認
     if entry_idx + 1 >= len(df_t):
         continue
 
-    # ===== 可変exit =====
+    # ===== exit =====
     exit_date = get_exit_date(df_t, entry_idx, MAX_HOLD_DAYS)
 
-    # ===== 価格取得 =====
     try:
         entry_price = df_t.iloc[entry_idx + 1]["Open"]
         exit_price = df_t[df_t["Date"] == exit_date]["Close"].values[0]
     except:
         continue
 
-    # ===== リターン =====
     ret = exit_price / entry_price - 1 - COST * 2
 
     hold_days = (exit_date - entry_date).days
     if hold_days <= 0:
         continue
 
-    # 日次化
     daily_ret = (1 + ret) ** (1 / hold_days) - 1
 
     positions.append({
         "entry_date": entry_date,
         "exit_date": exit_date,
-        "daily_ret": daily_ret
+        "daily_ret": daily_ret,
+        "ticker": ticker
     })
+
+    # ★更新（C）
+    last_exit[ticker] = exit_date
 
 pos_df = pd.DataFrame(positions)
 
@@ -156,7 +164,7 @@ if len(pos_df) == 0:
     exit()
 
 # =========================
-# 日次シミュレーション
+# C: 日次シミュレーション（正規化）
 # =========================
 dates = sorted(df["Date"].unique())
 
@@ -174,10 +182,8 @@ for date in dates:
         equity_curve.append(capital)
         continue
 
-    # 同時ポジション制限
-    n = min(len(active), MAX_POSITIONS)
-
-    daily_ret = active["daily_ret"].sum()
+    # ★ 重要修正：過剰レバ防止
+    daily_ret = active["daily_ret"].mean()
 
     capital *= (1 + daily_ret)
 
@@ -222,4 +228,4 @@ print(f"Trades: {len(trades)}")
 # 保存
 # =========================
 equity.to_csv("equity_curve.csv")
-trades.to_csv("trades.csv", index=False)
+pos_df.to_csv("trades.csv", index=False)
