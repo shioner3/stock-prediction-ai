@@ -8,38 +8,10 @@ from signal_engine import generate_signals
 # =========================
 FEATURE_PATH = "stock_data/features.parquet"
 
-MAX_HOLD_DAYS = 15
 MAX_POSITIONS = 1
+MAX_HOLD_DAYS = 15
 INITIAL_CAPITAL = 1.0
 COST = 0.001
-
-# =========================
-# Exitロジック
-# =========================
-def get_exit_date(df_ticker, entry_idx, max_hold=15):
-
-    entry_price = df_ticker.iloc[entry_idx + 1]["Open"]
-
-    for i in range(1, max_hold + 1):
-
-        if entry_idx + i >= len(df_ticker):
-            break
-
-        row = df_ticker.iloc[entry_idx + i]
-
-        ret = row["Close"] / entry_price - 1
-
-        if ret > 0.15:
-            return row["Date"]
-
-        if (
-            (row["return_3d"] < -0.02) or
-            (row["ma5_diff"] < -0.03) or
-            (row["market_trend_5"] < -0.002)
-        ):
-            return row["Date"]
-
-    return df_ticker.iloc[min(entry_idx + max_hold, len(df_ticker)-1)]["Date"]
 
 # =========================
 # データ
@@ -47,126 +19,155 @@ def get_exit_date(df_ticker, entry_idx, max_hold=15):
 df = pd.read_parquet(FEATURE_PATH)
 
 df["Date"] = pd.to_datetime(df["Date"])
-df = df.sort_values(["Ticker", "Date"])
+df = df.sort_values(["Date", "Ticker"])
 
 df = generate_signals(df)
 
-print("Total rows:", len(df))
-print("Signal count:", df["signal"].sum())
+print("Rows:", len(df))
+print("Signals:", df["signal"].sum())
 
 # =========================
-# シグナル
-# =========================
-trades = df[df["signal"]].copy()
-
-trades["rank"] = trades.groupby("Date")["signal_score"] \
-    .rank(ascending=False, method="first")
-
-trades = trades[trades["rank"] <= MAX_POSITIONS]
-
-print("Trades:", len(trades))
-
-# =========================
-# ポジション生成（CLEAN）
+# 便利辞書
 # =========================
 grouped = df.groupby("Ticker")
-
-positions = []
-
-for _, row in trades.iterrows():
-
-    ticker = row["Ticker"]
-    entry_date = row["Date"]
-
-    df_t = grouped.get_group(ticker).reset_index(drop=True)
-
-    idx = df_t.index[df_t["Date"] == entry_date]
-    if len(idx) == 0:
-        continue
-
-    entry_idx = idx[0]
-
-    if entry_idx + 1 >= len(df_t):
-        continue
-
-    exit_date = get_exit_date(df_t, entry_idx, MAX_HOLD_DAYS)
-
-    entry_price = df_t.iloc[entry_idx + 1]["Open"]
-
-    exit_idx = df_t.index[df_t["Date"] == exit_date]
-    if len(exit_idx) == 0:
-        continue
-
-    exit_idx = exit_idx[0]
-    exit_price = df_t.iloc[exit_idx]["Close"]
-
-    # =========================
-    # ★単純リターン（これが正解）
-    # =========================
-    ret = exit_price / entry_price - 1 - COST * 2
-
-    positions.append({
-        "entry_date": entry_date,
-        "exit_date": exit_date,
-        "ret": ret,
-        "ticker": ticker
-    })
-
-pos_df = pd.DataFrame(positions)
-
-if len(pos_df) == 0:
-    print("❌ No positions")
-    exit()
-
-# =========================
-# 日次シミュレーション（正規版）
-# =========================
 dates = sorted(df["Date"].unique())
 
-equity = []
+# =========================
+# ポジション管理
+# =========================
+positions = []   # active positions
+closed_trades = []
+
 capital = INITIAL_CAPITAL
 
+# =========================
+# イベントループ
+# =========================
 for date in dates:
 
-    active = pos_df[
-        (pos_df["entry_date"] <= date) &
-        (pos_df["exit_date"] > date)
-    ]
-
-    if len(active) == 0:
-        equity.append(capital)
-        continue
+    day_data = df[df["Date"] == date]
 
     # =========================
-    # ★ここが本質（平均リターン）
+    # ① エグジット判定
     # =========================
-    daily_ret = active["ret"].mean()
+    new_positions = []
 
-    capital *= (1 + daily_ret)
+    for pos in positions:
 
-    equity.append(capital)
+        df_t = grouped.get_group(pos["ticker"]).reset_index(drop=True)
 
-equity = pd.Series(equity, index=dates)
+        idx = df_t.index[df_t["Date"] == date]
+
+        if len(idx) == 0:
+            new_positions.append(pos)
+            continue
+
+        i = idx[0]
+
+        entry_price = pos["entry_price"]
+
+        current_price = df_t.iloc[i]["Close"]
+        ret = current_price / entry_price - 1
+
+        hold_days = (date - pos["entry_date"]).days
+
+        exit_flag = False
+
+        if ret > 0.15:
+            exit_flag = True
+
+        if (
+            (df_t.iloc[i]["return_3d"] < -0.02) or
+            (df_t.iloc[i]["ma5_diff"] < -0.03) or
+            (df_t.iloc[i]["market_trend_5"] < -0.002)
+        ):
+            exit_flag = True
+
+        if hold_days >= MAX_HOLD_DAYS:
+            exit_flag = True
+
+        if exit_flag:
+
+            exit_price = df_t.iloc[i]["Close"]
+
+            trade_ret = exit_price / entry_price - 1 - COST * 2
+
+            capital *= (1 + trade_ret)
+
+            closed_trades.append(trade_ret)
+
+        else:
+            new_positions.append(pos)
+
+    positions = new_positions
+
+    # =========================
+    # ② エントリー判定
+    # =========================
+    candidates = day_data[day_data["signal"]].copy()
+
+    if len(candidates) > 0 and len(positions) < MAX_POSITIONS:
+
+        candidates["rank"] = candidates["signal_score"].rank(ascending=False)
+
+        candidates = candidates.sort_values("rank")
+
+        for _, row in candidates.iterrows():
+
+            if len(positions) >= MAX_POSITIONS:
+                break
+
+            ticker = row["Ticker"]
+
+            df_t = grouped.get_group(ticker).reset_index(drop=True)
+
+            idx = df_t.index[df_t["Date"] == date]
+
+            if len(idx) == 0:
+                continue
+
+            i = idx[0]
+
+            if i + 1 >= len(df_t):
+                continue
+
+            entry_price = df_t.iloc[i + 1]["Open"]
+
+            positions.append({
+                "ticker": ticker,
+                "entry_date": date,
+                "entry_price": entry_price
+            })
+
+    # =========================
+    # ③ equity更新（リアル）
+    # =========================
+    equity = capital
 
 # =========================
-# 指標
+# 最終評価
 # =========================
-rets = equity.pct_change().dropna()
+closed_trades = np.array(closed_trades)
 
-cagr = equity.iloc[-1] ** (252 / len(equity)) - 1
+if len(closed_trades) == 0:
+    print("❌ No trades executed")
+    exit()
+
+equity_curve = (1 + closed_trades).cumprod()
+
+rets = pd.Series(equity_curve).pct_change().dropna()
+
+cagr = equity_curve[-1] ** (252 / len(equity_curve)) - 1
 
 sharpe = rets.mean() / (rets.std() + 1e-9) * np.sqrt(252)
 
-max_dd = (equity / equity.cummax() - 1).min()
+max_dd = (equity_curve / np.maximum.accumulate(equity_curve) - 1).min()
 
 # =========================
 # 出力
 # =========================
-print("\n=== CLEAN BACKTEST RESULT ===")
+print("\n=== EVENT DRIVEN RESULT ===")
 print(f"CAGR  : {cagr:.4f}")
 print(f"Sharpe: {sharpe:.4f}")
 print(f"MaxDD : {max_dd:.4f}")
-print(f"Trades: {len(pos_df)}")
-
-equity.to_csv("equity_curve.csv")
-pos_df.to_csv("trades.csv", index=False)
+print(f"Trades: {len(closed_trades)}")
