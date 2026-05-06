@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-TOP_N = 1
+TOP_N = 2
 
 def generate_signals(df):
 
