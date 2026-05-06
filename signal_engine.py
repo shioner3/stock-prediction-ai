@@ -7,11 +7,10 @@ def generate_signals(df):
 
     df = df.copy()
 
-    # ===== コアフィルタ =====
+    # ===== 超緩い条件 =====
     df = df[
-        (df["return_3d"] > 0.03) &
-        (df["volume_ratio"] > 1.2) &
-        (df["return_rank"] > 0.8)
+        (df["return_3d"] > 0.01) &
+        (df["volume_ratio"] > 1.1)
     ]
 
     # ===== スコア =====
@@ -19,12 +18,9 @@ def generate_signals(df):
         df["return_3d"] * 10 +
         np.log1p(df["volume_ratio"]) * 2 +
         df["return_rank"] * 2 -
-        df["volatility_5"] * 5 -
-        df["ma5_diff"] * 3
+        df["volatility_5"] * 3 -
+        df["ma5_diff"] * 2
     )
-
-    # ===== 市場フィルタ（軽め）=====
-    df = df[df["market_trend_5"] > 0]
 
     # ===== ランク =====
     df["rank"] = df.groupby("Date")["signal_score"]\
