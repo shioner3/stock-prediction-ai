@@ -9,7 +9,7 @@ from signal_engine import generate_signals
 FEATURE_PATH = "stock_data/features.parquet"
 
 MAX_HOLD_DAYS = 15   # ← 可変の最大保有
-MAX_POSITIONS = 3
+MAX_POSITIONS = 1
 INITIAL_CAPITAL = 1.0
 COST = 0.001
 
