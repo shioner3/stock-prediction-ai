@@ -14,7 +14,7 @@ INITIAL_CAPITAL = 1.0
 COST = 0.001
 
 # =========================
-# Exit関数
+# Exitロジック
 # =========================
 def get_exit_date(df_ticker, entry_idx, max_hold=15):
 
@@ -27,9 +27,9 @@ def get_exit_date(df_ticker, entry_idx, max_hold=15):
 
         row = df_ticker.iloc[entry_idx + i]
 
-        current_ret = row["Close"] / entry_price - 1
+        ret = row["Close"] / entry_price - 1
 
-        if current_ret > 0.15:
+        if ret > 0.15:
             return row["Date"]
 
         if (
@@ -55,7 +55,7 @@ print("Total rows:", len(df))
 print("Signal count:", df["signal"].sum())
 
 # =========================
-# シグナル抽出
+# シグナル
 # =========================
 trades = df[df["signal"]].copy()
 
@@ -67,7 +67,7 @@ trades = trades[trades["rank"] <= MAX_POSITIONS]
 print("Trades:", len(trades))
 
 # =========================
-# ポジション生成（リアル価格）
+# ポジション生成（CLEAN）
 # =========================
 grouped = df.groupby("Ticker")
 
@@ -80,11 +80,11 @@ for _, row in trades.iterrows():
 
     df_t = grouped.get_group(ticker).reset_index(drop=True)
 
-    idx_list = df_t.index[df_t["Date"] == entry_date]
-    if len(idx_list) == 0:
+    idx = df_t.index[df_t["Date"] == entry_date]
+    if len(idx) == 0:
         continue
 
-    entry_idx = idx_list[0]
+    entry_idx = idx[0]
 
     if entry_idx + 1 >= len(df_t):
         continue
@@ -93,38 +93,23 @@ for _, row in trades.iterrows():
 
     entry_price = df_t.iloc[entry_idx + 1]["Open"]
 
-    exit_idx_list = df_t.index[df_t["Date"] == exit_date]
-    if len(exit_idx_list) == 0:
+    exit_idx = df_t.index[df_t["Date"] == exit_date]
+    if len(exit_idx) == 0:
         continue
 
-    exit_idx = exit_idx_list[0]
+    exit_idx = exit_idx[0]
+    exit_price = df_t.iloc[exit_idx]["Close"]
 
     # =========================
-    # ★リアルPnL（日次）
+    # ★単純リターン（これが正解）
     # =========================
-    pnl = 1.0
-    holding = False
-
-    for i in range(entry_idx + 1, exit_idx + 1):
-
-        if i >= len(df_t):
-            break
-
-        price_change = df_t.iloc[i]["Close"] / df_t.iloc[i - 1]["Close"]
-
-        pnl *= price_change
-
-        holding = True
-
-    if not holding:
-        continue
-
-    pnl -= COST * 2
+    ret = exit_price / entry_price - 1 - COST * 2
 
     positions.append({
         "entry_date": entry_date,
         "exit_date": exit_date,
-        "pnl": pnl
+        "ret": ret,
+        "ticker": ticker
     })
 
 pos_df = pd.DataFrame(positions)
@@ -134,12 +119,12 @@ if len(pos_df) == 0:
     exit()
 
 # =========================
-# 日次PnL統合
+# 日次シミュレーション（正規版）
 # =========================
 dates = sorted(df["Date"].unique())
 
-capital = INITIAL_CAPITAL
 equity = []
+capital = INITIAL_CAPITAL
 
 for date in dates:
 
@@ -152,8 +137,10 @@ for date in dates:
         equity.append(capital)
         continue
 
-    # ★リアル配分
-    daily_ret = active["pnl"].prod() - 1
+    # =========================
+    # ★ここが本質（平均リターン）
+    # =========================
+    daily_ret = active["ret"].mean()
 
     capital *= (1 + daily_ret)
 
@@ -175,7 +162,7 @@ max_dd = (equity / equity.cummax() - 1).min()
 # =========================
 # 出力
 # =========================
-print("\n=== REAL PnL RESULT ===")
+print("\n=== CLEAN BACKTEST RESULT ===")
 print(f"CAGR  : {cagr:.4f}")
 print(f"Sharpe: {sharpe:.4f}")
 print(f"MaxDD : {max_dd:.4f}")
