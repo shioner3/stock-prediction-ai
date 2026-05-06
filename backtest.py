@@ -8,7 +8,7 @@ from signal_engine import generate_signals
 # =========================
 FEATURE_PATH = "stock_data/features.parquet"
 
-MAX_HOLD_DAYS = 10   # ← 可変の最大保有
+MAX_HOLD_DAYS = 15   # ← 可変の最大保有
 MAX_POSITIONS = 3
 INITIAL_CAPITAL = 1.0
 COST = 0.001
@@ -16,7 +16,7 @@ COST = 0.001
 # =========================
 # Exit関数（追加）
 # =========================
-def get_exit_date(df_ticker, entry_idx, max_hold=10):
+def get_exit_date(df_ticker, entry_idx, max_hold=15):
 
     entry_price = df_ticker.iloc[entry_idx + 1]["Open"]
 
@@ -30,15 +30,15 @@ def get_exit_date(df_ticker, entry_idx, max_hold=10):
         current_price = row["Close"]
         current_ret = current_price / entry_price - 1
 
-        # 利確
-        if current_ret > 0.08:
+        # 利確（伸ばす）
+        if current_ret > 0.15:
             return row["Date"]
 
-        # 損切り
+        # 損切り（緩め）
         if (
-            (row["return_3d"] < -0.01) or
-            (row["ma5_diff"] < -0.02) or
-            (row["market_trend_5"] < -0.001)
+            (row["return_3d"] < -0.02) or
+            (row["ma5_diff"] < -0.03) or
+            (row["market_trend_5"] < -0.002)
         ):
             return row["Date"]
 
