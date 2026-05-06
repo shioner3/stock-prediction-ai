@@ -17,8 +17,11 @@ print("Loading prices...")
 
 df = pd.read_parquet(INPUT_PATH)
 
-df["Date"] = pd.to_datetime(df["Date"])
+if len(df) == 0:
+    print("❌ prices is empty")
+    exit()
 
+df["Date"] = pd.to_datetime(df["Date"])
 df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
 # =========================
@@ -53,7 +56,7 @@ df["volume_ma5"] = g["Volume"].transform(lambda x: x.rolling(5).mean())
 df["volume_ratio"] = df["Volume"] / df["volume_ma5"]
 
 # =========================
-# レンジ圧縮（ブレイク前検出用）
+# レンジ圧縮
 # =========================
 df["high_20"] = g["High"].transform(lambda x: x.rolling(20).max())
 df["low_20"] = g["Low"].transform(lambda x: x.rolling(20).min())
@@ -62,7 +65,7 @@ df["range_20"] = df["high_20"] - df["low_20"]
 df["range_ratio"] = df["range_20"] / df["Close"]
 
 # =========================
-# クロスセクション（市場内異常）
+# クロスセクション
 # =========================
 df["return_rank"] = df.groupby("Date")["return_1d"].rank(pct=True)
 df["volume_rank"] = df.groupby("Date")["volume_ratio"].rank(pct=True)
@@ -91,23 +94,35 @@ shift_cols = [
 
 for col in shift_cols:
     if col == "market_trend_5":
-        df[col] = df[col].shift(1)  # 市場は全体シフト
+        df[col] = df[col].shift(1)
     else:
-        df[col] = g[col].shift(1)   # 銘柄ごと
+        df[col] = g[col].shift(1)
 
 # =========================
-# クリーン（必要最小限）
+# 欠損処理（←ここが最重要修正）
 # =========================
+
+# rank系は0埋め
+df["return_rank"] = df["return_rank"].fillna(0)
+df["volume_rank"] = df["volume_rank"].fillna(0)
+
+# marketはニュートラル扱い
+df["market_trend_5"] = df["market_trend_5"].fillna(0)
+
+# =========================
+# 最小限dropna（緩くする）
+# =========================
+print("Before dropna:", len(df))
+
 df = df.dropna(subset=[
     "return_3d",
-    "volume_ratio",
-    "volatility_5",
-    "return_rank",
-    "market_trend_5"
+    "volume_ratio"
 ])
 
+print("After dropna:", len(df))
+
 # =========================
-# 不要カラム削除（軽量化）
+# 不要カラム削除
 # =========================
 drop_cols = [
     "ma5", "ma20",
