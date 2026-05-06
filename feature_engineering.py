@@ -31,13 +31,6 @@ g = df.groupby("Ticker", group_keys=False)
 # =========================
 df["return_1d"] = g["Close"].pct_change(1)
 df["return_3d"] = g["Close"].pct_change(3)
-df["return_5d"] = g["Close"].pct_change(5)
-
-# =========================
-# モメンタム
-# =========================
-df["momentum_5"] = g["Close"].pct_change(5)
-df["momentum_10"] = g["Close"].pct_change(10)
 
 # =========================
 # 移動平均乖離
@@ -52,20 +45,6 @@ df["ma20_diff"] = df["Close"] / df["ma20"] - 1
 # ボラティリティ
 # =========================
 df["volatility_5"] = g["return_1d"].transform(lambda x: x.rolling(5).std())
-df["volatility_10"] = g["return_1d"].transform(lambda x: x.rolling(10).std())
-
-# =========================
-# ATR（簡易）
-# =========================
-df["tr"] = np.maximum(
-    df["High"] - df["Low"],
-    np.maximum(
-        abs(df["High"] - g["Close"].shift(1)),
-        abs(df["Low"] - g["Close"].shift(1))
-    )
-)
-
-df["atr_5"] = g["tr"].transform(lambda x: x.rolling(5).mean())
 
 # =========================
 # 出来高
@@ -83,62 +62,69 @@ df["range_20"] = df["high_20"] - df["low_20"]
 df["range_ratio"] = df["range_20"] / df["Close"]
 
 # =========================
-# クロスセクション（重要）
+# クロスセクション（市場内異常）
 # =========================
 df["return_rank"] = df.groupby("Date")["return_1d"].rank(pct=True)
 df["volume_rank"] = df.groupby("Date")["volume_ratio"].rank(pct=True)
-df["volatility_rank"] = df.groupby("Date")["volatility_5"].rank(pct=True)
 
 # =========================
-# 市場トレンド（簡易）
-# =========================
-# 市場リターン
-market = (
-    df.groupby("Date")["return_1d"]
-    .mean()
-    .rename("market_return")
-)
-
-df = df.merge(market, on="Date", how="left")
-
 # 市場トレンド
-df["market_trend_5"] = (
-    df["market_return"]
-    .rolling(5)
-    .mean()
-)
-
-# 未来リーク防止
-df["market_trend_5"] = df["market_trend_5"].shift(1)
+# =========================
+market = df.groupby("Date")["return_1d"].mean()
+df["market_trend_5"] = market.rolling(5).mean()
 
 # =========================
 # シフト（未来リーク防止）
 # =========================
 shift_cols = [
-    "return_1d", "return_3d", "return_5d",
-    "momentum_5", "momentum_10",
-    "ma5_diff", "ma20_diff",
-    "volatility_5", "volatility_10",
-    "atr_5",
+    "return_1d",
+    "return_3d",
+    "ma5_diff",
+    "ma20_diff",
+    "volatility_5",
     "volume_ratio",
     "range_ratio",
-    "return_rank", "volume_rank", "volatility_rank",
+    "return_rank",
+    "volume_rank",
     "market_trend_5"
 ]
 
 for col in shift_cols:
-    df[col] = g[col].shift(1)
+    if col == "market_trend_5":
+        df[col] = df[col].shift(1)  # 市場は全体シフト
+    else:
+        df[col] = g[col].shift(1)   # 銘柄ごと
 
 # =========================
-# クリーン
+# クリーン（必要最小限）
 # =========================
-df = df.dropna()
+df = df.dropna(subset=[
+    "return_3d",
+    "volume_ratio",
+    "volatility_5",
+    "return_rank",
+    "market_trend_5"
+])
+
+# =========================
+# 不要カラム削除（軽量化）
+# =========================
+drop_cols = [
+    "ma5", "ma20",
+    "volume_ma5",
+    "high_20", "low_20", "range_20"
+]
+
+df = df.drop(columns=drop_cols, errors="ignore")
 
 # =========================
 # 保存
 # =========================
 df.to_parquet(OUTPUT_PATH, index=False)
 
+# =========================
+# 完了
+# =========================
 print("\n=== 完了 ===")
 print("Rows:", len(df))
 print("Columns:", df.columns.tolist())
