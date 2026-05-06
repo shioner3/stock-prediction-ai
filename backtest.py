@@ -177,7 +177,7 @@ for date in dates:
     # 同時ポジション制限
     n = min(len(active), MAX_POSITIONS)
 
-    daily_ret = active["daily_ret"].mean()
+    daily_ret = active["daily_ret"].sum()
 
     capital *= (1 + daily_ret)
 
