@@ -8,7 +8,7 @@ from signal_engine import generate_signals
 # =========================
 FEATURE_PATH = "stock_data/features.parquet"
 
-HOLD_DAYS = 5
+HOLD_DAYS = 3
 MAX_POSITIONS = 3
 INITIAL_CAPITAL = 1.0
 COST = 0.001
