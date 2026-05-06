@@ -48,7 +48,7 @@ df["exit_price"] = g["Close"].shift(-HOLD_DAYS)
 # 有効トレードのみ
 df = df.dropna(subset=["entry_price", "exit_price"])
 
-# リターン
+# トータルリターン（保有期間全体）
 df["ret"] = df["exit_price"] / df["entry_price"] - 1 - COST * 2
 
 # =========================
@@ -75,7 +75,7 @@ if len(trades) == 0:
     exit()
 
 # =========================
-# ポジション展開
+# ポジション展開（★ここ修正）
 # =========================
 positions = []
 
@@ -84,7 +84,7 @@ for _, row in trades.iterrows():
     entry_date = row["Date"]
     exit_date = entry_date + pd.Timedelta(days=HOLD_DAYS)
 
-    # ★ 修正ポイント
+    # ★ 保有期間リターン → 日次リターンに変換
     daily_ret = (1 + row["ret"]) ** (1 / HOLD_DAYS) - 1
 
     positions.append({
@@ -94,6 +94,10 @@ for _, row in trades.iterrows():
     })
 
 pos_df = pd.DataFrame(positions)
+
+if len(pos_df) == 0:
+    print("❌ No positions")
+    exit()
 
 # =========================
 # 日次シミュレーション
@@ -114,15 +118,22 @@ for date in dates:
         equity_curve.append(capital)
         continue
 
-    # 均等配分
+    # 同時ポジション数制限
     n = min(len(active), MAX_POSITIONS)
 
+    # ★ 日次リターン平均（ここも修正）
     daily_ret = active["daily_ret"].mean()
 
     capital *= (1 + daily_ret)
 
     equity_curve.append(capital)
-    
+
+equity = pd.Series(equity_curve, index=dates)
+
+if len(equity) == 0:
+    print("❌ equity empty")
+    exit()
+
 # =========================
 # 指標
 # =========================
