@@ -7,19 +7,20 @@ def generate_signals(df):
 
     df = df.copy()
 
-    # ===== 超緩い条件 =====
+    # ===== 初動検出 =====
     df = df[
-        (df["return_3d"] > 0.01) &
-        (df["volume_ratio"] > 1.1)
+        (df["return_3d"] > 0) &
+        (df["return_3d"] < 0.02) &
+        (df["volume_ratio"] > 1.3) &
+        (df["ma5_diff"] < 0.02)
     ]
 
     # ===== スコア =====
     df["signal_score"] = (
-        df["return_3d"] * 10 +
-        np.log1p(df["volume_ratio"]) * 2 +
+        df["volume_ratio"] * 2 +
         df["return_rank"] * 2 -
-        df["volatility_5"] * 3 -
-        df["ma5_diff"] * 2
+        df["ma5_diff"] * 3 -
+        df["volatility_5"] * 3
     )
 
     # ===== ランク =====
