@@ -18,21 +18,31 @@ COST = 0.001
 # =========================
 def get_exit_date(df_ticker, entry_idx, max_hold=10):
 
-    for i in range(1, max_hold + 1):
+    entry_price = df_ticker.iloc[entry_idx + 1]["Open"]
+
+    for i in range(1, max_hold+1):
 
         if entry_idx + i >= len(df_ticker):
             break
 
         row = df_ticker.iloc[entry_idx + i]
 
+        current_price = row["Close"]
+        current_ret = current_price / entry_price - 1
+
+        # 利確
+        if current_ret > 0.08:
+            return row["Date"]
+
+        # 損切り
         if (
-            (row["return_3d"] < 0) or
-            (row["ma5_diff"] < 0) or
-            (row["market_trend_5"] < 0)
+            (row["return_3d"] < -0.01) or
+            (row["ma5_diff"] < -0.02) or
+            (row["market_trend_5"] < -0.001)
         ):
             return row["Date"]
 
-    return df_ticker.iloc[min(entry_idx + max_hold, len(df_ticker) - 1)]["Date"]
+    return df_ticker.iloc[min(entry_idx + max_hold, len(df_ticker)-1)]["Date"]
 
 # =========================
 # 読み込み
