@@ -1,106 +1,110 @@
-name: Daily Stock AI
+name: Daily Accumulation Pipeline
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: '0 14 * * 1-5'
 
-concurrency:
-  group: stock-ai
-  cancel-in-progress: true
-
 jobs:
-  run-ai:
+  accumulation:
+
     runs-on: ubuntu-latest
 
     steps:
 
       # =========================
-      # ① リポジトリ取得
+      # Checkout
       # =========================
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       # =========================
-      # ② ディレクトリ作成
-      # =========================
-      - name: Create directories
-        run: mkdir -p stock_data logs
-
-      # =========================
-      # ③ キャッシュ復元（改良版）
-      # 👉 parquet単体キャッシュに変更
-      # =========================
-      - name: Restore price cache
-        uses: actions/cache@v3
-        with:
-          path: stock_data/prices.parquet
-          key: price-cache-v1
-          restore-keys: |
-            price-cache-
-
-      # =========================
-      # ④ Python環境
+      # Python
       # =========================
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       # =========================
-      # ⑤ 依存関係
+      # Cache Restore
       # =========================
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements_ai.txt
-
-      # =========================
-      # ⑥ パイプライン実行
-      # =========================
-      - name: Run daily pipeline
-        run: python run_daily.py
-
-      # =========================
-      # ⑦ キャッシュ保存（超重要）
-      # =========================
-      - name: Save price cache
-        uses: actions/cache@v3
+      - name: Restore Cache
+        uses: actions/cache@v4
         with:
-          path: stock_data/prices.parquet
-          key: price-cache-v1
+          path: |
+            stock_data/prices.parquet
+            stock_data/shares_outstanding.parquet
+          key: accumulation-cache-v1
+          restore-keys: |
+            accumulation-cache-
 
       # =========================
-      # ⑧ デバッグ（修正版）
+      # Install Dependencies
       # =========================
-      - name: Check outputs
+      - name: Install Dependencies
         run: |
-          echo "===== FILES ====="
-          ls -R
-
-          echo "===== TODAY PICKS ====="
-          cat outputs/today_picks.csv || echo "no picks"
-
-          echo "===== FREE ARTICLE ====="
-          cat outputs/note_free.txt || echo "no free article"
-
-          echo "===== PAID ARTICLE ====="
-          cat outputs/note_paid.txt || echo "no paid article"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       # =========================
-      # ⑨ push（安全版）
+      # Download Prices
       # =========================
-      - name: Commit and push
+      - name: Download Prices
         run: |
+          python download_prices.py
+
+      # =========================
+      # Calculate Accumulation Score
+      # =========================
+      - name: Calculate Accumulation Score
+        run: |
+          python calculate_accumulation_score.py
+
+      # =========================
+      # Run Backtest
+      # =========================
+      - name: Run Backtest
+        run: |
+          python backtest_accumulation.py
+
+      # =========================
+      # Output Check
+      # =========================
+      - name: Check Outputs
+        run: |
+
+          echo "===== STOCK DATA ====="
+          ls -lh stock_data/
+
+          echo ""
+          echo "===== RANKING ====="
+
+          if [ -f stock_data/accumulation_ranking.csv ]; then
+            head -20 stock_data/accumulation_ranking.csv
+          fi
+
+          echo ""
+          echo "===== BACKTEST ====="
+
+          if [ -f stock_data/backtest_result.csv ]; then
+            head -20 stock_data/backtest_result.csv
+          fi
+
+      # =========================
+      # Commit Results
+      # =========================
+      - name: Commit Results
+        run: |
+
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          
-          git add outputs/ logs/ || true
 
-          git commit -m "Update daily AI outputs [skip ci]" || echo "no change"
+          git add stock_data/accumulation_score.parquet || true
+          git add stock_data/accumulation_ranking.csv || true
+          git add stock_data/backtest_result.csv || true
 
-          # 🔥 コンフリクト防止
-          git pull --rebase origin main
+          git commit -m "daily accumulation update [skip ci]" || echo "No changes to commit"
 
           git push origin HEAD:main
