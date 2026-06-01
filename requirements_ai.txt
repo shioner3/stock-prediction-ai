@@ -1,9 +1,5 @@
 pandas
 numpy
-scikit-learn
-lightgbm
-yfinance
-duckdb
 pyarrow
+yfinance
 tqdm
-hmmlearn
