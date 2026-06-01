@@ -245,92 +245,135 @@ df_score = pd.concat(
 )
 
 # =========================
-# 最新日
+# 全日付スコア計算
+# =========================
+print("Calculating scores...")
+
+score_frames = []
+
+for date, daily in tqdm(
+    df_score.groupby("Date"),
+    total=df_score["Date"].nunique()
+):
+
+    daily = daily.copy()
+
+    # ---------------------
+    # フィルター
+    # ---------------------
+    daily = daily[
+        daily["MarketCap"]
+        >= MIN_MARKET_CAP
+    ]
+
+    daily = daily[
+        daily["MarketCap"]
+        <= MAX_MARKET_CAP
+    ]
+
+    daily = daily[
+        daily["AvgTradingValue20"]
+        >= MIN_TRADING_VALUE
+    ]
+
+    if len(daily) < 30:
+        continue
+
+    # ---------------------
+    # Z-score化
+    # ---------------------
+    factors = [
+        "VolRatio",
+        "OBVGrowth",
+        "HighRatio",
+        "StayRate",
+        "Absorption"
+    ]
+
+    for col in factors:
+
+        mean = daily[col].mean()
+        std = daily[col].std()
+
+        if pd.isna(std) or std == 0:
+
+            daily[col + "_Z"] = 0
+
+        else:
+
+            daily[col + "_Z"] = (
+                daily[col] - mean
+            ) / std
+
+    atr_mean = (
+        daily["ATRRatio"]
+        .mean()
+    )
+
+    atr_std = (
+        daily["ATRRatio"]
+        .std()
+    )
+
+    if pd.isna(atr_std) or atr_std == 0:
+
+        daily["ATR_Z"] = 0
+
+    else:
+
+        daily["ATR_Z"] = -(
+            daily["ATRRatio"]
+            - atr_mean
+        ) / atr_std
+
+    # ---------------------
+    # 最終スコア
+    # ---------------------
+    daily["AccumulationScore"] = (
+          daily["VolRatio_Z"] * 0.25
+        + daily["OBVGrowth_Z"] * 0.25
+        + daily["HighRatio_Z"] * 0.20
+        + daily["StayRate_Z"] * 0.15
+        + daily["Absorption_Z"] * 0.10
+        + daily["ATR_Z"] * 0.05
+    )
+
+    # ---------------------
+    # 業種内順位
+    # ---------------------
+    daily["IndustryRankPct"] = (
+        daily.groupby("Industry")
+        ["AccumulationScore"]
+        .rank(pct=True)
+    )
+
+    score_frames.append(daily)
+
+# =========================
+# 全期間スコア
+# =========================
+df_score = pd.concat(
+    score_frames,
+    ignore_index=True
+)
+
+# =========================
+# 最新ランキング
 # =========================
 latest_date = (
-    df_score["Date"].max()
-)
-
-latest = df_score[
     df_score["Date"]
-    == latest_date
-].copy()
-
-# =========================
-# フィルター
-# =========================
-latest = latest[
-    latest["MarketCap"]
-    >= MIN_MARKET_CAP
-]
-
-latest = latest[
-    latest["MarketCap"]
-    <= MAX_MARKET_CAP
-]
-
-latest = latest[
-    latest["AvgTradingValue20"]
-    >= MIN_TRADING_VALUE
-]
-
-# =========================
-# Z-score化
-# =========================
-factors = [
-    "VolRatio",
-    "OBVGrowth",
-    "HighRatio",
-    "StayRate",
-    "Absorption"
-]
-
-for col in factors:
-
-    mean = latest[col].mean()
-
-    std = latest[col].std()
-
-    latest[col + "_Z"] = (
-        latest[col]
-        - mean
-    ) / std
-
-# ATRは逆転
-latest["ATR_Z"] = -(
-    latest["ATRRatio"]
-    - latest["ATRRatio"].mean()
-) / latest["ATRRatio"].std()
-
-# =========================
-# 最終スコア
-# =========================
-latest["AccumulationScore"] = (
-      latest["VolRatio_Z"] * 0.25
-    + latest["OBVGrowth_Z"] * 0.25
-    + latest["HighRatio_Z"] * 0.20
-    + latest["StayRate_Z"] * 0.15
-    + latest["Absorption_Z"] * 0.10
-    + latest["ATR_Z"] * 0.05
+    .max()
 )
 
-# =========================
-# 業種内順位
-# =========================
-latest["IndustryRankPct"] = (
-    latest.groupby("Industry")
-    ["AccumulationScore"]
-    .rank(
-        pct=True
+latest = (
+    df_score[
+        df_score["Date"]
+        == latest_date
+    ]
+    .sort_values(
+        "AccumulationScore",
+        ascending=False
     )
-)
-
-# =========================
-# ソート
-# =========================
-latest = latest.sort_values(
-    "AccumulationScore",
-    ascending=False
 )
 
 # =========================
