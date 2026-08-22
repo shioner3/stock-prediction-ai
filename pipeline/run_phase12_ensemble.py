@@ -175,7 +175,7 @@ class Phase12Report:
 # --- data assembly (each computed ONCE, reused everywhere below) ---------------
 
 
-def _load_all_signal_records(tickers: list[str], signals_dir: Path) -> pd.DataFrame:
+def load_all_signal_records(tickers: list[str], signals_dir: Path) -> pd.DataFrame:
     frames = []
     for ticker in tickers:
         try:
@@ -189,7 +189,7 @@ def _load_all_signal_records(tickers: list[str], signals_dir: Path) -> pd.DataFr
     return pd.concat(frames, ignore_index=True)
 
 
-def _load_forward_return_panel(tickers: list[str], features_dir: Path) -> pd.DataFrame:
+def load_forward_return_panel(tickers: list[str], features_dir: Path) -> pd.DataFrame:
     """ticker/date/forward_return_{n}d for EVERY row of every ticker's
     Feature panel (not just triggered rows) - the permutation test's
     population AND the source Forward Return joined onto Signal Count
@@ -473,11 +473,11 @@ def run_phase12_ensemble(
     scores_dir = Path(config.data.scores_dir)
 
     logger.info("Phase 12: loading Signal Records for %d tickers", len(tickers))
-    all_records = _load_all_signal_records(tickers, signals_dir)
+    all_records = load_all_signal_records(tickers, signals_dir)
     signal_counts_df = aggregate_signal_counts(all_records)
 
     logger.info("Phase 12: building Forward Return population for %d tickers", len(tickers))
-    forward_panel = _load_forward_return_panel(tickers, features_dir)
+    forward_panel = load_forward_return_panel(tickers, features_dir)
     population_forward_5d = forward_panel[_PERMUTATION_COL].dropna().to_numpy()
     all_trading_dates = (
         forward_panel["date"] if not forward_panel.empty else pd.Series([], dtype=object)
