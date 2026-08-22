@@ -905,6 +905,25 @@ Score・Backtest・WFO・Cost・Regime定義は一切変更していない。**
   一切影響しておらず、Integrity Hashも開始時・終了時で完全一致を
   確認済み。実運用への自動採用は行っていない。
 
+## Phase 11A: GitHub Actions化 + Strategy Hashバグ修正
+
+Forward Testの日次実行をGitHub Actionsで自動化した
+(`.github/workflows/forward_test.yml`)。実行中、GitHub Actions
+(Linux)環境で`STRATEGY_HASH_MISMATCH`が発生し、原因は
+`common/hashing.py::hash_files()`が`str(path)`をハッシュ入力に
+使用していたためと判明した(Windowsでは`\`区切り、Linuxでは`/`
+区切りとOS依存で変わるため、同一ファイル内容でもOSが異なると
+Strategy Hashが一致しない)。
+
+これはStrategy Hash対象ファイル(Signal/Feature/Score/Backtest等)の
+**内容変更ではなく、ハッシュ計算方式自体のバグ**と判断し、
+`hash_files()`を`Path.as_posix()`ベースに修正した。修正前後で
+対象38ファイルがバイト単位で完全一致することを独立したSHA256
+フィンガープリントおよび`git status`で二重に確認済み。これに伴い
+`data/forward_test/manifest.json`のhash値を新方式で再生成したが、
+**Strategy Version 1のまま(T0・Signal・Score・Backtest等は無変更)**
+であり、Version 2への移行ではない。
+
 ## No-lookahead対策
 
 構造面: 全Feature関数は`rolling()`・`ewm()`・`shift(+n)`のみを使用し、
