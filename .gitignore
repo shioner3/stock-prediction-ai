@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local dev / session artifacts (not part of the project)
+logs/
+
+# Large regenerable research data caches (Phase 6.5-9 Universe cache,
+# Phase 7-12 Full Universe cache) - these are re-fetched/recomputed by
+# the pipeline scripts on demand and are far too large to version.
+data/raw/
+data/processed/
+data/features/
+data/signals/
+data/scores/
+data/backtest/
+data/phase7/
+data/walk_forward/
+
+# JPX master snapshot - re-downloaded fresh by universe/jpx_master.py
+# on any run where it's missing; never stale-cached in git.
+data/reference/jpx_master_current.xls
+data/reference/data_j.xls
+
+# Forward Test's OWN daily OHLCV/Feature/Signal/Score re-fetch cache -
+# fully re-derived every day (see pipeline/run_forward_test.py's
+# docstring), never needed as cross-day state. Only the STATE below
+# (manifest, signal log, portfolio, performance log, daily snapshots)
+# is append-only and must be committed.
+data/forward_test/raw/
+data/forward_test/processed/
+data/forward_test/features/
+data/forward_test/signals/
+data/forward_test/scores/
+data/forward_test/_fetch_manifest.json
+
+# Env / secrets
+.env
+
+# Claude Code local tool state
+.claude/

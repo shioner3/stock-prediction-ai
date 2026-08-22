@@ -1,0 +1,185 @@
+# Central application configuration.
+# Nothing in application code should hardcode values that appear here -
+# see config/loader.py for the typed models that parse this file.
+
+data:
+  provider: yfinance
+
+  # Inclusive date range for OHLCV ingestion. end_date: null means "today".
+  start_date: "2018-01-01"
+  end_date: null
+
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  features_dir: "data/features"
+  signals_dir: "data/signals"
+  scores_dir: "data/scores"
+
+  fetch:
+    max_retries: 3
+    backoff_base_seconds: 1.0
+    backoff_max_seconds: 30.0
+    timeout_seconds: 15.0
+
+  market_index:
+    provider: yfinance
+    # Verified against live yfinance calls in this environment (2026-08-19):
+    # "^TOPX" / "^TPX" / "TOPX" / "998405.T" all return empty data - the raw
+    # TOPIX index is not available through this feed. "1306.T" (Nomura's
+    # TOPIX-tracking ETF) is used as a proxy instead - it is not the exact
+    # index value (ETF tracking error, dividend drag) but closely tracks
+    # TOPIX returns. See README "既知の問題" for detail and how to replace
+    # this if a direct index feed becomes available (e.g. J-Quants).
+    ticker: "1306.T"
+    # Identity metadata (providers.base.MarketIndexMeta) - Phase 3's
+    # Relative Strength features and their log lines use this so nothing
+    # ever calls 1306.T "TOPIX" outright.
+    name: "TOPIX Proxy"
+    type: "ETF_PROXY"
+
+universe:
+  # Sample/placeholder file for Phase 1 development and tests only.
+  # For real use, download the official JPX listed-company list
+  # ("東証上場銘柄一覧") and point this at it - see README.
+  master_list_path: "data/reference/jpx_listed_companies.sample.csv"
+  segments: ["Prime", "Standard", "Growth"]
+  exclude_etf: true
+  exclude_reit: true
+
+features:
+  pullback:
+    # Lookback window for "recent high"/"recent low" in features/pullback.py
+    # (distance_from_recent_high/low, pullback_depth, bounce_depth).
+    recent_high_window: 20
+
+# Signal thresholds (Phase 4). Every value is an initial hypothesis, not a
+# tuned parameter - see research/signal_notes/*.md for the reasoning behind
+# each one. Do not adjust these based on backtest results (see README).
+signals:
+  long:
+    breakout:
+      lookback: 20
+      volume_multiple: 1.5
+    pullback:
+      sma_fast: 20
+      sma_slow: 50
+      min_depth: 0.03
+      max_depth: 0.15
+    ma_rebound:
+      sma_fast: 20
+      sma_slow: 50
+    momentum_continuation:
+      return_5d_min: 0.03
+      return_20d_min: 0.0
+      sma_period: 20
+    volume_breakout:
+      return_1d_min: 0.03
+      volume_ratio_min: 2.0
+    oversold_rebound:
+      rsi_period: 14
+      rsi_max: 30.0
+
+  short:
+    breakdown:
+      lookback: 20
+      volume_multiple: 1.5
+    pullback:
+      sma_fast: 20
+      sma_slow: 50
+      min_depth: 0.03
+      max_depth: 0.15
+    ma_rejection:
+      sma_fast: 20
+      sma_slow: 50
+    momentum_continuation:
+      return_5d_max: -0.03
+      return_20d_max: 0.0
+      sma_period: 20
+    volume_breakdown:
+      return_1d_max: -0.03
+      volume_ratio_min: 2.0
+    overbought_reversal:
+      rsi_period: 14
+      rsi_min: 70.0
+
+backtest:
+  # Signal date = t, Entry = t+1 Open, Exit = Close of the hold_days-th
+  # session after entry (fixed holding period - see backtest/engine.py).
+  hold_days: 5
+  suppress_overlapping_signals: true
+
+# Score thresholds (Phase 5). Every value is an initial hypothesis, not a
+# tuned parameter - see README's "Score Mapping" for the full point
+# allocation. Do not adjust these based on bucket-analysis results.
+scoring:
+  weights:
+    trend: 20
+    momentum: 20
+    volume: 15
+    relative: 15
+    setup: 20
+    risk: 10
+  trend:
+    sma_fast: 20
+    sma_slow: 50
+    slope_epsilon: 0.0
+  momentum:
+    return_5d_period: 5
+    return_10d_period: 10
+    rsi_period: 14
+    rsi_midline: 50.0
+  volume:
+    ratio_confirm_threshold: 1.2
+  relative:
+    thresholds: [0.05, 0.02, 0.0, -0.02, -0.05]
+  setup:
+    return_5d_strong: 0.05
+    volume_ratio_strong: 2.0
+    ma_stack_fast: 20
+    ma_stack_mid: 50
+    ma_stack_slow: 75
+    atr_move_ratio_threshold: 1.0
+  risk:
+    atr_pct_max: 0.05
+    volatility_max: 0.03
+
+# Phase 6: Walk Forward + Statistical Validation.
+# Every value here is fixed BEFORE looking at any OOS result and must
+# not change after seeing OOS/bootstrap/permutation output - see
+# README's "OOS期間の固定" section for the actual TRAIN/VAL/OOS window
+# dates this configuration produces against the data on disk.
+validation:
+  walk_forward:
+    train_months: 12
+    validation_months: 3
+    oos_months: 3
+    step_months: 3
+    min_oos_completeness: 0.5
+  transaction_cost:
+    tiers:
+      - name: "zero"
+        round_trip_bps: 0.0
+      - name: "low"
+        round_trip_bps: 10.0
+      - name: "base"
+        round_trip_bps: 30.0
+      - name: "high"
+        round_trip_bps: 80.0
+  bootstrap:
+    n_resamples: 10000
+    seed: 42
+    confidence_level: 0.95
+  permutation:
+    n_permutations: 10000
+    seed: 43
+    forward_window: 5
+  market_regime:
+    lookback_days: 60
+    bull_threshold: 0.05
+    bear_threshold: -0.05
+  min_sample:
+    min_oos_trades: 30
+
+logging:
+  level: "INFO"
+  log_dir: "logs"

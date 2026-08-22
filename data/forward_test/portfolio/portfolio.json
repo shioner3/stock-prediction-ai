@@ -1,0 +1,5 @@
+{
+  "initial_capital": 10000000.0,
+  "per_trade_notional_fraction": 0.01,
+  "closed_positions": []
+}

@@ -1,0 +1,62 @@
+[project]
+name = "swing-scanner"
+version = "0.1.0"
+description = "TSE swing-trade screening/research tool (signal detection + statistical validation, not an execution system)"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.5",
+    "yfinance>=0.2.40",
+    "python-dotenv>=1.0",
+    # Legacy .xls parser - JPX's official listed-issues master file
+    # (universe/jpx_master.py) is still published in the old .xls format.
+    "xlrd>=2.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    # xlsx read/write for tests/test_universe_jpx_master.py's synthetic
+    # fixtures - production code only needs xlrd (.xls, JPX's real format).
+    "openpyxl>=3.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "providers", "universe", "validation", "storage", "pipeline",
+    "config", "common", "features", "signals", "backtest", "scoring", "targets",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "network: tests that require real network access (deselected by default)",
+]
+addopts = "-m 'not network'"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+# BLE (blind-except) is off: providers/yfinance_provider.py's retry wrapper
+# must catch arbitrary vendor exceptions by design (a single ticker's
+# failure must never abort the ingestion run - see pipeline/ingest.py).
+# DTZ (datetimez) is off: this tool works exclusively with JST trading-day
+# dates; forcing UTC-aware datetimes would be incorrect here, not safer.
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

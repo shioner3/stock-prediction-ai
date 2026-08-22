@@ -1,0 +1,28 @@
+# Phase 9 robustness/sensitivity analysis parameters.
+#
+# These are diagnostic-analysis settings only - they do not affect
+# Signal/Score/Backtest/WFO behavior in any way, and are deliberately
+# kept OUT of config/settings.yaml so config_hash (computed from
+# settings.yaml + universe_filters.yaml only) continues to prove
+# "Signal/Score/Backtest/WFO unchanged since Phase 6.5/7".
+#
+# Every value below is fixed BEFORE running Phase 9's analysis and must
+# not be tuned after seeing results (spec section 10/11).
+
+day_cluster_bootstrap:
+  n_resamples: 10000
+  seed: 44
+  confidence_level: 0.95
+
+block_bootstrap:
+  block_length_days: 5
+  n_resamples: 10000
+  seed: 45
+  confidence_level: 0.95
+
+timing_placebo:
+  offsets: [-15, -10, -5, -3, -1, 5, 10]
+
+winsorization:
+  lower_percentile: 0.01
+  upper_percentile: 0.99
