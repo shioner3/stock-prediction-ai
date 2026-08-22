@@ -913,24 +913,37 @@ Score・Backtest・WFO・Cost・Regime定義は一切変更していない。**
   一切影響しておらず、Integrity Hashも開始時・終了時で完全一致を
   確認済み。実運用への自動採用は行っていない。
 
-## Phase 11A: GitHub Actions化 + Strategy Hashバグ修正
+## Phase 11A: GitHub Actions完全自動Forward Test化
 
-Forward Testの日次実行をGitHub Actionsで自動化した
-(`.github/workflows/forward_test.yml`)。実行中、GitHub Actions
-(Linux)環境で`STRATEGY_HASH_MISMATCH`が発生し、原因は
-`common/hashing.py::hash_files()`が`str(path)`をハッシュ入力に
-使用していたためと判明した(Windowsでは`\`区切り、Linuxでは`/`
-区切りとOS依存で変わるため、同一ファイル内容でもOSが異なると
-Strategy Hashが一致しない)。
+Phase 10/11のForward TestをClaude Codeの実行環境に依存せず、
+GitHub Actionsのみで毎営業日自動継続できる状態にした。全文
+レポート: [research/phase11a_report.md](research/phase11a_report.md)
 
-これはStrategy Hash対象ファイル(Signal/Feature/Score/Backtest等)の
-**内容変更ではなく、ハッシュ計算方式自体のバグ**と判断し、
-`hash_files()`を`Path.as_posix()`ベースに修正した。修正前後で
-対象38ファイルがバイト単位で完全一致することを独立したSHA256
-フィンガープリントおよび`git status`で二重に確認済み。これに伴い
-`data/forward_test/manifest.json`のhash値を新方式で再生成したが、
-**Strategy Version 1のまま(T0・Signal・Score・Backtest等は無変更)**
-であり、Version 2への移行ではない。
+- `.github/workflows/forward_test.yml`を新規作成
+  (schedule: 平日21:00 JST + workflow_dispatch)。既存の
+  `scripts/run_forward_test_day.py`をそのまま起動し、結果の
+  append-only状態(Signal Log・Paper Portfolio・Daily Performance
+  Log等)をリポジトリにcommit・pushする。SAFE_ABORTは失敗扱いに
+  せず明示表示、Strategy Hash不一致等の想定外エラーのみjob失敗
+  とする設計。
+- 実環境で3回workflow_dispatchを実行し、2件の実装バグを発見・
+  修正した:
+  1. `common/hashing.py::hash_files()`が`str(path)`(OS依存の
+     区切り文字)をハッシュ入力に使用しており、Windows上で計算
+     したStrategy HashがLinux(GitHub Actions)では永遠に一致
+     しないバグ。`Path.as_posix()`ベースに修正し、Strategy Hash
+     対象38ファイルがバイト単位で無変更であることを独立検証した
+     上でmanifestを再生成(Strategy Version 1のまま、Version 2
+     への移行ではない)。
+  2. workflow内の`git add`が、一度もファイルを書き込まれたこと
+     のない空ディレクトリ(`data/forward_test/reports/`)に対して
+     失敗するパスバグ。`mkdir -p`で修正。
+- 3回目の実行でUniverse取得(2,781銘柄)からScore算出まで
+  パイプライン全体が正常完了した上で、市場データの当日分未到達を
+  正しく検知し`SAFE_ABORT[STALE_THRESHOLD_EXCEEDED]`で安全停止
+  したことを確認(実データでの安全機構の実地動作確認)。
+- Signal/Score/Backtest/Decision Frameworkのロジックは一切変更
+  していない。
 
 ## Phase 13: long_oversold_rebound Conditional Analysis
 
