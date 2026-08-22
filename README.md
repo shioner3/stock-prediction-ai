@@ -13,7 +13,7 @@
   初めて採用する
 - 未来の情報を現在のシグナル判定に使用しない(No-lookahead)ことを最優先とする
 
-## 現在の実装状況: Phase 12(Signal Ensemble Validation + Extended Forward Targets)
+## 現在の実装状況: Phase 13(long_oversold_rebound Conditional Analysis)
 
 Phase 1(データ取得)・Phase 2(テクニカル特徴量)・Phase 3(Relative
 Strength)・Phase 4(Signal Architecture + Backtest Engine)・Phase 5
@@ -60,7 +60,15 @@ sufficient-sampleな組み合わせ38件中36件がREJECT、残り2件も手動
 検証でRegime依存性が判明し、ROBUST_ENSEMBLEと呼べる結果は1つも
 ありませんでした(詳細は下記「Phase 12」節、全文は
 [research/phase12_report.md](research/phase12_report.md))。
-Streamlit UIは未実装です(Phase 13以降)。
+Phase 11AではForward TestをGitHub Actionsで完全自動化し(詳細は下記
+「Phase 11A」節、全文は
+[research/phase11a_report.md](research/phase11a_report.md))、
+Phase 13では`long_oversold_rebound`の過去発生行を条件別に事後分析し、
+BEAR regime・市場大幅下落局面でPFが強まる一方Score水準にはほぼ
+依存しないという探索的仮説を得ました(いずれも未検証、詳細は下記
+「Phase 13」節、全文は
+[research/phase13_report.md](research/phase13_report.md))。
+Streamlit UIは未実装です(Phase 14以降)。
 
 **最重要ルール**: Phase 6ではOOS結果を見た後にSignal条件・Score重み・
 閾値・HOLD_DAYS・Entry/Exit・Backtest条件を一切変更していません。
@@ -905,24 +913,67 @@ Score・Backtest・WFO・Cost・Regime定義は一切変更していない。**
   一切影響しておらず、Integrity Hashも開始時・終了時で完全一致を
   確認済み。実運用への自動採用は行っていない。
 
-## Phase 11A: GitHub Actions化 + Strategy Hashバグ修正
+## Phase 11A: GitHub Actions完全自動Forward Test化
 
-Forward Testの日次実行をGitHub Actionsで自動化した
-(`.github/workflows/forward_test.yml`)。実行中、GitHub Actions
-(Linux)環境で`STRATEGY_HASH_MISMATCH`が発生し、原因は
-`common/hashing.py::hash_files()`が`str(path)`をハッシュ入力に
-使用していたためと判明した(Windowsでは`\`区切り、Linuxでは`/`
-区切りとOS依存で変わるため、同一ファイル内容でもOSが異なると
-Strategy Hashが一致しない)。
+Phase 10/11のForward TestをClaude Codeの実行環境に依存せず、
+GitHub Actionsのみで毎営業日自動継続できる状態にした。全文
+レポート: [research/phase11a_report.md](research/phase11a_report.md)
 
-これはStrategy Hash対象ファイル(Signal/Feature/Score/Backtest等)の
-**内容変更ではなく、ハッシュ計算方式自体のバグ**と判断し、
-`hash_files()`を`Path.as_posix()`ベースに修正した。修正前後で
-対象38ファイルがバイト単位で完全一致することを独立したSHA256
-フィンガープリントおよび`git status`で二重に確認済み。これに伴い
-`data/forward_test/manifest.json`のhash値を新方式で再生成したが、
-**Strategy Version 1のまま(T0・Signal・Score・Backtest等は無変更)**
-であり、Version 2への移行ではない。
+- `.github/workflows/forward_test.yml`を新規作成
+  (schedule: 平日21:00 JST + workflow_dispatch)。既存の
+  `scripts/run_forward_test_day.py`をそのまま起動し、結果の
+  append-only状態(Signal Log・Paper Portfolio・Daily Performance
+  Log等)をリポジトリにcommit・pushする。SAFE_ABORTは失敗扱いに
+  せず明示表示、Strategy Hash不一致等の想定外エラーのみjob失敗
+  とする設計。
+- 実環境で3回workflow_dispatchを実行し、2件の実装バグを発見・
+  修正した:
+  1. `common/hashing.py::hash_files()`が`str(path)`(OS依存の
+     区切り文字)をハッシュ入力に使用しており、Windows上で計算
+     したStrategy HashがLinux(GitHub Actions)では永遠に一致
+     しないバグ。`Path.as_posix()`ベースに修正し、Strategy Hash
+     対象38ファイルがバイト単位で無変更であることを独立検証した
+     上でmanifestを再生成(Strategy Version 1のまま、Version 2
+     への移行ではない)。
+  2. workflow内の`git add`が、一度もファイルを書き込まれたこと
+     のない空ディレクトリ(`data/forward_test/reports/`)に対して
+     失敗するパスバグ。`mkdir -p`で修正。
+- 3回目の実行でUniverse取得(2,781銘柄)からScore算出まで
+  パイプライン全体が正常完了した上で、市場データの当日分未到達を
+  正しく検知し`SAFE_ABORT[STALE_THRESHOLD_EXCEEDED]`で安全停止
+  したことを確認(実データでの安全機構の実地動作確認)。
+- Signal/Score/Backtest/Decision Frameworkのロジックは一切変更
+  していない。
+
+## Phase 13: long_oversold_rebound Conditional Analysis
+
+`long_oversold_rebound`(Strategy Version 1)の過去発生行を対象に、
+どの市場・銘柄・Score条件でForward Returnが強いかを事後分析した。
+既存12 Signal・Score・Backtestは一切変更していない。Signal改良では
+なく、独立検証すべき仮説の抽出のみが目的。全文レポート:
+[research/phase13_report.md](research/phase13_report.md)
+
+- Full Universe(2,880銘柄)で実施、対象Signal 20,670件
+  (unique ticker 2,606、発生日数1,081日)。Regime・Market
+  Drawdown(TOPIX 20d return)・個別銘柄Drawdown・MA乖離・出来高・
+  Volatility・Score・Signal Count・LONG/SHORT一致度の9軸単体分析と
+  Regime×Score・Market Drawdown×Scoreの2 cross-tab分析、Forward
+  Horizon(1〜20d)・Event Exclusion・BEAR Episode分析・64ユニット
+  へのFDR多重検定補正を実施。
+- **主な発見(いずれも探索的、未検証)**: BEAR regimeおよびTOPIX
+  20d return -10%以下の局面でPFが大きく上昇する一方、下落してい
+  ない局面(全Signalの約半数)ではエッジが消失する。この傾向は
+  Score水準にほぼ依存しない(Regime×Score・Drawdown×Score両方で、
+  全Scoreクインタイルが同じパターンを示す)。出来高が多いほど期待
+  値も単調に強い。Score単体はForward Returnとほぼ無相関
+  (monotonicity不成立)。
+- 2024年8月イベントを除いてもBEAR局面全体のPFは1を上回り、さらに
+  2025年4月の独立した別のBEAR急落局面でも同様の強さ(PF=78.6)が
+  再現した — 単一イベント依存ではないが、2つの主要episodeへの
+  集中(累積寄与度96.8%)という別の集中パターンが確認された。
+- Strategy Version 1のForward Testには一切影響していない。発見した
+  仮説を現在のSignal・Score・Forward Test Engineに反映することは
+  行っていない。
 
 ## No-lookahead対策
 
@@ -1258,13 +1309,16 @@ Phase 7〜8を参照)。
     で確認済みです。実データにBEAR相場が含まれていないだけで、実装の
     不備ではありません。
 
-## Phase 13以降について
+## Phase 14以降について
 
-Phase 12の完了報告後は停止し、次の指示を待ちます。Strategy tuning・
+Phase 13の完了報告後は停止し、次の指示を待ちます。Strategy tuning・
 実運用への自動発注・自動売買・Streamlit UI・Strategy Version 2・
 新規Signal発明・Score調整のいずれにも自動で進みません。Forward Test
-の日次実行(`scripts/run_forward_test_day.py`)自体は継続可能ですが、
-自動的な定期実行(スケジューリング)は別途指示がない限り設定して
-いません。Phase 11でREJECTとなった11 Signal、Phase 12でREJECT/
-REGIME_DEPENDENT_ENSEMBLEとなったEnsemble候補についても、条件・
-重みを変更しての再検証は行いません。
+の日次実行は`.github/workflows/forward_test.yml`により平日21:00 JST
+に自動実行されますが、それ以上の機能追加(通知連携・複数銘柄戦略の
+追加等)は別途指示がない限り行いません。Phase 11でREJECTとなった
+11 Signal、Phase 12でREJECT/REGIME_DEPENDENT_ENSEMBLEとなった
+Ensemble候補、Phase 13で発見した条件別仮説のいずれについても、
+それを理由にSignal条件・重み・閾値を変更しての採用は行いません。
+Phase 13の仮説を実際に検証するには、本Phaseとは完全に独立したOOS
+期間での再検証が必要です。
