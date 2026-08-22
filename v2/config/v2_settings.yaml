@@ -1,0 +1,39 @@
+# V2 (Strategy Version 2 research track) settings.
+#
+# Completely separate from config/settings.yaml / config/universe_filters.yaml
+# (V1) - V2's config_hash is computed from THIS file alone (see
+# v2/manifest.py). Changing this file never affects V1's config_hash or
+# Strategy Hash.
+#
+# Score weights below are the "V2 Initial Research Score" (spec section
+# 9) - fixed BEFORE any real ranking run and NOT tuned against Phase
+# 6.5-14 results. See v2/config/loader.py::V2ScoreWeightsConfig for the
+# category definitions and research/phase_v2_1_report.md for the
+# reasoning.
+
+universe:
+  segments: ["Prime", "Standard", "Growth"]
+  exclude_etf: true
+  exclude_reit: true
+
+forward_windows: [5, 10, 15, 20]
+
+score_weights:
+  momentum: 0.25
+  trend: 0.20
+  volume: 0.15
+  relative_strength: 0.20
+  pullback: 0.10
+  volatility: 0.10
+
+candidate_top_n: [10, 20, 50]
+
+source_universe_manifest: "data/phase7/_universe_fetch_manifest.json"
+source_processed_dir: "data/phase7/processed"
+source_features_dir: "data/phase7/features"
+
+v2_features_dir: "data/v2/features"
+v2_targets_dir: "data/v2/targets"
+v2_rankings_dir: "data/v2/rankings"
+v2_candidates_dir: "data/v2/candidates"
+v2_manifests_dir: "data/v2/manifests"

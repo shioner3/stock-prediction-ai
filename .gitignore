@@ -23,6 +23,13 @@ data/backtest/
 data/phase7/
 data/walk_forward/
 
+# V2 research output (candidates/rankings/reports/manifests) - same
+# treatment as data/walk_forward/ above: regenerable from
+# scripts/run_v2_ranking.py / run_v2_research_dry_run.py against V1's
+# existing caches, narrative findings live in research/phase_v2_1_report.md
+# instead (git-tracked).
+data/v2/
+
 # JPX master snapshot - re-downloaded fresh by universe/jpx_master.py
 # on any run where it's missing; never stale-cached in git.
 data/reference/jpx_master_current.xls
