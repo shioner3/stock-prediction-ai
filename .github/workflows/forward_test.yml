@@ -1,0 +1,119 @@
+name: Forward Test daily run
+
+# Phase 11A: keeps Phase 10/11's Frozen Strategy Forward Test running on
+# a daily cadence without depending on Claude Code's own runtime. This
+# workflow does NOT change Signal/Score/Backtest/Decision logic in any
+# way - it only invokes the existing, unmodified CLI
+# (scripts/run_forward_test_day.py) and persists its append-only state
+# back into the repository. See scripts/run_forward_test_day.py and
+# pipeline/run_forward_test.py for the actual Forward Test logic.
+#
+# SAFE_ABORT (pipeline/run_forward_test.py::SafeAbortError, exit code 2)
+# is treated as an EXPECTED, non-failing outcome - the run correctly
+# detected incomplete/stale data or a data-integrity problem and made NO
+# state changes at all (nothing to commit). A Strategy Hash mismatch or
+# any other unhandled error (any other non-zero exit code) DOES fail the
+# job, since either means something needs human attention.
+
+on:
+  schedule:
+    # 12:00 UTC = 21:00 JST, Mon-Fri. Chosen to give data providers time
+    # to settle after Japan's market close (15:00 JST) - but this is
+    # NOT relied upon as a guarantee; run_forward_test_day.py's existing
+    # stale-data detection (SAFE_ABORT[STALE_THRESHOLD_EXCEEDED]) is
+    # still the actual safety net if data isn't ready yet (see the real
+    # 2026-08-21 SAFE_ABORT this project already observed locally).
+    - cron: "0 12 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never let two Forward Test runs race on the same append-only state
+  # files - a second trigger (e.g. manual workflow_dispatch while the
+  # scheduled run is still going) waits rather than running in parallel.
+  group: forward-test
+  cancel-in-progress: false
+
+jobs:
+  forward-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        # Installs [project.dependencies] from pyproject.toml - no
+        # requirements.txt, no new data source, no new package. Scripts
+        # run directly from the checkout (via each script's own
+        # sys.path insert), not from an installed copy, so it doesn't
+        # matter that forward_test/ and ensemble/ aren't listed in
+        # [tool.hatch.build.targets.wheel]'s package list.
+        run: pip install .
+
+      - name: Run Forward Test day
+        id: forward_test
+        run: |
+          set +e
+          python scripts/run_forward_test_day.py
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Report SAFE_ABORT (expected outcome, not a failure)
+        if: steps.forward_test.outputs.exit_code == '2'
+        run: |
+          {
+            echo "## SAFE_ABORT"
+            echo "Forward Test correctly detected incomplete/stale data and made no state changes today. See the previous step's log for the specific reason."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report success
+        if: steps.forward_test.outputs.exit_code == '0'
+        run: echo "## SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on Strategy Hash mismatch or unexpected error
+        if: steps.forward_test.outputs.exit_code != '0' && steps.forward_test.outputs.exit_code != '2'
+        run: |
+          {
+            echo "## FAILURE (exit code ${{ steps.forward_test.outputs.exit_code }})"
+            echo "Not a SAFE_ABORT - see the Run Forward Test day step's log."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Commit and push Forward Test state
+        # Runs regardless of the outcome above (except when the checkout
+        # itself failed) - on a SAFE_ABORT day this is a correct no-op,
+        # since pipeline/run_forward_test.py never mutates any of these
+        # files before a SAFE_ABORT is raised (git diff is empty, so
+        # "git commit" below is skipped). Only the small append-only
+        # state directories are touched - .gitignore already excludes
+        # the daily OHLCV/Feature/Signal/Score re-fetch cache under
+        # data/forward_test/{raw,processed,features,signals,scores}/.
+        if: always() && steps.forward_test.outcome != 'cancelled'
+        run: |
+          git config user.name "forward-test-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/forward_test/manifest.json \
+                  data/forward_test/signals_log/ \
+                  data/forward_test/portfolio/ \
+                  data/forward_test/performance_log/ \
+                  data/forward_test/daily/ \
+                  data/forward_test/trades/ \
+                  data/forward_test/reports/
+          if git diff --cached --quiet; then
+            echo "no Forward Test state changes to commit (expected on a SAFE_ABORT day)"
+          else
+            git commit -m "Forward Test daily update ($(date -u +%Y-%m-%d)) [skip ci]"
+            git push
+          fi
