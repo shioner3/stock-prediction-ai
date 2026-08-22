@@ -1,0 +1,28 @@
+{
+  "strategy_version": "v1",
+  "t0": "2026-08-20",
+  "hashes": {
+    "features_hash": "20c2748a0cc873e8c3611443ed3590190554b5cb9c832cd19ef19192cdcc35b3",
+    "signals_hash": "20a79921c98f2a46a0c1cdca842ab347696cb9cd770fd87a71b987999c0f5df3",
+    "scoring_hash": "f3c7510a053cdd7688e300df38691fa82ec21fb161e0ca3e5c0780ca17473872",
+    "backtest_engine_hash": "8c7a8fb0222dc395f701931dd630e7be8894b0a4f6150aa176104c3a80f53870",
+    "market_regime_hash": "23d037fecb8732be7a9290952b5cef47f61812cf04d857f80ff9057aefa2231b",
+    "config_hash": "a9b34ccb6e6e1e1a9d4d1eb554fe3fd8a4c09b2d9d186b2bd0ee3b0d430a2217"
+  },
+  "hold_days": 5,
+  "transaction_cost_bps": 30.0,
+  "market_regime_lookback_days": 60,
+  "market_regime_bull_threshold": 0.05,
+  "market_regime_bear_threshold": -0.05,
+  "target_direction": "LONG",
+  "target_signal_name": "long_oversold_rebound",
+  "universe_segments": [
+    "Prime",
+    "Standard",
+    "Growth"
+  ],
+  "data_source": "yfinance",
+  "initial_capital": 10000000.0,
+  "per_trade_notional_fraction": 0.01,
+  "created_at": "2026-08-20T22:33:07.650334"
+}

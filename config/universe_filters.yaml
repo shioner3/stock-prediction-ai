@@ -1,0 +1,17 @@
+# Dynamic universe filters - these require actual fetched OHLCV data
+# (price, liquidity, trading activity) and are applied by the ingest
+# pipeline AFTER fetching, unlike the static segment/ETF/REIT filters in
+# settings.yaml which are applied before fetching from the master list.
+
+price:
+  min_close_price: 100
+  max_close_price: null
+
+liquidity:
+  # Average daily volume over the trailing lookback window (shares).
+  min_avg_volume_20d: 10000
+  min_avg_dollar_volume_20d: null
+
+activity:
+  # Exclude tickers with too many no-trade (zero volume) days recently.
+  max_zero_volume_days_in_20: 5
