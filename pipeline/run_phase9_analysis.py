@@ -75,7 +75,7 @@ class LOPOWithCI:
     remaining_bootstrap_expectancy: BootstrapResult
 
 
-def _lopo_with_bootstrap(
+def lopo_with_bootstrap(
     trades_with_group: pd.DataFrame, group_col: str, bootstrap_config
 ) -> list[LOPOWithCI]:
     valid = trades_with_group.dropna(subset=[group_col])
@@ -113,7 +113,7 @@ class TimingOffsetResult:
     metrics_bear: BacktestMetrics
 
 
-def _build_signal_ticker_cache(
+def build_signal_ticker_cache(
     config: AppConfig, tickers: list[str], direction: str, signal_name: str
 ) -> dict[str, tuple[pd.DataFrame, pd.DataFrame]]:
     """Loads each triggered ticker's (signal_records, feature panel) ONCE,
@@ -415,14 +415,14 @@ def run_phase9_analysis(
     bear_trades_with_episode = bear_trades.assign(
         episode_index=_assign_episode_index(bear_trades["signal_date"], bear_episodes)
     )
-    lopo_by_episode = _lopo_with_bootstrap(
+    lopo_by_episode = lopo_with_bootstrap(
         bear_trades_with_episode, "episode_index", config.validation.bootstrap
     )
 
     signal_trades_with_year = signal_trades.assign(
         year=signal_trades["signal_date"].apply(lambda d: d.year)
     )
-    lopo_by_year = _lopo_with_bootstrap(
+    lopo_by_year = lopo_with_bootstrap(
         signal_trades_with_year, "year", config.validation.bootstrap
     )
 
@@ -449,7 +449,7 @@ def run_phase9_analysis(
         "Phase 9: timing placebo sweep over %d offsets, %d candidate tickers",
         len(phase9_config.timing_placebo.offsets), len(tickers),
     )
-    signal_cache = _build_signal_ticker_cache(config, tickers, target_direction, target_signal_name)
+    signal_cache = build_signal_ticker_cache(config, tickers, target_direction, target_signal_name)
     timing_sweep = _run_timing_offset_sweep(
         signal_cache, phase9_config.timing_placebo.offsets, regime_df, config.backtest
     )

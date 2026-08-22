@@ -29,18 +29,21 @@ FORBIDDEN_MODULES = [
     "pipeline.run_phase11_research",
     "pipeline.run_phase12_ensemble",
     "pipeline.run_phase13_conditional_analysis",
+    "pipeline.run_phase14_validation",
     "ensemble.signal_count",
     "ensemble.combinations",
     "ensemble.frequency",
     "ensemble.decision",
     "ensemble.portfolio_sim",
     "backtest.day_cluster_bootstrap",
+    "backtest.ticker_cluster_bootstrap",
     "backtest.block_bootstrap",
     "backtest.episode_analysis",
     "backtest.event_concentration",
     "backtest.timing_shift",
     "backtest.leave_one_period_out",
     "backtest.regime_reproducibility",
+    "backtest.conditional_edge_decision",
 ]
 
 
@@ -105,6 +108,14 @@ def test_phase13_conditional_analysis_module_imports_from_signals_not_the_revers
     assert any(n.startswith("backtest.") for n in names)
     assert any(n.startswith("targets.") for n in names)
     assert any(n.startswith("ensemble.") for n in names)
+
+
+def test_phase14_validation_module_imports_from_signals_not_the_reverse() -> None:
+    path = REPO_ROOT / "pipeline" / "run_phase14_validation.py"
+    names = _imported_module_names(path)
+    assert any(n.startswith("backtest.") for n in names)
+    assert any(n.startswith("pipeline.run_phase13_conditional_analysis") for n in names)
+    assert any(n.startswith("pipeline.run_phase9_analysis") for n in names)
 
 
 def test_ensemble_package_never_imported_by_signals_or_features() -> None:

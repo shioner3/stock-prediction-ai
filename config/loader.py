@@ -392,6 +392,19 @@ class DayClusterBootstrapConfig(BaseModel):
     confidence_level: float = 0.95
 
 
+class TickerClusterBootstrapConfig(BaseModel):
+    """Phase 14 section 15: resamples by TICKER instead of by trading day
+    or individual trade, to avoid pseudo-replication bias when the same
+    ticker fires long_oversold_rebound repeatedly within one episode -
+    Day Cluster Bootstrap alone does not protect against that, since a
+    single ticker's multiple trades can still land on different days.
+    """
+
+    n_resamples: int = 10_000
+    seed: int = 46
+    confidence_level: float = 0.95
+
+
 class BlockBootstrapConfig(BaseModel):
     block_length_days: int = 5
     n_resamples: int = 10_000
@@ -413,6 +426,46 @@ class Phase9Config(BaseModel):
     block_bootstrap: BlockBootstrapConfig = BlockBootstrapConfig()
     timing_placebo: TimingPlaceboConfig = TimingPlaceboConfig()
     winsorization: WinsorizationConfig = WinsorizationConfig()
+
+
+class Phase14TimingPlaceboConfig(BaseModel):
+    # Phase 14 spec section 12's own explicit offset list - deliberately
+    # a SEPARATE config from Phase9Config.timing_placebo (which used a
+    # coarser [-15,-10,-5,-3,-1,5,10] sweep for Phase 9's own diagnostic
+    # purpose): Phase 14 pre-registers this exact, denser list before any
+    # real run and must never revise it after seeing results.
+    offsets: list[int] = [-15, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3, 5, 7, 10]
+
+
+class Phase14Config(BaseModel):
+    """Phase 14 section 28: every value here is pre-registered - fixed
+    and saved to data/walk_forward/phase14_preregistration.json BEFORE
+    any real analysis runs, and never edited after seeing results (spec
+    section 2/3/29's central prohibition). Kept OUT of AppConfig/
+    config_hash, same isolation pattern as Phase9Config
+    (config/phase9_settings.yaml) - a Phase 14 diagnostic-analysis
+    parameter must never perturb the Strategy Hash integrity anchor.
+    """
+
+    # Cumulative/nested TOPIX 20d return thresholds (spec section 2's own
+    # grid, adopted verbatim): each day belongs to every threshold whose
+    # bound it clears, not to a single mutually-exclusive bucket - see
+    # pipeline/run_phase14_validation.py's TOPIX_20D_THRESHOLD_GRID for
+    # the paired human-readable labels.
+    topix_20d_threshold_grid: list[float] = [-0.05, -0.075, -0.10, -0.125, -0.15]
+    # A BEAR episode with at least this many core-condition trades counts
+    # as "major" for Leave-One-Episode-Out's individual-episode sweep
+    # (spec section 13) - fixed here so which episodes get individually
+    # excluded is never chosen after seeing which ones look favorable.
+    major_episode_min_trades: int = 5
+    ticker_cluster_bootstrap: TickerClusterBootstrapConfig = TickerClusterBootstrapConfig()
+    timing_placebo: Phase14TimingPlaceboConfig = Phase14TimingPlaceboConfig()
+
+
+def load_phase14_config(path: Path = Path("config/phase14_settings.yaml")) -> Phase14Config:
+    with open(path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    return Phase14Config.model_validate(raw or {})
 
 
 def load_phase9_config(path: Path = Path("config/phase9_settings.yaml")) -> Phase9Config:

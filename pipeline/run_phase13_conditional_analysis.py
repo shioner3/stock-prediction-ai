@@ -80,7 +80,14 @@ from backtest.episode_analysis import (
 from backtest.market_regime import compute_market_regime
 from backtest.metrics import BacktestMetrics, compute_metrics
 from backtest.permutation import PermutationResult, permutation_test
-from config.loader import AppConfig, load_phase9_config
+from config.loader import (
+    AppConfig,
+    BootstrapConfig,
+    PermutationConfig,
+    Phase9Config,
+    TransactionCostTierConfig,
+    load_phase9_config,
+)
 from ensemble.signal_count import aggregate_signal_counts
 from features.momentum import compute_return
 from pipeline.run_backtest import run_backtest
@@ -143,7 +150,7 @@ SIGNAL_COUNT_ORDER = ["0", "1", "2", "3+"]
 LONG_SHORT_CONSENSUS_ORDER = ["LONG_ONLY", "LONG_MAJORITY", "TIE", "SHORT_MAJORITY"]
 
 
-def _bin_label(value: float, edges: list[tuple[float, float, str]]) -> str | None:
+def bin_label(value: float, edges: list[tuple[float, float, str]]) -> str | None:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return None
     for low, high, label in edges:
@@ -192,7 +199,7 @@ class DescriptiveStats:
     win_rate_5d: float | None
 
 
-def _forward_return_stats(
+def forward_return_stats(
     keys: pd.DataFrame, target_panel: pd.DataFrame, full_windows: bool = True
 ) -> list[ForwardReturnStats]:
     merged = keys[["ticker", "date"]].merge(target_panel, on=["ticker", "date"], how="left")
@@ -215,14 +222,14 @@ def _forward_return_stats(
     return stats
 
 
-def _cost_metrics(trades: pd.DataFrame, tiers) -> dict[str, BacktestMetrics]:
+def cost_metrics(trades: pd.DataFrame, tiers) -> dict[str, BacktestMetrics]:
     return {
         tier.name: compute_metrics(trades.assign(**{"return": apply_cost(trades["return"], tier)}))
         for tier in tiers
     }
 
 
-def _analyze_bucket(
+def analyze_bucket(
     axis: str,
     label: str,
     keys: pd.DataFrame,
@@ -235,9 +242,9 @@ def _analyze_bucket(
     permutation_config,
 ) -> BucketResult:
     n = len(keys)
-    fwd_stats = _forward_return_stats(keys, target_panel)
+    fwd_stats = forward_return_stats(keys, target_panel)
 
-    cost_metrics = None
+    cost_metrics_result = None
     bootstrap_expectancy = None
     block_bootstrap_expectancy = None
     permutation = None
@@ -245,7 +252,7 @@ def _analyze_bucket(
     key_set = set(zip(keys["ticker"], keys["date"]))
     trades = trades_by_key[trades_by_key["_key"].isin(key_set)]
     if not trades.empty:
-        cost_metrics = _cost_metrics(trades, tiers)
+        cost_metrics_result = cost_metrics(trades, tiers)
         base_tier = next(t for t in tiers if t.name == "base")
         base_returns = apply_cost(trades["return"], base_tier)
         bootstrap_expectancy = bootstrap_ci(base_returns.to_numpy(), "expectancy", bootstrap_config)
@@ -260,12 +267,12 @@ def _analyze_bucket(
 
     return BucketResult(
         axis=axis, label=label, n=n, forward_return_stats=fwd_stats,
-        cost_metrics=cost_metrics, bootstrap_expectancy=bootstrap_expectancy,
+        cost_metrics=cost_metrics_result, bootstrap_expectancy=bootstrap_expectancy,
         block_bootstrap_expectancy=block_bootstrap_expectancy, permutation=permutation,
     )
 
 
-def _descriptive(
+def descriptive_stats(
     axis: str, label: str, keys: pd.DataFrame, target_panel: pd.DataFrame
 ) -> DescriptiveStats:
     merged = keys[["ticker", "date"]].merge(target_panel, on=["ticker", "date"], how="left")
@@ -297,270 +304,13 @@ class ScoreAnalysis:
     q5_q1_spread: float | None
 
 
-# --- Top-level report -------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Phase13Report:
-    config_check: ConfigCheckResult
-    tickers: list[str]
-    n_signal_total: int
-    unique_tickers: int
-    unique_signal_dates: int
-    overall_forward_return_stats: list[ForwardReturnStats]
-    regime_buckets: list[BucketResult]
-    market_drawdown_20d_buckets: list[BucketResult]
-    market_drawdown_secondary: list[DescriptiveStats]
-    stock_drawdown_20d_buckets: list[BucketResult]
-    stock_drawdown_secondary: list[DescriptiveStats]
-    ma20_deviation_buckets: list[BucketResult]
-    ma_deviation_secondary: list[DescriptiveStats]
-    volume_buckets: list[BucketResult]
-    volatility_buckets: list[BucketResult]
-    score_analysis: ScoreAnalysis
-    regime_x_score: list[BucketResult]
-    drawdown_x_score: list[BucketResult]
-    signal_count_buckets: list[BucketResult]
-    long_short_consensus_buckets: list[BucketResult]
-    event_case_a: BacktestMetrics
-    event_case_b_excl_aug2024: BacktestMetrics
-    event_case_c_excl_2024: BacktestMetrics
-    event_case_d_bear_excl_aug2024: BacktestMetrics
-    bear_episodes: list[RichEpisodeMetrics]
-    fdr_tested_p_values: dict[str, float]
-
-
-def run_phase13_conditional_analysis(
-    config: AppConfig,
-    tickers: list[str],
-    phase6_5_report_path: Path,
-    phase7_report_path: Path,
-) -> Phase13Report:
-    config_check = verify_config_hash(phase6_5_report_path, phase7_report_path)
-    if not config_check.matches:
-        raise ConfigMismatchError(f"CONFIG_MISMATCH: {config_check}")
-
-    signals_dir = Path(config.data.signals_dir)
-    features_dir = Path(config.data.features_dir)
-    scores_dir = Path(config.data.scores_dir)
-
-    logger.info("Phase 13: loading all Signal Records for %d tickers", len(tickers))
-    all_records = load_all_signal_records(tickers, signals_dir)
-    target_records = all_records[
-        (all_records["direction"] == TARGET_DIRECTION)
-        & (all_records["signal_name"] == TARGET_SIGNAL_NAME)
-    ][["ticker", "date"]].drop_duplicates()
-    if target_records.empty:
-        raise RuntimeError(f"{TARGET_DIRECTION}:{TARGET_SIGNAL_NAME} never triggered")
-
-    logger.info(
-        "Phase 13: building Forward Return + MFE/MAE target panel for %d tickers", len(tickers)
-    )
-    forward_panel = load_forward_return_panel(tickers, features_dir)
-    mfe_mae_frames = []
-    for ticker in tickers:
-        try:
-            panel = load_feature_panel(ticker, features_dir)
-        except FileNotFoundError:
-            continue
-        mfe_mae = compute_mfe_mae(panel, TARGET_DIRECTION)
-        frame = panel[["date"]].join(mfe_mae)
-        frame.insert(0, "ticker", ticker)
-        mfe_mae_frames.append(frame)
-    mfe_mae_panel = (
-        pd.concat(mfe_mae_frames, ignore_index=True) if mfe_mae_frames else pd.DataFrame()
-    )
-    target_panel = forward_panel.merge(mfe_mae_panel, on=["ticker", "date"], how="left")
-    population_forward_5d = forward_panel[_PERMUTATION_COL].dropna().to_numpy()
-
-    logger.info("Phase 13: running Combined backtest over %d tickers", len(tickers))
-    backtest_summary = run_backtest(config, tickers=tickers)
-    trades = backtest_summary.trades
-    target_trades = trades[
-        (trades["direction"] == TARGET_DIRECTION) & (trades["signal_name"] == TARGET_SIGNAL_NAME)
-    ].copy()
-    target_trades["_key"] = list(zip(target_trades["ticker"], target_trades["signal_date"]))
-
-    topix = load_ohlcv("TOPIX", config.data.processed_dir)
-    regime_df = compute_market_regime(topix, config.validation.market_regime)
-    tiers = config.validation.transaction_cost.tiers
-    bootstrap_config = config.validation.bootstrap
-    permutation_config = config.validation.permutation
-    phase9_config = load_phase9_config()
-
-    overall_stats = _forward_return_stats(target_records, target_panel)
-
-    # --- axis 1: Market Regime ---------------------------------------------------
-    logger.info("Phase 13: axis 1 - Market Regime")
-    keys_with_regime = target_records.merge(regime_df, on="date", how="left")
-    regime_buckets = [
-        _analyze_bucket(
-            "regime", str(regime), group[["ticker", "date"]], target_panel, target_trades,
-            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
-        )
-        for regime, group in keys_with_regime.groupby("regime", dropna=True)
-    ]
-
-    # --- axis 2: Market Drawdown / Momentum (TOPIX N-day return) -----------------
-    logger.info("Phase 13: axis 2 - Market Drawdown")
-    topix_returns = pd.DataFrame({"date": topix["date"]})
-    for w in (1, 3, 5, 10, 20, 60):
-        topix_returns[f"topix_return_{w}d"] = compute_return(topix["close"], w)
-    keys_with_topix = target_records.merge(topix_returns, on="date", how="left")
-    keys_with_topix["bucket_20d"] = keys_with_topix["topix_return_20d"].apply(
-        lambda v: _bin_label(v, MARKET_DRAWDOWN_20D_EDGES)
-    )
-    market_drawdown_20d_buckets = [
-        _analyze_bucket(
-            "market_drawdown_20d", label, group[["ticker", "date"]], target_panel, target_trades,
-            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
-        )
-        for label, group in keys_with_topix.groupby("bucket_20d", dropna=True)
-    ]
-    market_drawdown_secondary = []
-    for w in (1, 3, 5, 10, 60):
-        col = f"topix_return_{w}d"
-        edges = MARKET_DRAWDOWN_20D_EDGES  # same fixed edge shape reused across windows
-        keys_with_topix[f"bucket_{w}d"] = keys_with_topix[col].apply(lambda v: _bin_label(v, edges))
-        for label, group in keys_with_topix.groupby(f"bucket_{w}d", dropna=True):
-            market_drawdown_secondary.append(
-                _descriptive(
-                    f"market_drawdown_{w}d", str(label), group[["ticker", "date"]], target_panel
-                )
-            )
-
-    # --- axis 3: Individual Stock Drawdown (return_20d Feature) ------------------
-    logger.info("Phase 13: axis 3 - Individual Stock Drawdown")
-    stock_return_frames = []
-    for ticker in tickers:
-        try:
-            panel = load_feature_panel(ticker, features_dir)
-        except FileNotFoundError:
-            continue
-        cols = ["date"] + [
-            f"return_{w}d" for w in (3, 5, 10, 20, 60) if f"return_{w}d" in panel.columns
-        ]
-        frame = panel[cols].copy()
-        frame.insert(0, "ticker", ticker)
-        stock_return_frames.append(frame)
-    stock_returns = (
-        pd.concat(stock_return_frames, ignore_index=True) if stock_return_frames else pd.DataFrame()
-    )
-    keys_with_stock_return = target_records.merge(stock_returns, on=["ticker", "date"], how="left")
-    keys_with_stock_return["bucket_20d"] = keys_with_stock_return.get(
-        "return_20d", pd.Series(dtype=float)
-    ).apply(lambda v: _bin_label(v, STOCK_DRAWDOWN_20D_EDGES))
-    stock_drawdown_20d_buckets = [
-        _analyze_bucket(
-            "stock_drawdown_20d", label, group[["ticker", "date"]], target_panel, target_trades,
-            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
-        )
-        for label, group in keys_with_stock_return.groupby("bucket_20d", dropna=True)
-    ]
-    stock_drawdown_secondary = []
-    for w in (5, 10, 60):
-        col = f"return_{w}d"
-        if col not in keys_with_stock_return.columns:
-            continue
-        keys_with_stock_return[f"bucket_{w}d"] = keys_with_stock_return[col].apply(
-            lambda v: _bin_label(v, STOCK_DRAWDOWN_20D_EDGES)
-        )
-        for label, group in keys_with_stock_return.groupby(f"bucket_{w}d", dropna=True):
-            stock_drawdown_secondary.append(
-                _descriptive(
-                    f"stock_drawdown_{w}d", str(label), group[["ticker", "date"]], target_panel
-                )
-            )
-
-    # --- axis 4: MA deviation ------------------------------------------------------
-    logger.info("Phase 13: axis 4 - MA deviation")
-    ma_frames = []
-    for ticker in tickers:
-        try:
-            panel = load_feature_panel(ticker, features_dir)
-        except FileNotFoundError:
-            continue
-        ma_candidates = ("close_to_sma_5", "close_to_sma_20", "close_to_sma_50")
-        ma_cols = [c for c in ma_candidates if c in panel.columns]
-        frame = panel[["date"] + ma_cols].copy()
-        frame.insert(0, "ticker", ticker)
-        ma_frames.append(frame)
-    ma_data = pd.concat(ma_frames, ignore_index=True) if ma_frames else pd.DataFrame()
-    keys_with_ma = target_records.merge(ma_data, on=["ticker", "date"], how="left")
-    keys_with_ma["bucket_ma20"] = keys_with_ma.get("close_to_sma_20", pd.Series(dtype=float)).apply(
-        lambda v: _bin_label(v, MA20_DEVIATION_EDGES)
-    )
-    ma20_deviation_buckets = [
-        _analyze_bucket(
-            "ma20_deviation", label, group[["ticker", "date"]], target_panel, target_trades,
-            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
-        )
-        for label, group in keys_with_ma.groupby("bucket_ma20", dropna=True)
-    ]
-    ma_deviation_secondary = []
-    for col, tag in (("close_to_sma_5", "ma5"), ("close_to_sma_50", "ma50_proxy_for_ma60")):
-        if col not in keys_with_ma.columns:
-            continue
-        keys_with_ma[f"bucket_{tag}"] = keys_with_ma[col].apply(
-            lambda v: _bin_label(v, MA20_DEVIATION_EDGES)
-        )
-        for label, group in keys_with_ma.groupby(f"bucket_{tag}", dropna=True):
-            ma_deviation_secondary.append(
-                _descriptive(tag, str(label), group[["ticker", "date"]], target_panel)
-            )
-
-    # --- axis 5: Volume --------------------------------------------------------------
-    logger.info("Phase 13: axis 5 - Volume")
-    volume_frames = []
-    for ticker in tickers:
-        try:
-            panel = load_feature_panel(ticker, features_dir)
-        except FileNotFoundError:
-            continue
-        frame = panel[["date", "volume_ratio_20d"]].copy()
-        frame.insert(0, "ticker", ticker)
-        volume_frames.append(frame)
-    volume_data = pd.concat(volume_frames, ignore_index=True) if volume_frames else pd.DataFrame()
-    keys_with_volume = target_records.merge(volume_data, on=["ticker", "date"], how="left")
-    keys_with_volume["bucket"] = keys_with_volume["volume_ratio_20d"].apply(
-        lambda v: _bin_label(v, VOLUME_RATIO_20D_EDGES)
-    )
-    volume_buckets = [
-        _analyze_bucket(
-            "volume", label, group[["ticker", "date"]], target_panel, target_trades,
-            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
-        )
-        for label, group in keys_with_volume.groupby("bucket", dropna=True)
-    ]
-
-    # --- axis 6: Volatility (tercile quantile of the signal population) ----------
-    logger.info("Phase 13: axis 6 - Volatility")
-    vol_frames = []
-    for ticker in tickers:
-        try:
-            panel = load_feature_panel(ticker, features_dir)
-        except FileNotFoundError:
-            continue
-        frame = panel[["date", "volatility_20d"]].copy()
-        frame.insert(0, "ticker", ticker)
-        vol_frames.append(frame)
-    vol_data = pd.concat(vol_frames, ignore_index=True) if vol_frames else pd.DataFrame()
-    keys_with_vol = target_records.merge(vol_data, on=["ticker", "date"], how="left").dropna(
-        subset=["volatility_20d"]
-    )
-    keys_with_vol = keys_with_vol.assign(
-        bucket=assign_quantile_buckets(keys_with_vol["volatility_20d"], n_buckets=3)
-    )
-    volatility_buckets = [
-        _analyze_bucket(
-            "volatility", str(label), group[["ticker", "date"]], target_panel, target_trades,
-            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
-        )
-        for label, group in keys_with_vol.groupby("bucket", dropna=True, observed=True)
-    ]
-
-    # --- axis 7: Score ---------------------------------------------------------------
-    logger.info("Phase 13: axis 7 - Score")
+def load_score_data(tickers: list[str], scores_dir: Path) -> pd.DataFrame:
+    """ticker/date/total_score rows for TARGET_DIRECTION:TARGET_SIGNAL_NAME
+    only, across every ticker - extracted from Phase 13's own axis 7 so
+    Phase 14's Score Independence Test (spec section 24 Q9) can reuse the
+    exact same loading logic against an arbitrary subset of keys (e.g.
+    BEAR x TOPIX20d<=-10% only) instead of always the full target_records.
+    """
     score_frames = []
     for ticker in tickers:
         try:
@@ -570,10 +320,23 @@ def run_phase13_conditional_analysis(
         sub = df[(df["direction"] == TARGET_DIRECTION) & (df["signal_name"] == TARGET_SIGNAL_NAME)]
         if not sub.empty:
             score_frames.append(sub[["ticker", "date", "total_score"]])
-    score_data = pd.concat(score_frames, ignore_index=True) if score_frames else pd.DataFrame(
-        columns=["ticker", "date", "total_score"]
+    return (
+        pd.concat(score_frames, ignore_index=True)
+        if score_frames
+        else pd.DataFrame(columns=["ticker", "date", "total_score"])
     )
-    keys_with_score = target_records.merge(score_data, on=["ticker", "date"], how="left").dropna(
+
+
+def compute_score_analysis(
+    keys: pd.DataFrame, target_panel: pd.DataFrame, score_data: pd.DataFrame
+) -> ScoreAnalysis:
+    """Q1-Q5 quantile-bucketed mean Forward Return, monotonicity, rank
+    correlation, and Q5-Q1 spread for whichever `keys` subset the caller
+    passes in - `keys` need not be every long_oversold_rebound occurrence
+    (Phase 13 passes target_records; Phase 14 passes a market-condition
+    subset for its own within-condition Score Independence Test).
+    """
+    keys_with_score = keys.merge(score_data, on=["ticker", "date"], how="left").dropna(
         subset=["total_score"]
     )
     score_buckets_out: list[ScoreBucketResult] = []
@@ -610,10 +373,357 @@ def run_phase13_conditional_analysis(
         q5, q1 = bucket_by_label["Q5"].mean_return_5d, bucket_by_label["Q1"].mean_return_5d
         if q5 is not None and q1 is not None:
             q5_q1_spread = q5 - q1
-    score_analysis = ScoreAnalysis(
+    return ScoreAnalysis(
         buckets=score_buckets_out, monotonic=monotonic, rank_correlation=rank_corr,
         q5_q1_spread=q5_q1_spread,
     )
+
+
+# --- Top-level report -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Phase13Report:
+    config_check: ConfigCheckResult
+    tickers: list[str]
+    n_signal_total: int
+    unique_tickers: int
+    unique_signal_dates: int
+    overall_forward_return_stats: list[ForwardReturnStats]
+    regime_buckets: list[BucketResult]
+    market_drawdown_20d_buckets: list[BucketResult]
+    market_drawdown_secondary: list[DescriptiveStats]
+    stock_drawdown_20d_buckets: list[BucketResult]
+    stock_drawdown_secondary: list[DescriptiveStats]
+    ma20_deviation_buckets: list[BucketResult]
+    ma_deviation_secondary: list[DescriptiveStats]
+    volume_buckets: list[BucketResult]
+    volatility_buckets: list[BucketResult]
+    score_analysis: ScoreAnalysis
+    regime_x_score: list[BucketResult]
+    drawdown_x_score: list[BucketResult]
+    signal_count_buckets: list[BucketResult]
+    long_short_consensus_buckets: list[BucketResult]
+    event_case_a: BacktestMetrics
+    event_case_b_excl_aug2024: BacktestMetrics
+    event_case_c_excl_2024: BacktestMetrics
+    event_case_d_bear_excl_aug2024: BacktestMetrics
+    bear_episodes: list[RichEpisodeMetrics]
+    fdr_tested_p_values: dict[str, float]
+
+
+@dataclass(frozen=True)
+class TargetData:
+    """Everything computed ONCE from Full Universe data for
+    long_oversold_rebound's own occurrences - reused by both Phase 13
+    (this module) and Phase 14 (pipeline/run_phase14_validation.py) so
+    neither has to duplicate the loading/backtest/regime-computation
+    logic. A pure extraction of what run_phase13_conditional_analysis()
+    already did inline - no behavior change (see
+    tests/test_pipeline_run_phase13_conditional_analysis.py, which still
+    passes unmodified after this refactor).
+    """
+
+    all_records: pd.DataFrame
+    target_records: pd.DataFrame
+    target_panel: pd.DataFrame
+    population_forward_5d: np.ndarray
+    target_trades: pd.DataFrame
+    topix: pd.DataFrame
+    regime_df: pd.DataFrame
+    tiers: list[TransactionCostTierConfig]
+    bootstrap_config: BootstrapConfig
+    permutation_config: PermutationConfig
+    phase9_config: Phase9Config
+
+
+def load_target_data(config: AppConfig, tickers: list[str]) -> TargetData:
+    signals_dir = Path(config.data.signals_dir)
+    features_dir = Path(config.data.features_dir)
+
+    logger.info("loading all Signal Records for %d tickers", len(tickers))
+    all_records = load_all_signal_records(tickers, signals_dir)
+    target_records = all_records[
+        (all_records["direction"] == TARGET_DIRECTION)
+        & (all_records["signal_name"] == TARGET_SIGNAL_NAME)
+    ][["ticker", "date"]].drop_duplicates()
+    if target_records.empty:
+        raise RuntimeError(f"{TARGET_DIRECTION}:{TARGET_SIGNAL_NAME} never triggered")
+
+    logger.info(
+        "building Forward Return + MFE/MAE target panel for %d tickers", len(tickers)
+    )
+    forward_panel = load_forward_return_panel(tickers, features_dir)
+    mfe_mae_frames = []
+    for ticker in tickers:
+        try:
+            panel = load_feature_panel(ticker, features_dir)
+        except FileNotFoundError:
+            continue
+        mfe_mae = compute_mfe_mae(panel, TARGET_DIRECTION)
+        frame = panel[["date"]].join(mfe_mae)
+        frame.insert(0, "ticker", ticker)
+        mfe_mae_frames.append(frame)
+    mfe_mae_panel = (
+        pd.concat(mfe_mae_frames, ignore_index=True) if mfe_mae_frames else pd.DataFrame()
+    )
+    target_panel = forward_panel.merge(mfe_mae_panel, on=["ticker", "date"], how="left")
+    population_forward_5d = forward_panel[_PERMUTATION_COL].dropna().to_numpy()
+
+    logger.info("running Combined backtest over %d tickers", len(tickers))
+    backtest_summary = run_backtest(config, tickers=tickers)
+    trades = backtest_summary.trades
+    target_trades = trades[
+        (trades["direction"] == TARGET_DIRECTION) & (trades["signal_name"] == TARGET_SIGNAL_NAME)
+    ].copy()
+    target_trades["_key"] = list(zip(target_trades["ticker"], target_trades["signal_date"]))
+
+    topix = load_ohlcv("TOPIX", config.data.processed_dir)
+    regime_df = compute_market_regime(topix, config.validation.market_regime)
+    tiers = config.validation.transaction_cost.tiers
+    bootstrap_config = config.validation.bootstrap
+    permutation_config = config.validation.permutation
+    phase9_config = load_phase9_config()
+
+    return TargetData(
+        all_records=all_records,
+        target_records=target_records,
+        target_panel=target_panel,
+        population_forward_5d=population_forward_5d,
+        target_trades=target_trades,
+        topix=topix,
+        regime_df=regime_df,
+        tiers=tiers,
+        bootstrap_config=bootstrap_config,
+        permutation_config=permutation_config,
+        phase9_config=phase9_config,
+    )
+
+
+TOPIX_RETURN_WINDOWS = (1, 3, 5, 10, 20, 60)
+
+
+def compute_topix_returns(topix: pd.DataFrame) -> pd.DataFrame:
+    """date + topix_return_{w}d for w in TOPIX_RETURN_WINDOWS - reuses
+    features/momentum.py::compute_return() unmodified on TOPIX's raw
+    Close series (see module docstring for why TOPIX N-day return is
+    computed here rather than read from a stored Feature column).
+    Extracted so Phase 14's own market-condition bucketing (TOPIX 20d
+    threshold grid, dose-response bins) can reuse the exact same
+    computation instead of recomputing it.
+    """
+    topix_returns = pd.DataFrame({"date": topix["date"]})
+    for w in TOPIX_RETURN_WINDOWS:
+        topix_returns[f"topix_return_{w}d"] = compute_return(topix["close"], w)
+    return topix_returns
+
+
+def run_phase13_conditional_analysis(
+    config: AppConfig,
+    tickers: list[str],
+    phase6_5_report_path: Path,
+    phase7_report_path: Path,
+) -> Phase13Report:
+    config_check = verify_config_hash(phase6_5_report_path, phase7_report_path)
+    if not config_check.matches:
+        raise ConfigMismatchError(f"CONFIG_MISMATCH: {config_check}")
+
+    features_dir = Path(config.data.features_dir)
+    scores_dir = Path(config.data.scores_dir)
+
+    data = load_target_data(config, tickers)
+    all_records = data.all_records
+    target_records = data.target_records
+    target_panel = data.target_panel
+    population_forward_5d = data.population_forward_5d
+    target_trades = data.target_trades
+    topix = data.topix
+    regime_df = data.regime_df
+    tiers = data.tiers
+    bootstrap_config = data.bootstrap_config
+    permutation_config = data.permutation_config
+    phase9_config = data.phase9_config
+
+    overall_stats = forward_return_stats(target_records, target_panel)
+
+    # --- axis 1: Market Regime ---------------------------------------------------
+    logger.info("Phase 13: axis 1 - Market Regime")
+    keys_with_regime = target_records.merge(regime_df, on="date", how="left")
+    regime_buckets = [
+        analyze_bucket(
+            "regime", str(regime), group[["ticker", "date"]], target_panel, target_trades,
+            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
+        )
+        for regime, group in keys_with_regime.groupby("regime", dropna=True)
+    ]
+
+    # --- axis 2: Market Drawdown / Momentum (TOPIX N-day return) -----------------
+    logger.info("Phase 13: axis 2 - Market Drawdown")
+    topix_returns = compute_topix_returns(topix)
+    keys_with_topix = target_records.merge(topix_returns, on="date", how="left")
+    keys_with_topix["bucket_20d"] = keys_with_topix["topix_return_20d"].apply(
+        lambda v: bin_label(v, MARKET_DRAWDOWN_20D_EDGES)
+    )
+    market_drawdown_20d_buckets = [
+        analyze_bucket(
+            "market_drawdown_20d", label, group[["ticker", "date"]], target_panel, target_trades,
+            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
+        )
+        for label, group in keys_with_topix.groupby("bucket_20d", dropna=True)
+    ]
+    market_drawdown_secondary = []
+    for w in (1, 3, 5, 10, 60):
+        col = f"topix_return_{w}d"
+        edges = MARKET_DRAWDOWN_20D_EDGES  # same fixed edge shape reused across windows
+        keys_with_topix[f"bucket_{w}d"] = keys_with_topix[col].apply(lambda v: bin_label(v, edges))
+        for label, group in keys_with_topix.groupby(f"bucket_{w}d", dropna=True):
+            market_drawdown_secondary.append(
+                descriptive_stats(
+                    f"market_drawdown_{w}d", str(label), group[["ticker", "date"]], target_panel
+                )
+            )
+
+    # --- axis 3: Individual Stock Drawdown (return_20d Feature) ------------------
+    logger.info("Phase 13: axis 3 - Individual Stock Drawdown")
+    stock_return_frames = []
+    for ticker in tickers:
+        try:
+            panel = load_feature_panel(ticker, features_dir)
+        except FileNotFoundError:
+            continue
+        cols = ["date"] + [
+            f"return_{w}d" for w in (3, 5, 10, 20, 60) if f"return_{w}d" in panel.columns
+        ]
+        frame = panel[cols].copy()
+        frame.insert(0, "ticker", ticker)
+        stock_return_frames.append(frame)
+    stock_returns = (
+        pd.concat(stock_return_frames, ignore_index=True) if stock_return_frames else pd.DataFrame()
+    )
+    keys_with_stock_return = target_records.merge(stock_returns, on=["ticker", "date"], how="left")
+    keys_with_stock_return["bucket_20d"] = keys_with_stock_return.get(
+        "return_20d", pd.Series(dtype=float)
+    ).apply(lambda v: bin_label(v, STOCK_DRAWDOWN_20D_EDGES))
+    stock_drawdown_20d_buckets = [
+        analyze_bucket(
+            "stock_drawdown_20d", label, group[["ticker", "date"]], target_panel, target_trades,
+            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
+        )
+        for label, group in keys_with_stock_return.groupby("bucket_20d", dropna=True)
+    ]
+    stock_drawdown_secondary = []
+    for w in (5, 10, 60):
+        col = f"return_{w}d"
+        if col not in keys_with_stock_return.columns:
+            continue
+        keys_with_stock_return[f"bucket_{w}d"] = keys_with_stock_return[col].apply(
+            lambda v: bin_label(v, STOCK_DRAWDOWN_20D_EDGES)
+        )
+        for label, group in keys_with_stock_return.groupby(f"bucket_{w}d", dropna=True):
+            stock_drawdown_secondary.append(
+                descriptive_stats(
+                    f"stock_drawdown_{w}d", str(label), group[["ticker", "date"]], target_panel
+                )
+            )
+
+    # --- axis 4: MA deviation ------------------------------------------------------
+    logger.info("Phase 13: axis 4 - MA deviation")
+    ma_frames = []
+    for ticker in tickers:
+        try:
+            panel = load_feature_panel(ticker, features_dir)
+        except FileNotFoundError:
+            continue
+        ma_candidates = ("close_to_sma_5", "close_to_sma_20", "close_to_sma_50")
+        ma_cols = [c for c in ma_candidates if c in panel.columns]
+        frame = panel[["date"] + ma_cols].copy()
+        frame.insert(0, "ticker", ticker)
+        ma_frames.append(frame)
+    ma_data = pd.concat(ma_frames, ignore_index=True) if ma_frames else pd.DataFrame()
+    keys_with_ma = target_records.merge(ma_data, on=["ticker", "date"], how="left")
+    keys_with_ma["bucket_ma20"] = keys_with_ma.get("close_to_sma_20", pd.Series(dtype=float)).apply(
+        lambda v: bin_label(v, MA20_DEVIATION_EDGES)
+    )
+    ma20_deviation_buckets = [
+        analyze_bucket(
+            "ma20_deviation", label, group[["ticker", "date"]], target_panel, target_trades,
+            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
+        )
+        for label, group in keys_with_ma.groupby("bucket_ma20", dropna=True)
+    ]
+    ma_deviation_secondary = []
+    for col, tag in (("close_to_sma_5", "ma5"), ("close_to_sma_50", "ma50_proxy_for_ma60")):
+        if col not in keys_with_ma.columns:
+            continue
+        keys_with_ma[f"bucket_{tag}"] = keys_with_ma[col].apply(
+            lambda v: bin_label(v, MA20_DEVIATION_EDGES)
+        )
+        for label, group in keys_with_ma.groupby(f"bucket_{tag}", dropna=True):
+            ma_deviation_secondary.append(
+                descriptive_stats(tag, str(label), group[["ticker", "date"]], target_panel)
+            )
+
+    # --- axis 5: Volume --------------------------------------------------------------
+    logger.info("Phase 13: axis 5 - Volume")
+    volume_frames = []
+    for ticker in tickers:
+        try:
+            panel = load_feature_panel(ticker, features_dir)
+        except FileNotFoundError:
+            continue
+        frame = panel[["date", "volume_ratio_20d"]].copy()
+        frame.insert(0, "ticker", ticker)
+        volume_frames.append(frame)
+    volume_data = pd.concat(volume_frames, ignore_index=True) if volume_frames else pd.DataFrame()
+    keys_with_volume = target_records.merge(volume_data, on=["ticker", "date"], how="left")
+    keys_with_volume["bucket"] = keys_with_volume["volume_ratio_20d"].apply(
+        lambda v: bin_label(v, VOLUME_RATIO_20D_EDGES)
+    )
+    volume_buckets = [
+        analyze_bucket(
+            "volume", label, group[["ticker", "date"]], target_panel, target_trades,
+            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
+        )
+        for label, group in keys_with_volume.groupby("bucket", dropna=True)
+    ]
+
+    # --- axis 6: Volatility (tercile quantile of the signal population) ----------
+    logger.info("Phase 13: axis 6 - Volatility")
+    vol_frames = []
+    for ticker in tickers:
+        try:
+            panel = load_feature_panel(ticker, features_dir)
+        except FileNotFoundError:
+            continue
+        frame = panel[["date", "volatility_20d"]].copy()
+        frame.insert(0, "ticker", ticker)
+        vol_frames.append(frame)
+    vol_data = pd.concat(vol_frames, ignore_index=True) if vol_frames else pd.DataFrame()
+    keys_with_vol = target_records.merge(vol_data, on=["ticker", "date"], how="left").dropna(
+        subset=["volatility_20d"]
+    )
+    keys_with_vol = keys_with_vol.assign(
+        bucket=assign_quantile_buckets(keys_with_vol["volatility_20d"], n_buckets=3)
+    )
+    volatility_buckets = [
+        analyze_bucket(
+            "volatility", str(label), group[["ticker", "date"]], target_panel, target_trades,
+            population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
+        )
+        for label, group in keys_with_vol.groupby("bucket", dropna=True, observed=True)
+    ]
+
+    # --- axis 7: Score ---------------------------------------------------------------
+    logger.info("Phase 13: axis 7 - Score")
+    score_data = load_score_data(tickers, scores_dir)
+    keys_with_score = target_records.merge(score_data, on=["ticker", "date"], how="left").dropna(
+        subset=["total_score"]
+    )
+    if not keys_with_score.empty:
+        keys_with_score = keys_with_score.assign(
+            score_bucket=assign_quantile_buckets(keys_with_score["total_score"])
+        )
+    score_analysis = compute_score_analysis(target_records, target_panel, score_data)
 
     # --- axis 8: Regime x Score ------------------------------------------------------
     logger.info("Phase 13: axis 8 - Regime x Score")
@@ -626,7 +736,7 @@ def run_phase13_conditional_analysis(
             if len(group) < config.validation.min_sample.min_oos_trades:
                 continue
             regime_x_score.append(
-                _analyze_bucket(
+                analyze_bucket(
                     "regime_x_score", f"{regime}:{score_bucket}", group[["ticker", "date"]],
                     target_panel, target_trades, population_forward_5d, tiers,
                     bootstrap_config, phase9_config, permutation_config,
@@ -646,7 +756,7 @@ def run_phase13_conditional_analysis(
             if len(group) < config.validation.min_sample.min_oos_trades:
                 continue
             drawdown_x_score.append(
-                _analyze_bucket(
+                analyze_bucket(
                     "drawdown_x_score", f"{dd_bucket}:{score_bucket}", group[["ticker", "date"]],
                     target_panel, target_trades, population_forward_5d, tiers,
                     bootstrap_config, phase9_config, permutation_config,
@@ -665,7 +775,7 @@ def run_phase13_conditional_analysis(
         _signal_count_bucket
     )
     signal_count_buckets = [
-        _analyze_bucket(
+        analyze_bucket(
             "signal_count", label, group[["ticker", "date"]], target_panel, target_trades,
             population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
         )
@@ -687,7 +797,7 @@ def run_phase13_conditional_analysis(
 
     target_with_counts["consensus"] = target_with_counts.apply(_consensus_label, axis=1)
     long_short_consensus_buckets = [
-        _analyze_bucket(
+        analyze_bucket(
             "long_short_consensus", label, group[["ticker", "date"]], target_panel, target_trades,
             population_forward_5d, tiers, bootstrap_config, phase9_config, permutation_config,
         )
