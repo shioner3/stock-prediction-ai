@@ -13,7 +13,7 @@
   初めて採用する
 - 未来の情報を現在のシグナル判定に使用しない(No-lookahead)ことを最優先とする
 
-## 現在の実装状況: Phase 13(long_oversold_rebound Conditional Analysis)
+## 現在の実装状況: Phase 14(独立OOSデータ不足によりSTOP、Phase 13まで完了)
 
 Phase 1(データ取得)・Phase 2(テクニカル特徴量)・Phase 3(Relative
 Strength)・Phase 4(Signal Architecture + Backtest Engine)・Phase 5
@@ -975,6 +975,30 @@ GitHub Actionsのみで毎営業日自動継続できる状態にした。全文
   仮説を現在のSignal・Score・Forward Test Engineに反映することは
   行っていない。
 
+## Phase 14: long_oversold_rebound Conditional Hypothesis Confirmatory OOS Validation(実行前STOP)
+
+Phase 13で発見した条件別仮説(H1〜H5)を、Phase 13の分析対象期間と
+重複しない完全独立OOSで確認的に検証することを目的としたが、
+**Full Universe本実行は開始せず、実行前CHECKPOINTの段階でSTOPした**。
+全文レポート: [research/phase14_report.md](research/phase14_report.md)
+
+- 実データを直接確認した結果、Phase 13は既にT0(2026-08-20)直前
+  (2026-03-31)まで全履歴データを分析済みで、その外側に十分な長さの
+  独立データは存在しない。Forward Test側(T0以降の新規データ源)は
+  記録済みが1日分のみ・決済トレード0件で、独立OOSとして使うには
+  全く不十分。
+- Strategy Hash・config_hash はいずれも一致(無変更)を確認済み。
+  pytest 711 passed / ruff・mypy clean。
+- 同一データに対するより厳格な統計的頑健性チェック(Ticker Cluster
+  Bootstrap・Leave-One-Episode/Year-Out・Timing Placebo・
+  Permutation+FDR・7区分Decision Framework等)は
+  `pipeline/run_phase14_validation.py`に実装・テスト済みだが、これは
+  独立OOS確認的検証の代替にはならないため、今回のPrimary Analysis
+  としては使用していない。
+- Forward Testの日次自動実行を継続し、十分な独立OOS期間が蓄積された
+  時点で本実行の可否を再判断する。Strategy Version 1・Score・
+  Forward Testのいずれにも変更はない。
+
 ## No-lookahead対策
 
 構造面: 全Feature関数は`rolling()`・`ewm()`・`shift(+n)`のみを使用し、
@@ -1309,16 +1333,31 @@ Phase 7〜8を参照)。
     で確認済みです。実データにBEAR相場が含まれていないだけで、実装の
     不備ではありません。
 
-## Phase 14以降について
+## Phase 14について
 
-Phase 13の完了報告後は停止し、次の指示を待ちます。Strategy tuning・
-実運用への自動発注・自動売買・Streamlit UI・Strategy Version 2・
-新規Signal発明・Score調整のいずれにも自動で進みません。Forward Test
-の日次実行は`.github/workflows/forward_test.yml`により平日21:00 JST
-に自動実行されますが、それ以上の機能追加(通知連携・複数銘柄戦略の
-追加等)は別途指示がない限り行いません。Phase 11でREJECTとなった
-11 Signal、Phase 12でREJECT/REGIME_DEPENDENT_ENSEMBLEとなった
-Ensemble候補、Phase 13で発見した条件別仮説のいずれについても、
-それを理由にSignal条件・重み・閾値を変更しての採用は行いません。
-Phase 13の仮説を実際に検証するには、本Phaseとは完全に独立したOOS
-期間での再検証が必要です。
+Phase 14(`long_oversold_rebound` Conditional Hypothesis Confirmatory
+OOS Validation)は**Full Universe本実行を開始せず、実行前CHECKPOINT
+の時点でSTOPしました**。Phase 13の分析対象期間と重複しない完全独立
+OOSを確保できないことが実データ確認で判明したためです(Phase 13は
+既にT0=2026-08-20直前まで全履歴データを分析済みで、Forward Test側は
+まだ1日分・0トレードしか蓄積していません)。詳細は
+`research/phase14_report.md`参照。Strategy Version 1・Forward Test
+はいずれも無変更のまま継続します。
+
+同一データ(Phase 13と同じCombined dataset)に対するより厳格な統計的
+頑健性チェック(Ticker Cluster Bootstrap・Leave-One-Episode/Year-Out・
+Timing Placebo・Permutation+FDR等)の実装は`pipeline/run_phase14_validation.py`
+に用意済み・テスト済みですが、これは独立OOS確認的検証の代替には
+**なりません**(区別は`research/phase14_report.md`参照)。Forward
+Testの蓄積データが十分な独立OOS期間を構成できるようになった時点で、
+あらためてOOS期間を機械的に再決定し、本実行の可否を判断します。
+
+それまでは停止し、次の指示を待ちます。Strategy tuning・実運用への
+自動発注・自動売買・Streamlit UI・Strategy Version 2・新規Signal
+発明・Score調整のいずれにも自動で進みません。Forward Testの日次実行
+は`.github/workflows/forward_test.yml`により平日21:00 JSTに自動実行
+されますが、それ以上の機能追加(通知連携・複数銘柄戦略の追加等)は
+別途指示がない限り行いません。Phase 11でREJECTとなった11 Signal、
+Phase 12でREJECT/REGIME_DEPENDENT_ENSEMBLEとなったEnsemble候補、
+Phase 13で発見した条件別仮説のいずれについても、それを理由にSignal
+条件・重み・閾値を変更しての採用は行いません。
