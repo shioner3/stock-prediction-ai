@@ -104,6 +104,13 @@ jobs:
         run: |
           git config user.name "forward-test-bot"
           git config user.email "actions@users.noreply.github.com"
+          # data/forward_test/reports/ is never populated by the current
+          # CLI (scripts/run_forward_test_day.py only mkdir's it) and
+          # git never tracks an empty directory - on a fresh checkout it
+          # doesn't exist on disk at all, so a bare "git add" on it
+          # fails with "did not match any files" (pathspec error, exit
+          # 128). mkdir -p first so the add is always a safe no-op.
+          mkdir -p data/forward_test/reports
           git add data/forward_test/manifest.json \
                   data/forward_test/signals_log/ \
                   data/forward_test/portfolio/ \
