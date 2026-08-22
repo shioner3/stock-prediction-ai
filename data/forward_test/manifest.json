@@ -2,13 +2,14 @@
   "strategy_version": "v1",
   "t0": "2026-08-20",
   "hashes": {
-    "features_hash": "20c2748a0cc873e8c3611443ed3590190554b5cb9c832cd19ef19192cdcc35b3",
-    "signals_hash": "20a79921c98f2a46a0c1cdca842ab347696cb9cd770fd87a71b987999c0f5df3",
-    "scoring_hash": "f3c7510a053cdd7688e300df38691fa82ec21fb161e0ca3e5c0780ca17473872",
-    "backtest_engine_hash": "8c7a8fb0222dc395f701931dd630e7be8894b0a4f6150aa176104c3a80f53870",
-    "market_regime_hash": "23d037fecb8732be7a9290952b5cef47f61812cf04d857f80ff9057aefa2231b",
-    "config_hash": "a9b34ccb6e6e1e1a9d4d1eb554fe3fd8a4c09b2d9d186b2bd0ee3b0d430a2217"
+    "features_hash": "78b72c8f79edcd66b363b935464af76ce09283b885445829cf37555010e4bb04",
+    "signals_hash": "1e113fe154ed15b5201684a14fb60619b4b3d5aff4c0907750dc6ccb8ce629b1",
+    "scoring_hash": "6bda22b1e148593478ed6233784998adf28ca3e647d202796c3845960c072665",
+    "backtest_engine_hash": "ff8c51fa2493a4a19571c32eaf380d7035c3725a5bfe0819959c2a344c427d9f",
+    "market_regime_hash": "8b4fffd1edf714d3ba6bcce8c4a4d42fc04ffdd0d6ac10b605b515c27c9eb622",
+    "config_hash": "5e98a8c6e3cd6bff3e1be202d97341bec6f9fc5f0fee8b161c2d135c1cbe6897"
   },
+  "hash_regeneration_note": "Phase 11A (2026-08-22): hashes recomputed after fixing common/hashing.py's hash_files() to use Path.as_posix() instead of str(path), which was OS-dependent (backslash on Windows, forward slash on POSIX) and made the Strategy Hash unverifiable across environments. This is a hash-COMPUTATION bug fix, not a Strategy Version change: all Strategy Hash target files (features/, signals/, scoring/, backtest/engine.py, backtest/market_regime.py, config/settings.yaml, config/universe_filters.yaml) were verified byte-for-byte identical before and after via an independent SHA256 fingerprint and via `git status` showing zero changes. Still Strategy Version 1, T0 unchanged.",
   "hold_days": 5,
   "transaction_cost_bps": 30.0,
   "market_regime_lookback_days": 60,
