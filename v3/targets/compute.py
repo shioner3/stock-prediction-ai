@@ -10,6 +10,7 @@ stock's own date sequence with the market benchmark's.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from targets.forward_returns import compute_forward_returns, compute_mfe_mae
@@ -58,11 +59,16 @@ def compute_v3_targets(stock_panel: pd.DataFrame, market_ohlcv: pd.DataFrame) ->
             raw.to_numpy() - aligned_market_forward
         )
 
-        vol_denominator = stock_panel["volatility_20d"].replace(0, pd.NA)
+        # np.nan (not pd.NA) - replacing into a float64 Series with pd.NA
+        # silently upcasts it to `object` dtype (a mix of Python float and
+        # pd.NA), which LightGBM's dtype check then rejects outright; NaN
+        # stays within float64 and is what every other NaN in this
+        # pipeline (warmup, end-of-history) already uses.
+        vol_denominator = stock_panel["volatility_20d"].replace(0, np.nan)
         out[target_column_name(VARIANT_VOL_ADJUSTED, horizon)] = raw / vol_denominator
 
         mae = mfe_mae[f"mae_{horizon}d"]
-        risk_denominator = mae.abs().replace(0, pd.NA)
+        risk_denominator = mae.abs().replace(0, np.nan)
         out[target_column_name(VARIANT_RISK_ADJUSTED, horizon)] = raw / risk_denominator
 
     return out

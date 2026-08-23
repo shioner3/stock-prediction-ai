@@ -46,15 +46,20 @@ def main() -> None:
     status = subprocess.run(
         ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
     ).stdout
-    # .gitignore/README.md are the two files every prior Phase (V2-1's own
-    # precedent) legitimately edits (a new data/v*/ ignore rule, a new
-    # README section) - the actual invariant is "no V1/V2 SOURCE file
-    # changed", not "the git tree is pristine".
-    allowed_modified = {".gitignore", "README.md"}
+    # .gitignore/README.md/pyproject.toml are root files every prior Phase
+    # legitimately edits (a new data/v*/ ignore rule, a new README section,
+    # a new optional-dependency group); v3/ and its own tests/scripts are
+    # free to change within V3 itself (spec section 2 "V3だけを変更する").
+    # The actual invariant is "no V1/V2 SOURCE file changed", not "the git
+    # tree is pristine".
+    allowed_modified_roots = {".gitignore", "README.md", "pyproject.toml"}
+    allowed_modified_prefixes = ("v3/", "tests/test_v3", "scripts/train_v3", "scripts/build_v3")
     tracked_changes = [
         line
         for line in status.splitlines()
-        if not line.startswith("??") and line[3:].strip() not in allowed_modified
+        if not line.startswith("??")
+        and line[3:].strip() not in allowed_modified_roots
+        and not line[3:].strip().startswith(allowed_modified_prefixes)
     ]
     print(f"  tracked changes to V1/V2 files (should be 0): {len(tracked_changes)}")
     if tracked_changes:

@@ -61,3 +61,7 @@ TARGET_REGISTRY: list[TargetSpec] = [
 ]
 
 TARGET_COLUMN_NAMES: list[str] = [t.name for t in TARGET_REGISTRY]
+
+
+def target_registry_by_name() -> dict[str, TargetSpec]:
+    return {t.name: t for t in TARGET_REGISTRY}

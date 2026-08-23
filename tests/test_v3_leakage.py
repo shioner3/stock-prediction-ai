@@ -36,7 +36,16 @@ from v3.leakage.shock_tests import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-V1_DECISION_DIRS = ["signals", "scoring", "backtest", "forward_test", "ensemble"]
+# "scoring" is intentionally NOT a blanket-blocked directory: scoring/
+# scorer.py + scoring/pipeline.py compute V1's actual trading Score
+# (decision-relevant, blocked below by full module path), but scoring/
+# validation.py is a generic, already-approved-for-reuse statistics
+# utility (assign_quantile_buckets() etc.) - V2's own orchestrator
+# already imports it directly, and v3/models/cross_sectional.py (Phase
+# V3-2) follows the same precedent.
+V1_DECISION_MODULES = [
+    "signals", "scoring.scorer", "scoring.pipeline", "backtest", "forward_test", "ensemble",
+]
 CUTOFF = date_type(2024, 6, 1)
 
 
@@ -56,7 +65,7 @@ def test_v3_never_imports_v1_decision_layers() -> None:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module]
             for name in names:
-                if any(name == d or name.startswith(f"{d}.") for d in V1_DECISION_DIRS):
+                if any(name == d or name.startswith(f"{d}.") for d in V1_DECISION_MODULES):
                     offending.append(f"{path.relative_to(REPO_ROOT)}: imports {name}")
     assert not offending, offending
 

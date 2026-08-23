@@ -104,3 +104,25 @@ def build_v3_dataset(tickers: list[str], config: V3Config) -> pd.DataFrame:
     universe_panel = build_universe_panel(tickers, config)
     logger.info("V3: dataset has %d rows", len(universe_panel))
     return select_dataset_columns(universe_panel)
+
+
+# spec section 10: "ランダムtrain/test splitは禁止。必ず時間順split" -
+# every horizon's Target at a TRAIN-boundary row reads Close[t+h], which
+# can fall inside the TEST period for rows near the boundary. An EMBARGO
+# gap between train_end and test_start (>= the largest Horizon in
+# targets.registry.HORIZONS) removes this ambiguity structurally, rather
+# than requiring every caller to reason about it per-row. This is the
+# "Dataset APIを時間軸対応にする" surface spec section 10 asks V3-2 to
+# provide, ready for V3-3's fuller Walk-Forward implementation to build on
+# without redesigning the split primitive.
+def time_split(
+    dataset: pd.DataFrame, train_end: object, test_start: object, date_col: str = "date"
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """TRAIN = rows with date <= train_end. TEST = rows with date >=
+    test_start. Rows strictly between the two (the embargo) are excluded
+    from both - callers should choose test_start - train_end >= the
+    largest Horizon they intend to evaluate (see module docstring).
+    """
+    train = dataset[dataset[date_col] <= train_end].copy()
+    test = dataset[dataset[date_col] >= test_start].copy()
+    return train, test

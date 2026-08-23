@@ -166,11 +166,34 @@ Backtest・Walk Forward Validation・Phase 10 Forward Test Engineは
   ランダム摂動の4種類のFuture Shock Testで構成されます。
 - V3独自のconfig_hash/code_hash/feature_hash/dataset_hash
   (`v3/hash.py`)を持ち、V1のStrategy Hash・V2のmanifestとは完全に
-  別の整合性検証系統です。model_hashはPhase V3-1時点では常にNone
-  (モデルがまだ存在しないため)。
-- Full Universeではなく小規模subset(40銘柄)でのDataset生成のみ実行
-  済みです。実運用・自動発注・MLモデル学習・Streamlit UIのいずれも
-  実装していません。
+  別の整合性検証系統です。
+
+**Phase V3-2(Baseline ML Model、完了)**: `v3/models/`に、LightGBM
+Regression(Model A)・Binary Classification(Model B)・Quantile
+Regression(Model C、q=0.1/0.5/0.9)の3種類のBaselineモデルを実装
+しました。全文レポート:
+[research/phase_v3_2_report.md](research/phase_v3_2_report.md)
+
+- Hyperparameterは事前固定(n_estimators=300等)、Random seedも固定
+  (42)。結果を見て調整することはしていません。
+- 依存関係はV3専用のoptional-dependencies group(`pip install -e
+  ".[v3]"`)として追加(`lightgbm`・`scikit-learn`)。V1/V2が通常インス
+  トールする`pip install -e ".[dev]"`には影響しません。
+- 時間順train/test split(`v3/dataset.py::time_split()`、Horizon分の
+  embargo付き)のみを使用し、ランダムsplitは使用していません。
+- Model Manifest(`v3/models/model_manifest.py`)がmodel_hash(学習
+  済みBoosterの決定的なテキストダンプのsha256)・Hyperparameter・
+  dataset_hashを記録します。同一条件での再学習でmodel_hash/
+  dataset_hashが完全に再現することを確認済みです。
+- 小規模subset(40銘柄)でのBaseline学習・予測・基本評価
+  (MAE/RMSE/R²/Pearson/Spearman、ROC-AUC/LogLoss/Brier Score等)・
+  Cross-sectional Q1-Q5チェック・Random Baseline比較・Feature
+  Importance(Gain/Split/SHAP)・Leakageテストまでを実行済みです。
+  Full Universe OOS・Hyperparameter tuning・Feature selection・
+  Risk-adjusted Rankingの最終化・Streamlit UIのいずれも実装していま
+  せん。
+- 性能評価は参考情報として記録するのみで、「MLが有効」「V3がV1より
+  優れている」等の結論は一切出していません。
 
 ## セットアップ
 
