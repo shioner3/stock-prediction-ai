@@ -35,15 +35,18 @@ from v3.models.regression import fit_regression_model, predict_regression
 from v3.targets.registry import TARGET_COLUMN_NAMES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# "scoring" is intentionally NOT a blanket-blocked directory here:
-# scoring/scorer.py + scoring/pipeline.py compute V1's actual trading
-# Score (decision-relevant, blocked below by full module path), but
-# scoring/validation.py is a generic, already-approved-for-reuse
-# statistics utility (assign_quantile_buckets() etc.) - V2's own
-# orchestrator (v2/validation/orchestrator.py) already imports it
-# directly, the same precedent v3/models/cross_sectional.py follows.
+# "scoring" and "backtest" are intentionally NOT blanket-blocked: scoring/
+# scorer.py + scoring/pipeline.py compute V1's actual trading Score, and
+# backtest/engine.py + backtest/decision.py make V1's actual Trade/
+# Accept-Reject decisions (decision-relevant, blocked below by full
+# module path) - but scoring/validation.py and essentially all of
+# backtest/ except engine.py/decision.py are generic, already-approved-
+# for-reuse statistics utilities - V2's own orchestrator already imports
+# several of these directly, the same precedent v3/models/
+# cross_sectional.py and v3/validation/* follow.
 V1_DECISION_MODULES = [
-    "signals", "scoring.scorer", "scoring.pipeline", "backtest", "forward_test", "ensemble",
+    "signals", "scoring.scorer", "scoring.pipeline", "backtest.engine", "backtest.decision",
+    "forward_test", "ensemble",
 ]
 TARGET_COL = "target_raw_5d"
 

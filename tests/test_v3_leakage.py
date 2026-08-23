@@ -36,15 +36,21 @@ from v3.leakage.shock_tests import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# "scoring" is intentionally NOT a blanket-blocked directory: scoring/
-# scorer.py + scoring/pipeline.py compute V1's actual trading Score
-# (decision-relevant, blocked below by full module path), but scoring/
-# validation.py is a generic, already-approved-for-reuse statistics
-# utility (assign_quantile_buckets() etc.) - V2's own orchestrator
-# already imports it directly, and v3/models/cross_sectional.py (Phase
-# V3-2) follows the same precedent.
+# "scoring" and "backtest" are intentionally NOT blanket-blocked
+# directories: scoring/scorer.py + scoring/pipeline.py compute V1's
+# actual trading Score, and backtest/engine.py + backtest/decision.py
+# make V1's actual Trade/Accept-Reject decisions (all decision-relevant,
+# blocked below by full module path) - but scoring/validation.py and
+# essentially all of backtest/ EXCEPT engine.py/decision.py
+# (bootstrap/permutation/multiple_testing/market_regime/metrics/
+# walk_forward/costs/...) are generic, already-approved-for-reuse
+# statistics/structural utilities - V2's own orchestrator already imports
+# several of these directly, and Phase V3-2/V3-3 follow the same
+# precedent (v3/models/cross_sectional.py, v3/validation/robustness.py,
+# v3/validation/orchestrator.py, v3/validation/windows.py).
 V1_DECISION_MODULES = [
-    "signals", "scoring.scorer", "scoring.pipeline", "backtest", "forward_test", "ensemble",
+    "signals", "scoring.scorer", "scoring.pipeline", "backtest.engine", "backtest.decision",
+    "forward_test", "ensemble",
 ]
 CUTOFF = date_type(2024, 6, 1)
 
