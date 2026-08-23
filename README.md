@@ -132,6 +132,46 @@ Backtest・Walk Forward Validation・Phase 10 Forward Test Engineは
   V1 Forward Testへの接続のいずれも実装していません。「買い」と
   断定するUIやロジックも一切ありません。
 
+## Strategy Version 3 (V3): ML Expected-Value Ranking Engine
+
+**V3**: `v3/`パッケージは、V1・V2いずれとも完全に独立した第3の研究系統
+(Phase V3-1: Dataset / Feature Registry / Leakage Framework)です。
+目的は「今日時点の全銘柄データから、今後5/10/15/20営業日のリスク
+調整後期待値をMLでランキングする」ことです。V1のSignal・V2のScoreの
+どちらも変更せず、どちらの結果を見てもV3のFeature・Target・Modelを
+恣意的に調整しません。全文レポート:
+[research/phase_v3_1_report.md](research/phase_v3_1_report.md)
+
+- Phase V3-1は**Dataset構築・Feature Registry・Target Registry・
+  Leakageフレームワークのみ**です。MLモデルの学習・Full Universe OOS
+  検証はまだ行っていません(次Phase以降)。
+- V3はV1のFeature Engineering(`features/pipeline.py`)・Forward Target
+  (`targets/forward_returns.py`)をそのままimportして再利用し、V1コード
+  は一切変更していません(`v3/features/price_features.py`・
+  `v3/targets/compute.py`)。V1にない派生列(60/120日SMA・RSI5/20・
+  turnover等)のみをV1のutility関数経由で追加しています。V2の
+  Cross-sectional Percentile Rank関数(`v2/ranking/cross_sectional.py`)
+  も同様に無変更で再利用しています(V2コードも一切変更していません)。
+- Feature Registry(`v3/features/registry.py`)は52 Core + 3
+  Conditional(業種、`data/reference/jpx_master_current.xls`のローカル
+  キャッシュに依存)の計55エントリを、category/formula/required_history
+  /availability/leakage_riskとともに明示管理します。
+- Target Registry(`v3/targets/registry.py`)は4 Horizon(5/10/15/20d)
+  × 4 Variant(Raw / TOPIX-relative / Volatility-adjusted /
+  Risk-adjusted)= 16列を生成しますが、どのTargetを最終採用するかは
+  未決定です(将来Phaseで事前固定した評価基準により決定)。
+- Leakageフレームワーク(`v3/leakage/`)は、(a) `v3/features/`の全
+  ソースコードに対する静的AST検査(未来方向の`shift(負数)`・
+  `targets.forward_returns`のimportを検出)と、(b) 価格・指数・出来高・
+  ランダム摂動の4種類のFuture Shock Testで構成されます。
+- V3独自のconfig_hash/code_hash/feature_hash/dataset_hash
+  (`v3/hash.py`)を持ち、V1のStrategy Hash・V2のmanifestとは完全に
+  別の整合性検証系統です。model_hashはPhase V3-1時点では常にNone
+  (モデルがまだ存在しないため)。
+- Full Universeではなく小規模subset(40銘柄)でのDataset生成のみ実行
+  済みです。実運用・自動発注・MLモデル学習・Streamlit UIのいずれも
+  実装していません。
+
 ## セットアップ
 
 ```bash
