@@ -2,3 +2,11 @@
 {"ticker": "598A", "signal_date": "2026-08-20", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 5.0, "regime": "NEUTRAL", "logged_at": "2026-08-20T22:51:50.298357"}
 {"ticker": "6367", "signal_date": "2026-08-20", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 13.0, "regime": "NEUTRAL", "logged_at": "2026-08-20T22:51:50.757816"}
 {"ticker": "7061", "signal_date": "2026-08-20", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "NEUTRAL", "logged_at": "2026-08-20T22:51:51.625318"}
+{"ticker": "246A", "signal_date": "2026-08-21", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 14.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:16.751170"}
+{"ticker": "246A", "signal_date": "2026-08-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 19.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:16.751185"}
+{"ticker": "5858", "signal_date": "2026-08-21", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:19.013926"}
+{"ticker": "5858", "signal_date": "2026-08-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 16.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:19.013938"}
+{"ticker": "598A", "signal_date": "2026-08-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 0.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:19.096935"}
+{"ticker": "6367", "signal_date": "2026-08-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 12.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:19.412407"}
+{"ticker": "7061", "signal_date": "2026-08-21", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:19.978896"}
+{"ticker": "7135", "signal_date": "2026-08-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 14.0, "regime": "NEUTRAL", "logged_at": "2026-08-24T13:16:20.032008"}
