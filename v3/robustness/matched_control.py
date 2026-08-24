@@ -19,6 +19,13 @@ Comparison outcomes reuse ALREADY-COMPUTED Target Registry columns
 re-deriving returns - the SAME matched (ticker, control_ticker, date)
 triple, computed once, is evaluated across all of them.
 
+`build_full_day_panel()`/`attach_outcomes()`/`run_matched_control_
+analysis()` all accept an optional `outcome_cols` override (default =
+`MATCH_OUTCOME_COLS`, so every V3-4 call site and test is byte-for-byte
+unaffected) - added for Phase V3-5's reuse of this exact matching
+machinery against its own new residual Target columns, per that Phase's
+own spec section 25 ("V3-4で実施したMatched Controlを再利用").
+
 **Bug found and fixed during this Phase's real Full Universe run**
 (same failure class as `market_decomposition.py`'s own "Bug found" note):
 `build_full_day_panel()` pulls MATCH_OUTCOME_COLS straight from the FULL
@@ -79,14 +86,16 @@ def _add_match_bins(day_panel: pd.DataFrame) -> pd.DataFrame:
 
 def build_full_day_panel(
     dataset: pd.DataFrame, price_volume_panel: pd.DataFrame, sector_map: pd.DataFrame,
+    outcome_cols: tuple[str, ...] = MATCH_OUTCOME_COLS,
+    return_scaled_cols: tuple[str, ...] = RETURN_SCALED_OUTCOME_COLS,
 ) -> pd.DataFrame:
-    """date/ticker/scale/turnover/close + MATCH_OUTCOME_COLS, one row per
+    """date/ticker/scale/turnover/close + outcome_cols, one row per
     (date, ticker) across the ENTIRE dataset (the matching POOL, not just
     Q5-selected rows).
     """
-    cols = ["date", "ticker", *MATCH_OUTCOME_COLS]
+    cols = ["date", "ticker", *outcome_cols]
     base = dataset[[c for c in cols if c in dataset.columns]].copy()
-    for col in RETURN_SCALED_OUTCOME_COLS:
+    for col in return_scaled_cols:
         if col in base.columns:
             base[col] = base[col].where(base[col].abs() <= MAX_PLAUSIBLE_FORWARD_RETURN)
     base = base.merge(price_volume_panel, on=["date", "ticker"], how="inner")
@@ -150,19 +159,22 @@ def build_matched_control_pairs(
     return pd.DataFrame(rows, columns=["date", "ticker", "control_ticker", "match_tier"])
 
 
-def attach_outcomes(pairs: pd.DataFrame, full_day_panel: pd.DataFrame) -> pd.DataFrame:
+def attach_outcomes(
+    pairs: pd.DataFrame, full_day_panel: pd.DataFrame,
+    outcome_cols: tuple[str, ...] = MATCH_OUTCOME_COLS,
+) -> pd.DataFrame:
     """Merges each pair's treatment (Q5 ticker) and control ticker's
-    MATCH_OUTCOME_COLS onto `pairs` - suffixed `_treatment`/`_control`.
+    outcome_cols onto `pairs` - suffixed `_treatment`/`_control`.
     """
-    treatment_cols = ["date", "ticker", *MATCH_OUTCOME_COLS]
+    treatment_cols = ["date", "ticker", *outcome_cols]
     treatment = full_day_panel[treatment_cols].rename(
-        columns={c: f"{c}_treatment" for c in MATCH_OUTCOME_COLS}
+        columns={c: f"{c}_treatment" for c in outcome_cols}
     )
     out = pairs.merge(treatment, on=["date", "ticker"], how="left")
 
-    control_cols = ["date", "ticker", *MATCH_OUTCOME_COLS]
+    control_cols = ["date", "ticker", *outcome_cols]
     control = full_day_panel[control_cols].rename(
-        columns={"ticker": "control_ticker", **{c: f"{c}_control" for c in MATCH_OUTCOME_COLS}}
+        columns={"ticker": "control_ticker", **{c: f"{c}_control" for c in outcome_cols}}
     )
     out = out.merge(control, on=["date", "control_ticker"], how="left")
     return out
@@ -187,13 +199,14 @@ class MatchedControlResult:
 
 def run_matched_control_analysis(
     q5_predictions: pd.DataFrame, full_day_panel: pd.DataFrame, seed: int = MATCH_SEED,
+    outcome_cols: tuple[str, ...] = MATCH_OUTCOME_COLS,
 ) -> MatchedControlResult:
     n_q5_rows = len(q5_predictions[["date", "ticker"]].drop_duplicates())
     pairs = build_matched_control_pairs(q5_predictions, full_day_panel, seed)
-    with_outcomes = attach_outcomes(pairs, full_day_panel)
+    with_outcomes = attach_outcomes(pairs, full_day_panel, outcome_cols)
 
     comparisons: dict[str, MatchedControlComparison] = {}
-    for col in MATCH_OUTCOME_COLS:
+    for col in outcome_cols:
         treatment = with_outcomes[f"{col}_treatment"].dropna()
         control = with_outcomes[f"{col}_control"].dropna()
         comparisons[col] = MatchedControlComparison(
