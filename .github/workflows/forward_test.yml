@@ -14,6 +14,19 @@ name: Forward Test daily run
 # state changes at all (nothing to commit). A Strategy Hash mismatch or
 # any other unhandled error (any other non-zero exit code) DOES fail the
 # job, since either means something needs human attention.
+#
+# Phase V3-7 EXTENDS this SAME workflow (not a new one - the daily V1
+# fetch already pulls the exact OHLCV V3's own Observation step needs;
+# a second workflow would either duplicate that fetch or race against
+# this one for the same append-only state files) with a second step,
+# scripts/run_v3_frozen_observation_day.py, run AFTER V1's own step and
+# BEFORE the commit - reusing V1's freshly-fetched
+# data/forward_test/{raw,processed} cache and _fetch_manifest.json
+# rather than re-fetching. V1 and V3 write to completely separate state
+# directories (see that script's own module docstring) and neither can
+# make the other fail: V3's own SAFE_ABORT (exit code 2, same convention)
+# and FROZEN_MODEL_HASH_MISMATCH (exit code 3) are handled by their own
+# steps below, independent of V1's own outcome above them.
 
 on:
   schedule:
@@ -91,6 +104,41 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
+      - name: Run V3 Frozen Model Observation day
+        # Independent of V1's own outcome above (always attempted, same
+        # as the commit step below) - reads V1's freshly-fetched OHLCV/
+        # fetch-manifest directly rather than re-fetching, and performs
+        # its OWN staleness/hash checks regardless of whether V1 itself
+        # succeeded or SAFE_ABORTed.
+        id: v3_observation
+        if: always() && steps.forward_test.outcome != 'cancelled'
+        run: |
+          set +e
+          python scripts/run_v3_frozen_observation_day.py
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Report V3 SAFE_ABORT (expected outcome, not a failure)
+        if: steps.v3_observation.outputs.exit_code == '2'
+        run: |
+          {
+            echo "## V3 SAFE_ABORT"
+            echo "V3 Observation correctly detected incomplete/stale data and made no state changes today."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report V3 success
+        if: steps.v3_observation.outputs.exit_code == '0'
+        run: echo "## V3 SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on V3 Frozen Model hash mismatch or unexpected error
+        if: steps.v3_observation.outputs.exit_code != '0' && steps.v3_observation.outputs.exit_code != '2'
+        run: |
+          {
+            echo "## V3 FAILURE (exit code ${{ steps.v3_observation.outputs.exit_code }})"
+            echo "Not a SAFE_ABORT - see the Run V3 Frozen Model Observation day step's log."
+            echo "Exit code 3 = FROZEN_MODEL_HASH_MISMATCH: the frozen recipe drifted since training - this must never be silently continued."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Commit and push Forward Test state
         # Runs regardless of the outcome above (except when the checkout
         # itself failed) - on a SAFE_ABORT day this is a correct no-op,
@@ -110,6 +158,12 @@ jobs:
           # doesn't exist on disk at all, so a bare "git add" on it
           # fails with "did not match any files" (pathspec error, exit
           # 128). mkdir -p first so the add is always a safe no-op.
+          # data/forward_test/v3/ (manifest.json + models/*.txt) is
+          # created once by the one-time training run and committed
+          # separately - on every daily checkout it already exists, so
+          # adding the whole directory is safe even before predictions_
+          # log.jsonl/realized_returns_log.jsonl/daily/ exist (those are
+          # created lazily, only once there is something to append).
           mkdir -p data/forward_test/reports
           git add data/forward_test/manifest.json \
                   data/forward_test/signals_log/ \
@@ -117,7 +171,8 @@ jobs:
                   data/forward_test/performance_log/ \
                   data/forward_test/daily/ \
                   data/forward_test/trades/ \
-                  data/forward_test/reports/
+                  data/forward_test/reports/ \
+                  data/forward_test/v3/
           if git diff --cached --quiet; then
             echo "no Forward Test state changes to commit (expected on a SAFE_ABORT day)"
           else
