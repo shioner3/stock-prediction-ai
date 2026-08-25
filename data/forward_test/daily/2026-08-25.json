@@ -4,34 +4,16 @@
   "fetch_success": 3595,
   "fetch_partial": 92,
   "fetch_failed": 26,
-  "final_universe_count": 2766,
+  "final_universe_count": 2767,
   "new_signal_log_entries": [
     {
-      "ticker": "3041",
+      "ticker": "598A",
       "signal_date": "2026-08-25",
       "direction": "LONG",
       "signal_name": "long_oversold_rebound",
-      "total_score": 24.0,
+      "total_score": 2.0,
       "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T05:19:31.303510"
-    },
-    {
-      "ticker": "6367",
-      "signal_date": "2026-08-25",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 12.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T05:19:33.560933"
-    },
-    {
-      "ticker": "7061",
-      "signal_date": "2026-08-25",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 12.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T05:19:34.102473"
+      "logged_at": "2026-08-25T07:19:14.695529"
     }
   ],
   "new_closed_positions": [],
@@ -46,9 +28,9 @@
       "notional": 100000.0,
       "quantity": 86.95652173913044,
       "mark_date": "2026-08-25",
-      "mark_price": 1162.0,
-      "unrealized_return": 0.01043478260869568,
-      "unrealized_pnl": 1043.478260869568,
+      "mark_price": 1163.0,
+      "unrealized_return": 0.011304347826087024,
+      "unrealized_pnl": 1130.4347826087023,
       "status": "OPEN"
     },
     {
@@ -61,9 +43,9 @@
       "notional": 100000.0,
       "quantity": 75.18796992481202,
       "mark_date": "2026-08-25",
-      "mark_price": 1377.0,
-      "unrealized_return": 0.03533834586466167,
-      "unrealized_pnl": 3533.834586466167,
+      "mark_price": 1393.0,
+      "unrealized_return": 0.047368421052631504,
+      "unrealized_pnl": 4736.84210526315,
       "status": "OPEN"
     },
     {
@@ -76,9 +58,9 @@
       "notional": 100000.0,
       "quantity": 4.830917874396135,
       "mark_date": "2026-08-25",
-      "mark_price": 20880.0,
-      "unrealized_return": 0.008695652173912993,
-      "unrealized_pnl": 869.5652173912994,
+      "mark_price": 20830.0,
+      "unrealized_return": 0.006280193236714915,
+      "unrealized_pnl": 628.0193236714915,
       "status": "OPEN"
     },
     {
@@ -91,9 +73,9 @@
       "notional": 100000.0,
       "quantity": 209.20502092050208,
       "mark_date": "2026-08-25",
-      "mark_price": 487.0,
-      "unrealized_return": 0.01882845188284521,
-      "unrealized_pnl": 1882.8451882845209,
+      "mark_price": 485.0,
+      "unrealized_return": 0.014644351464435212,
+      "unrealized_pnl": 1464.4351464435213,
       "status": "OPEN"
     },
     {
@@ -106,9 +88,9 @@
       "notional": 100000.0,
       "quantity": 109.2896174863388,
       "mark_date": "2026-08-25",
-      "mark_price": 917.0,
-      "unrealized_return": 0.002185792349726823,
-      "unrealized_pnl": 218.5792349726823,
+      "mark_price": 916.0,
+      "unrealized_return": 0.0010928961748633004,
+      "unrealized_pnl": 109.28961748633003,
       "status": "OPEN"
     },
     {
@@ -121,9 +103,9 @@
       "notional": 100000.0,
       "quantity": 86.65511265164645,
       "mark_date": "2026-08-25",
-      "mark_price": 1162.0,
-      "unrealized_return": 0.006932409012131657,
-      "unrealized_pnl": 693.2409012131657,
+      "mark_price": 1163.0,
+      "unrealized_return": 0.0077989601386481144,
+      "unrealized_pnl": 779.8960138648115,
       "status": "OPEN"
     },
     {
@@ -136,60 +118,18 @@
       "notional": 100000.0,
       "quantity": 204.49897750511246,
       "mark_date": "2026-08-25",
-      "mark_price": 487.0,
-      "unrealized_return": -0.004089979550102263,
-      "unrealized_pnl": -408.9979550102263,
+      "mark_price": 485.0,
+      "unrealized_return": -0.008179959100204526,
+      "unrealized_pnl": -817.9959100204526,
       "status": "OPEN"
     }
   ],
   "portfolio_equity": 10000000.0,
   "portfolio_realized_pnl": 0,
-  "portfolio_unrealized_pnl": 7832.545434187176,
+  "portfolio_unrealized_pnl": 8030.921079317553,
   "data_integrity_issues": {
-    "1966": {
-      "ticker": "1966",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "302A": {
-      "ticker": "302A",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
     "304A": {
       "ticker": "304A",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "3628": {
-      "ticker": "3628",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "3908": {
-      "ticker": "3908",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "4170": {
-      "ticker": "4170",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "5025": {
-      "ticker": "5025",
       "issues": [],
       "is_stale": true,
       "latest_date": "2026-08-24",
@@ -209,25 +149,11 @@
       "latest_date": "2026-08-24",
       "expected_date": "2026-08-25"
     },
-    "7793": {
-      "ticker": "7793",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
     "8283": {
       "ticker": "8283",
       "issues": [],
       "is_stale": true,
       "latest_date": "2026-08-10",
-      "expected_date": "2026-08-25"
-    },
-    "9073": {
-      "ticker": "9073",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
       "expected_date": "2026-08-25"
     }
   },
