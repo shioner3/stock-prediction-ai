@@ -1,82 +1,37 @@
 {
   "run_date": "2026-08-25",
   "universe_candidate_count": 3713,
-  "fetch_success": 3621,
+  "fetch_success": 3595,
   "fetch_partial": 92,
-  "fetch_failed": 0,
-  "final_universe_count": 2787,
+  "fetch_failed": 26,
+  "final_universe_count": 2766,
   "new_signal_log_entries": [
     {
-      "ticker": "246A",
-      "signal_date": "2026-08-21",
+      "ticker": "3041",
+      "signal_date": "2026-08-25",
       "direction": "LONG",
       "signal_name": "long_oversold_rebound",
-      "total_score": 14.0,
+      "total_score": 24.0,
       "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:54.752833"
-    },
-    {
-      "ticker": "246A",
-      "signal_date": "2026-08-24",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 19.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:54.752848"
-    },
-    {
-      "ticker": "5858",
-      "signal_date": "2026-08-21",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 20.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:56.879499"
-    },
-    {
-      "ticker": "5858",
-      "signal_date": "2026-08-24",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 16.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:56.879511"
-    },
-    {
-      "ticker": "598A",
-      "signal_date": "2026-08-24",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 0.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:56.958103"
+      "logged_at": "2026-08-25T05:19:31.303510"
     },
     {
       "ticker": "6367",
-      "signal_date": "2026-08-24",
+      "signal_date": "2026-08-25",
       "direction": "LONG",
       "signal_name": "long_oversold_rebound",
       "total_score": 12.0,
       "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:57.256404"
+      "logged_at": "2026-08-25T05:19:33.560933"
     },
     {
       "ticker": "7061",
-      "signal_date": "2026-08-21",
+      "signal_date": "2026-08-25",
       "direction": "LONG",
       "signal_name": "long_oversold_rebound",
-      "total_score": 15.0,
+      "total_score": 12.0,
       "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:57.791025"
-    },
-    {
-      "ticker": "7135",
-      "signal_date": "2026-08-24",
-      "direction": "LONG",
-      "signal_name": "long_oversold_rebound",
-      "total_score": 14.0,
-      "regime": "NEUTRAL",
-      "logged_at": "2026-08-25T03:48:57.841531"
+      "logged_at": "2026-08-25T05:19:34.102473"
     }
   ],
   "new_closed_positions": [],
@@ -91,9 +46,9 @@
       "notional": 100000.0,
       "quantity": 86.95652173913044,
       "mark_date": "2026-08-25",
-      "mark_price": 1163.0,
-      "unrealized_return": 0.011304347826087024,
-      "unrealized_pnl": 1130.4347826087023,
+      "mark_price": 1162.0,
+      "unrealized_return": 0.01043478260869568,
+      "unrealized_pnl": 1043.478260869568,
       "status": "OPEN"
     },
     {
@@ -106,9 +61,9 @@
       "notional": 100000.0,
       "quantity": 75.18796992481202,
       "mark_date": "2026-08-25",
-      "mark_price": 1357.0,
-      "unrealized_return": 0.020300751879699153,
-      "unrealized_pnl": 2030.0751879699153,
+      "mark_price": 1377.0,
+      "unrealized_return": 0.03533834586466167,
+      "unrealized_pnl": 3533.834586466167,
       "status": "OPEN"
     },
     {
@@ -121,9 +76,9 @@
       "notional": 100000.0,
       "quantity": 4.830917874396135,
       "mark_date": "2026-08-25",
-      "mark_price": 20775.0,
-      "unrealized_return": 0.0036231884057971175,
-      "unrealized_pnl": 362.3188405797118,
+      "mark_price": 20880.0,
+      "unrealized_return": 0.008695652173912993,
+      "unrealized_pnl": 869.5652173912994,
       "status": "OPEN"
     },
     {
@@ -136,9 +91,9 @@
       "notional": 100000.0,
       "quantity": 209.20502092050208,
       "mark_date": "2026-08-25",
-      "mark_price": 480.0,
-      "unrealized_return": 0.004184100418409997,
-      "unrealized_pnl": 418.4100418409997,
+      "mark_price": 487.0,
+      "unrealized_return": 0.01882845188284521,
+      "unrealized_pnl": 1882.8451882845209,
       "status": "OPEN"
     },
     {
@@ -166,9 +121,9 @@
       "notional": 100000.0,
       "quantity": 86.65511265164645,
       "mark_date": "2026-08-25",
-      "mark_price": 1163.0,
-      "unrealized_return": 0.0077989601386481144,
-      "unrealized_pnl": 779.8960138648115,
+      "mark_price": 1162.0,
+      "unrealized_return": 0.006932409012131657,
+      "unrealized_pnl": 693.2409012131657,
       "status": "OPEN"
     },
     {
@@ -181,25 +136,18 @@
       "notional": 100000.0,
       "quantity": 204.49897750511246,
       "mark_date": "2026-08-25",
-      "mark_price": 480.0,
-      "unrealized_return": -0.018404907975460127,
-      "unrealized_pnl": -1840.4907975460128,
+      "mark_price": 487.0,
+      "unrealized_return": -0.004089979550102263,
+      "unrealized_pnl": -408.9979550102263,
       "status": "OPEN"
     }
   ],
   "portfolio_equity": 10000000.0,
   "portfolio_realized_pnl": 0,
-  "portfolio_unrealized_pnl": 3099.223304290811,
+  "portfolio_unrealized_pnl": 7832.545434187176,
   "data_integrity_issues": {
     "1966": {
       "ticker": "1966",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "2813": {
-      "ticker": "2813",
       "issues": [],
       "is_stale": true,
       "latest_date": "2026-08-24",
@@ -219,13 +167,6 @@
       "latest_date": "2026-08-24",
       "expected_date": "2026-08-25"
     },
-    "352A": {
-      "ticker": "352A",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
     "3628": {
       "ticker": "3628",
       "issues": [],
@@ -235,13 +176,6 @@
     },
     "3908": {
       "ticker": "3908",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "4068": {
-      "ticker": "4068",
       "issues": [],
       "is_stale": true,
       "latest_date": "2026-08-24",
@@ -261,13 +195,6 @@
       "latest_date": "2026-08-24",
       "expected_date": "2026-08-25"
     },
-    "5337": {
-      "ticker": "5337",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
     "6197": {
       "ticker": "6197",
       "issues": [],
@@ -277,48 +204,6 @@
     },
     "6566": {
       "ticker": "6566",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "6899": {
-      "ticker": "6899",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "6977": {
-      "ticker": "6977",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "7074": {
-      "ticker": "7074",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "7082": {
-      "ticker": "7082",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "7284": {
-      "ticker": "7284",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "7523": {
-      "ticker": "7523",
       "issues": [],
       "is_stale": true,
       "latest_date": "2026-08-24",
@@ -344,20 +229,6 @@
       "is_stale": true,
       "latest_date": "2026-08-24",
       "expected_date": "2026-08-25"
-    },
-    "9236": {
-      "ticker": "9236",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
-    },
-    "9885": {
-      "ticker": "9885",
-      "issues": [],
-      "is_stale": true,
-      "latest_date": "2026-08-24",
-      "expected_date": "2026-08-25"
     }
   },
   "trading_integrity": {
@@ -368,5 +239,5 @@
   },
   "strategy_hash_unchanged": true,
   "strategy_hash_mismatches": [],
-  "performance_log_written": true
+  "performance_log_written": false
 }
