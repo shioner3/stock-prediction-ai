@@ -68,13 +68,18 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        # Installs [project.dependencies] from pyproject.toml - no
-        # requirements.txt, no new data source, no new package. Scripts
-        # run directly from the checkout (via each script's own
-        # sys.path insert), not from an installed copy, so it doesn't
-        # matter that forward_test/ and ensemble/ aren't listed in
-        # [tool.hatch.build.targets.wheel]'s package list.
-        run: pip install .
+        # Installs [project.dependencies] PLUS the "v3" optional-
+        # dependencies group (lightgbm/scikit-learn, pyproject.toml,
+        # V3-2) - V3's own Frozen Model load/predict step below needs
+        # lightgbm at runtime, and V1's own steps don't need anything
+        # from this extra group, so installing it unconditionally here
+        # for the whole job is a strict superset, not a V1 behavior
+        # change. No requirements.txt, no new data source. Scripts run
+        # directly from the checkout (via each script's own sys.path
+        # insert), not from an installed copy, so it doesn't matter that
+        # forward_test/ and ensemble/ aren't listed in [tool.hatch.
+        # build.targets.wheel]'s package list.
+        run: pip install ".[v3]"
 
       - name: Run Forward Test day
         id: forward_test
