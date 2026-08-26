@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ from v3.frozen.manifest import (  # noqa: E402
     FrozenModelHashMismatchError,
     FrozenModelSpec,  # noqa: E402
     load_manifest_raw,
+    load_model_artifact,
     verify_frozen_models_unchanged,
 )
 from v3.frozen.observation_log import (  # noqa: E402
@@ -75,6 +77,36 @@ class SafeAbortError(RuntimeError):
         super().__init__(f"SAFE_ABORT[{reason}]: {detail}")
 
 
+def _verify_artifacts_unchanged(saved_manifest: dict[str, Any]) -> list[str]:
+    """Phase V3-9: re-hashes each of the 16 on-disk Model Artifact files
+    NOW and compares against the `model_hash` the manifest recorded at
+    training time - closes the gap `verify_frozen_models_unchanged()`
+    leaves by design (that function only re-checks code/config-level
+    hashes, never the artifact bytes themselves), catching artifact
+    corruption/tampering that a code-level check alone cannot see.
+
+    Deliberately kept HERE (in scripts/, not inside the v3/ package)
+    rather than in v3/frozen/manifest.py: v3.hash.current_v3_code_hash()
+    hashes every *.py file under the WHOLE v3/ tree, so adding this
+    check inside v3/ would itself shift code_hash and break verification
+    against the ALREADY-TRAINED manifest - a self-defeating change for a
+    Phase whose entire point is protecting that existing manifest. Uses
+    the SAME sha256(model_to_string()) formula
+    v3.models.model_manifest.compute_model_hash() already uses (not a
+    new algorithm), applied to a freshly re-loaded lgb.Booster via the
+    existing, unmodified v3.frozen.manifest.load_model_artifact(). Only
+    reads the manifest's existing model_hash as an expected value -
+    never recomputes or rewrites it.
+    """
+    mismatches = []
+    for model in saved_manifest["models"]:
+        booster = load_model_artifact(Path(model["artifact_path"]))
+        current_hash = hashlib.sha256(booster.model_to_string().encode("utf-8")).hexdigest()
+        if current_hash != model["model_hash"]:
+            mismatches.append(f"{model['model_id']}.model_hash")
+    return mismatches
+
+
 def _json_default(obj: Any) -> Any:
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)
@@ -103,6 +135,9 @@ def main() -> None:
     unchanged, mismatches = verify_frozen_models_unchanged(saved_manifest)
     if not unchanged:
         raise FrozenModelHashMismatchError(f"FROZEN_MODEL_HASH_MISMATCH: {mismatches}")
+    artifact_mismatches = _verify_artifacts_unchanged(saved_manifest)
+    if artifact_mismatches:
+        raise FrozenModelHashMismatchError(f"FROZEN_MODEL_HASH_MISMATCH: {artifact_mismatches}")
 
     if not V1_FETCH_MANIFEST_PATH.exists():
         raise SafeAbortError(
