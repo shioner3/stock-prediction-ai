@@ -89,6 +89,112 @@ Phase 2〜6を通して最優先したのは **NO LOOKAHEAD** であることの
 どこでも「TOPIX Proxy (1306.T)」と明記し、単に「TOPIX」と呼ばない
 方針を徹底しています(詳細は「Relative Strength」節を参照)。
 
+## Strategy Version 2 (V2): 独立Research Ranking Engine
+
+**V1**: 上記の`long_oversold_rebound`を含む既存12 Signal・Score・
+Backtest・Walk Forward Validation・Phase 10 Forward Test Engineは
+**完全凍結**されたStrategy Version 1です。
+
+**V2**: `v2/`パッケージは、V1とは完全に独立した新しい研究系統
+(Phase V2-1: Swing Candidate Ranking Engine)です。目的は「5日後の
+株価を一点予測するMLモデル」ではなく、「日本株全銘柄から今後
+5〜20営業日のスイング候補として相対的に魅力的な銘柄をランキングする」
+ルールベース・統計ベースのResearch Ranking Engineです。V2で得られた
+結果によってV1を変更することはありません。全文レポート:
+[research/phase_v2_1_report.md](research/phase_v2_1_report.md)
+
+- V2はV1のFeature Engineering(`features/pipeline.py::compute_feature_panel()`)
+  とForward Target(`targets/forward_returns.py`)を**そのままimportして
+  再利用**し、V1コードは一切変更していません(`v2/features_adapter.py`
+  ・`v2/targets_adapter.py`)。V1にない4つの派生特徴量
+  (`price_vs_ma60`・`ma5_vs_ma20`・`ma20_vs_ma60`・`distance_from_60d_high`)
+  のみをV1のutility関数(`features._utils.sma`等)経由で追加しています。
+- Momentum/Trend/Volume/Volatility/Relative Strength/Pullbackの6カテゴリ
+  それぞれについて、日次でUniverse横断のPercentile Rankを計算し
+  (`v2/ranking/cross_sectional.py`)、カテゴリ内平均→固定weight
+  (Momentum 25%/Trend 20%/Volume 15%/Relative Strength 20%/
+  Pullback 10%/Volatility 10%)で合成した「V2 Initial Research Score」
+  を算出します(`v2/ranking/score.py`)。weightは既存データを見て
+  調整したものではなく、固定・記録済みです
+  (`v2/config/v2_settings.yaml`)。
+- Pullback/Oversoldカテゴリの方向性(深い下落・連続陰線・低RSIほど
+  高評価)は、V1の`long_oversold_rebound`が`rsi_14 < 30`を採用条件と
+  する発想と同じ「逆張り」の解釈です。V1のFeature Metadataの
+  `directionality`タグ(モメンタム寄りの解釈)とは意図的に異なります -
+  詳細はレポート参照。
+- V2独自のconfig_hash/code_hash/data_hash(`v2/manifest.py`)を持ち、
+  V1のStrategy Hash・config_hashとは完全に別の整合性検証系統です。
+- V2-1では2022-2026年の既存データ(V1が既に分析済みのFull Universe)を
+  「動作確認用のResearch/Development Dataset」として使用しました -
+  これはV2の独立OOS性能ではありません。将来、V2独自の独立Forward/OOS
+  期間を別途確保して初めて性能評価が可能になります。
+- 実運用・自動発注・証券会社API接続・MLモデル・Streamlit UI・
+  V1 Forward Testへの接続のいずれも実装していません。「買い」と
+  断定するUIやロジックも一切ありません。
+
+## Strategy Version 3 (V3): ML Expected-Value Ranking Engine
+
+**V3**: `v3/`パッケージは、V1・V2いずれとも完全に独立した第3の研究系統
+(Phase V3-1: Dataset / Feature Registry / Leakage Framework)です。
+目的は「今日時点の全銘柄データから、今後5/10/15/20営業日のリスク
+調整後期待値をMLでランキングする」ことです。V1のSignal・V2のScoreの
+どちらも変更せず、どちらの結果を見てもV3のFeature・Target・Modelを
+恣意的に調整しません。全文レポート:
+[research/phase_v3_1_report.md](research/phase_v3_1_report.md)
+
+- Phase V3-1は**Dataset構築・Feature Registry・Target Registry・
+  Leakageフレームワークのみ**です。MLモデルの学習・Full Universe OOS
+  検証はまだ行っていません(次Phase以降)。
+- V3はV1のFeature Engineering(`features/pipeline.py`)・Forward Target
+  (`targets/forward_returns.py`)をそのままimportして再利用し、V1コード
+  は一切変更していません(`v3/features/price_features.py`・
+  `v3/targets/compute.py`)。V1にない派生列(60/120日SMA・RSI5/20・
+  turnover等)のみをV1のutility関数経由で追加しています。V2の
+  Cross-sectional Percentile Rank関数(`v2/ranking/cross_sectional.py`)
+  も同様に無変更で再利用しています(V2コードも一切変更していません)。
+- Feature Registry(`v3/features/registry.py`)は52 Core + 3
+  Conditional(業種、`data/reference/jpx_master_current.xls`のローカル
+  キャッシュに依存)の計55エントリを、category/formula/required_history
+  /availability/leakage_riskとともに明示管理します。
+- Target Registry(`v3/targets/registry.py`)は4 Horizon(5/10/15/20d)
+  × 4 Variant(Raw / TOPIX-relative / Volatility-adjusted /
+  Risk-adjusted)= 16列を生成しますが、どのTargetを最終採用するかは
+  未決定です(将来Phaseで事前固定した評価基準により決定)。
+- Leakageフレームワーク(`v3/leakage/`)は、(a) `v3/features/`の全
+  ソースコードに対する静的AST検査(未来方向の`shift(負数)`・
+  `targets.forward_returns`のimportを検出)と、(b) 価格・指数・出来高・
+  ランダム摂動の4種類のFuture Shock Testで構成されます。
+- V3独自のconfig_hash/code_hash/feature_hash/dataset_hash
+  (`v3/hash.py`)を持ち、V1のStrategy Hash・V2のmanifestとは完全に
+  別の整合性検証系統です。
+
+**Phase V3-2(Baseline ML Model、完了)**: `v3/models/`に、LightGBM
+Regression(Model A)・Binary Classification(Model B)・Quantile
+Regression(Model C、q=0.1/0.5/0.9)の3種類のBaselineモデルを実装
+しました。全文レポート:
+[research/phase_v3_2_report.md](research/phase_v3_2_report.md)
+
+- Hyperparameterは事前固定(n_estimators=300等)、Random seedも固定
+  (42)。結果を見て調整することはしていません。
+- 依存関係はV3専用のoptional-dependencies group(`pip install -e
+  ".[v3]"`)として追加(`lightgbm`・`scikit-learn`)。V1/V2が通常インス
+  トールする`pip install -e ".[dev]"`には影響しません。
+- 時間順train/test split(`v3/dataset.py::time_split()`、Horizon分の
+  embargo付き)のみを使用し、ランダムsplitは使用していません。
+- Model Manifest(`v3/models/model_manifest.py`)がmodel_hash(学習
+  済みBoosterの決定的なテキストダンプのsha256)・Hyperparameter・
+  dataset_hashを記録します。同一条件での再学習でmodel_hash/
+  dataset_hashが完全に再現することを確認済みです。
+- 小規模subset(40銘柄)でのBaseline学習・予測・基本評価
+  (MAE/RMSE/R²/Pearson/Spearman、ROC-AUC/LogLoss/Brier Score等)・
+  Cross-sectional Q1-Q5チェック・Random Baseline比較・Feature
+  Importance(Gain/Split/SHAP)・Leakageテストまでを実行済みです。
+  Full Universe OOS・Hyperparameter tuning・Feature selection・
+  Risk-adjusted Rankingの最終化・Streamlit UIのいずれも実装していま
+  せん。
+- 性能評価は参考情報として記録するのみで、「MLが有効」「V3がV1より
+  優れている」等の結論は一切出していません。
+
 ## セットアップ
 
 ```bash

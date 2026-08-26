@@ -1,0 +1,15 @@
+# Phase V3-7 CRLF/LF fix: v3/hash.py's code_hash (and V1's/V2's own
+# hash_files()-based integrity hashes) hash raw file bytes directly
+# (common/hashing.py::hash_files(), unmodified - see that module's own
+# docstring), bypassing git's own diff/status-level CRLF normalization.
+# A Frozen Model trained on this Windows machine (core.autocrlf=true,
+# which re-materializes CRLF line endings for any *.py file that gets
+# checked out, even though the stored git blob itself is LF) produced a
+# code_hash that then genuinely differed, byte-for-byte, from the SAME
+# blob checked out on GitHub Actions' ubuntu-latest runner (which does
+# not perform this conversion) - a real, reproducible cross-platform
+# discrepancy, not a code/recipe change (git diff/status show zero
+# difference for the affected file). Forcing every checkout, on every
+# platform, to always materialize Python source as LF removes the
+# discrepancy at its root without touching the hash algorithm itself.
+*.py text eol=lf

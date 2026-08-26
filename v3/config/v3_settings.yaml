@@ -1,0 +1,19 @@
+# V3 config - independent from config/settings.yaml (V1) and
+# v2/config/v2_settings.yaml (V2). See v3/config/loader.py.
+
+universe:
+  segments: ["Prime", "Standard", "Growth"]
+  exclude_etf: true
+  exclude_reit: true
+
+horizons:
+  days: [5, 10, 15, 20]
+
+source_universe_manifest: "data/phase7/_universe_fetch_manifest.json"
+source_processed_dir: "data/phase7/processed"
+source_features_dir: "data/phase7/features"
+
+v3_dataset_dir: "data/v3/dataset"
+v3_manifests_dir: "data/v3/manifests"
+v3_models_dir: "data/v3/models"
+v3_reports_dir: "data/v3/reports"

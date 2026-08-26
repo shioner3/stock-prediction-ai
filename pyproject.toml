@@ -26,6 +26,18 @@ dev = [
     # fixtures - production code only needs xlrd (.xls, JPX's real format).
     "openpyxl>=3.1",
 ]
+# Phase V3-2: ML models (v3/models/) only - never required by V1 or V2,
+# which have no ML dependency of their own. Kept as its OWN optional-
+# dependencies group (not added to `dependencies` above, not merged into
+# `dev`) so `pip install -e ".[dev]"` - the command V1/V2 users already
+# run per README - installs nothing new; only `pip install -e ".[v3]"`
+# pulls these in. Version-RANGED (not pinned to one exact version, not
+# left unbounded/"latest") for reproducibility without blocking routine
+# patch updates - matches this project's existing dependency style above.
+v3 = [
+    "lightgbm>=4.1,<5.0",
+    "scikit-learn>=1.4,<1.6",
+]
 
 [build-system]
 requires = ["hatchling"]
