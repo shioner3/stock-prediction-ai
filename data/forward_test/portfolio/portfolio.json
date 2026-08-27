@@ -1,5 +1,38 @@
 {
   "initial_capital": 10000000.0,
   "per_trade_notional_fraction": 0.01,
-  "closed_positions": []
+  "closed_positions": [
+    {
+      "ticker": "598A",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-08-20",
+      "entry_date": "2026-08-21",
+      "entry_price": 1330.0,
+      "exit_date": "2026-08-27",
+      "exit_price": 1469.0,
+      "trade_return": 0.10451127819548867,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 75.18796992481202,
+      "pnl": 10451.127819548867,
+      "status": "CLOSED"
+    },
+    {
+      "ticker": "7061",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-08-20",
+      "entry_date": "2026-08-21",
+      "entry_price": 478.0,
+      "exit_date": "2026-08-27",
+      "exit_price": 484.0,
+      "trade_return": 0.012552301255230214,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 209.20502092050208,
+      "pnl": 1255.2301255230213,
+      "status": "CLOSED"
+    }
+  ]
 }
