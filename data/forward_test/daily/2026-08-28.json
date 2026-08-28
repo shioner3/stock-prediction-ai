@@ -1,0 +1,53 @@
+{
+  "run_date": "2026-08-28",
+  "universe_candidate_count": 3713,
+  "fetch_success": 3623,
+  "fetch_partial": 90,
+  "fetch_failed": 0,
+  "final_universe_count": 2785,
+  "new_signal_log_entries": [],
+  "new_closed_positions": [],
+  "open_positions": [],
+  "portfolio_equity": 10011706.357945072,
+  "portfolio_realized_pnl": 11706.357945071888,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "2162": {
+      "ticker": "2162",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-27",
+      "expected_date": "2026-08-28"
+    },
+    "3079": {
+      "ticker": "3079",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-27",
+      "expected_date": "2026-08-28"
+    },
+    "6197": {
+      "ticker": "6197",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-05",
+      "expected_date": "2026-08-28"
+    },
+    "8283": {
+      "ticker": "8283",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-10",
+      "expected_date": "2026-08-28"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
