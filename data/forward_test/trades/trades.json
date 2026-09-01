@@ -30,5 +30,21 @@
     "quantity": 209.20502092050208,
     "pnl": 1255.2301255230213,
     "status": "CLOSED"
+  },
+  {
+    "ticker": "7135",
+    "signal_name": "long_oversold_rebound",
+    "direction": "LONG",
+    "signal_date": "2026-08-24",
+    "entry_date": "2026-08-25",
+    "entry_price": 182.0,
+    "exit_date": "2026-08-31",
+    "exit_price": 180.0,
+    "trade_return": -0.01098901098901095,
+    "cost_bps": 30.0,
+    "notional": 100000.0,
+    "quantity": 549.4505494505495,
+    "pnl": -1098.9010989010949,
+    "status": "CLOSED"
   }
 ]

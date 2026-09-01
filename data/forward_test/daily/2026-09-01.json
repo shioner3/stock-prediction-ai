@@ -1,0 +1,91 @@
+{
+  "run_date": "2026-09-01",
+  "universe_candidate_count": 3713,
+  "fetch_success": 3595,
+  "fetch_partial": 89,
+  "fetch_failed": 29,
+  "final_universe_count": 2777,
+  "new_signal_log_entries": [],
+  "new_closed_positions": [
+    {
+      "ticker": "7135",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-08-24",
+      "entry_date": "2026-08-25",
+      "entry_price": 182.0,
+      "exit_date": "2026-08-31",
+      "exit_price": 180.0,
+      "trade_return": -0.01098901098901095,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 549.4505494505495,
+      "pnl": -1098.9010989010949,
+      "status": "CLOSED"
+    }
+  ],
+  "open_positions": [],
+  "portfolio_equity": 10010607.45684617,
+  "portfolio_realized_pnl": 10607.456846170793,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "148A": {
+      "ticker": "148A",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-31",
+      "expected_date": "2026-09-01"
+    },
+    "2162": {
+      "ticker": "2162",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-27",
+      "expected_date": "2026-09-01"
+    },
+    "3079": {
+      "ticker": "3079",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-28",
+      "expected_date": "2026-09-01"
+    },
+    "6197": {
+      "ticker": "6197",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-05",
+      "expected_date": "2026-09-01"
+    },
+    "7523": {
+      "ticker": "7523",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-31",
+      "expected_date": "2026-09-01"
+    },
+    "8283": {
+      "ticker": "8283",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-10",
+      "expected_date": "2026-09-01"
+    },
+    "9362": {
+      "ticker": "9362",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-08-31",
+      "expected_date": "2026-09-01"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
