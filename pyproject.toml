@@ -11,9 +11,9 @@ dependencies = [
     "pydantic>=2.5",
     "yfinance>=0.2.40",
     "python-dotenv>=1.0",
-    # Legacy .xls parser - JPX's official listed-issues master file
-    # (universe/jpx_master.py) is still published in the old .xls format.
+    # JPX's listed-issues master file may be published as .xls or .xlsx.
     "xlrd>=2.0.1",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -22,10 +22,8 @@ dev = [
     "pytest-mock>=3.14",
     "ruff>=0.5",
     "mypy>=1.10",
-    # xlsx read/write for tests/test_universe_jpx_master.py's synthetic
-    # fixtures - production code only needs xlrd (.xls, JPX's real format).
-    "openpyxl>=3.1",
 ]
+
 # Phase V3-2: ML models (v3/models/) only - never required by V1 or V2,
 # which have no ML dependency of their own. Kept as its OWN optional-
 # dependencies group (not added to `dependencies` above, not merged into
