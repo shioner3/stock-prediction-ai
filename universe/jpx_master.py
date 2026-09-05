@@ -34,7 +34,6 @@ fallback for callers still using the old sample-CSV shape.
 from __future__ import annotations
 
 import logging
-import re
 import urllib.request
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -205,12 +204,14 @@ def _discover_jpx_master_url() -> str:
     if preferred:
         selected = preferred[0]
     else:
-        # The filename is expected to remain data_j.xls even though the
-        # attachment directory can change.
+        # The filename is expected to remain data_j.xls(x) even though
+        # the attachment directory can change - JPX has published this
+        # as both a legacy .xls and (as of 2026-08) a modern .xlsx file,
+        # so both extensions must match here.
         data_j_candidates = [
             url
             for url, _ in candidates
-            if url.rstrip("/").lower().endswith("/data_j.xls")
+            if url.rstrip("/").lower().endswith(("/data_j.xls", "/data_j.xlsx"))
         ]
 
         if data_j_candidates:
