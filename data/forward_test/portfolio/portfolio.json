@@ -49,6 +49,22 @@
       "quantity": 549.4505494505495,
       "pnl": -1098.9010989010949,
       "status": "CLOSED"
+    },
+    {
+      "ticker": "246A",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-08-26",
+      "entry_date": "2026-08-27",
+      "entry_price": 925.0,
+      "exit_date": "2026-09-02",
+      "exit_price": 938.0,
+      "trade_return": 0.014054054054054133,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 108.10810810810811,
+      "pnl": 1405.4054054054131,
+      "status": "CLOSED"
     }
   ]
 }
