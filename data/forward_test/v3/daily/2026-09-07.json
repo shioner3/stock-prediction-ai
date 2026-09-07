@@ -1,7 +1,7 @@
 {
   "run_date": "2026-09-07",
-  "universe_size": 2790,
-  "prediction_entries_built": 44640,
-  "prediction_entries_new": 44640,
-  "realized_return_entries_new": 64657
+  "universe_size": 2807,
+  "prediction_entries_built": 44912,
+  "prediction_entries_new": 640,
+  "realized_return_entries_new": 768
 }
