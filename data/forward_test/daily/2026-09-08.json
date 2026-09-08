@@ -1,0 +1,72 @@
+{
+  "run_date": "2026-09-08",
+  "universe_candidate_count": 3707,
+  "fetch_success": 3589,
+  "fetch_partial": 88,
+  "fetch_failed": 30,
+  "final_universe_count": 2825,
+  "new_signal_log_entries": [
+    {
+      "ticker": "3063",
+      "signal_date": "2026-09-03",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 22.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-09-08T16:34:42.219006"
+    },
+    {
+      "ticker": "3815",
+      "signal_date": "2026-09-02",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 25.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-09-08T16:34:42.790738"
+    }
+  ],
+  "new_closed_positions": [],
+  "open_positions": [],
+  "portfolio_equity": 10012012.862251576,
+  "portfolio_realized_pnl": 12012.862251576207,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "228A": {
+      "ticker": "228A",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-07",
+      "expected_date": "2026-09-08"
+    },
+    "3361": {
+      "ticker": "3361",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-07",
+      "expected_date": "2026-09-08"
+    },
+    "3480": {
+      "ticker": "3480",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-01",
+      "expected_date": "2026-09-08"
+    },
+    "5974": {
+      "ticker": "5974",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-07",
+      "expected_date": "2026-09-08"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
