@@ -1,0 +1,107 @@
+{
+  "run_date": "2026-09-09",
+  "universe_candidate_count": 3707,
+  "fetch_success": 3544,
+  "fetch_partial": 85,
+  "fetch_failed": 78,
+  "final_universe_count": 2800,
+  "new_signal_log_entries": [
+    {
+      "ticker": "4263",
+      "signal_date": "2026-09-08",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 10.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-09-09T16:26:47.430475"
+    },
+    {
+      "ticker": "7135",
+      "signal_date": "2026-09-08",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 14.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-09-09T16:26:48.606523"
+    },
+    {
+      "ticker": "9264",
+      "signal_date": "2026-09-08",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 15.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-09-09T16:26:49.321983"
+    }
+  ],
+  "new_closed_positions": [
+    {
+      "ticker": "3557",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-09-01",
+      "entry_date": "2026-09-02",
+      "entry_price": 518.0,
+      "exit_date": "2026-09-08",
+      "exit_price": 512.0,
+      "trade_return": -0.01158301158301156,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 193.05019305019306,
+      "pnl": -1158.301158301156,
+      "status": "CLOSED"
+    },
+    {
+      "ticker": "7135",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-09-01",
+      "entry_date": "2026-09-02",
+      "entry_price": 181.0,
+      "exit_date": "2026-09-08",
+      "exit_price": 181.0,
+      "trade_return": 0.0,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 552.4861878453039,
+      "pnl": 0.0,
+      "status": "CLOSED"
+    }
+  ],
+  "open_positions": [],
+  "portfolio_equity": 10010854.561093275,
+  "portfolio_realized_pnl": 10854.561093275051,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "3480": {
+      "ticker": "3480",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-01",
+      "expected_date": "2026-09-09"
+    },
+    "5138": {
+      "ticker": "5138",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-08",
+      "expected_date": "2026-09-09"
+    },
+    "5974": {
+      "ticker": "5974",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-08",
+      "expected_date": "2026-09-09"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
