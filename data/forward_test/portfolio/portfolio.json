@@ -97,6 +97,22 @@
       "quantity": 552.4861878453039,
       "pnl": 0.0,
       "status": "CLOSED"
+    },
+    {
+      "ticker": "3815",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-09-02",
+      "entry_date": "2026-09-03",
+      "entry_price": 429.0,
+      "exit_date": "2026-09-09",
+      "exit_price": 428.0,
+      "trade_return": -0.002331002331002363,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 233.1002331002331,
+      "pnl": -233.10023310023632,
+      "status": "CLOSED"
     }
   ]
 }
