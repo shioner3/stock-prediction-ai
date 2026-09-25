@@ -1,0 +1,46 @@
+{
+  "run_date": "2026-09-25",
+  "universe_candidate_count": 3707,
+  "fetch_success": 3588,
+  "fetch_partial": 89,
+  "fetch_failed": 30,
+  "final_universe_count": 2887,
+  "new_signal_log_entries": [],
+  "new_closed_positions": [],
+  "open_positions": [],
+  "portfolio_equity": 10042766.05749542,
+  "portfolio_realized_pnl": 42766.057495421344,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "1948": {
+      "ticker": "1948",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-24",
+      "expected_date": "2026-09-25"
+    },
+    "3480": {
+      "ticker": "3480",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-01",
+      "expected_date": "2026-09-25"
+    },
+    "3953": {
+      "ticker": "3953",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-24",
+      "expected_date": "2026-09-25"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
