@@ -112,3 +112,13 @@
 {"ticker": "8127", "signal_date": "2026-09-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 16.0, "regime": "NEUTRAL", "logged_at": "2026-09-24T17:09:06.388928"}
 {"ticker": "9235", "signal_date": "2026-09-18", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "NEUTRAL", "logged_at": "2026-09-24T17:09:06.692075"}
 {"ticker": "9279", "signal_date": "2026-09-18", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 23.0, "regime": "NEUTRAL", "logged_at": "2026-09-24T17:09:06.717651"}
+{"ticker": "2586", "signal_date": "2026-09-25", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:26.869448"}
+{"ticker": "3070", "signal_date": "2026-09-25", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:27.182937"}
+{"ticker": "3133", "signal_date": "2026-09-28", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:27.239473"}
+{"ticker": "3195", "signal_date": "2026-09-28", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 11.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:27.302703"}
+{"ticker": "3548", "signal_date": "2026-09-25", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 16.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:27.552079"}
+{"ticker": "3548", "signal_date": "2026-09-28", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 17.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:27.552093"}
+{"ticker": "7049", "signal_date": "2026-09-25", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 22.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:30.138871"}
+{"ticker": "7564", "signal_date": "2026-09-25", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:30.509673"}
+{"ticker": "9223", "signal_date": "2026-09-28", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 12.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:31.373930"}
+{"ticker": "9279", "signal_date": "2026-09-25", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 16.0, "regime": "NEUTRAL", "logged_at": "2026-09-28T19:42:31.424921"}
