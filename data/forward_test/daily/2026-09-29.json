@@ -1,0 +1,84 @@
+{
+  "run_date": "2026-09-29",
+  "universe_candidate_count": 3707,
+  "fetch_success": 3620,
+  "fetch_partial": 87,
+  "fetch_failed": 0,
+  "final_universe_count": 2884,
+  "new_signal_log_entries": [
+    {
+      "ticker": "8377",
+      "signal_date": "2026-09-25",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 20.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-09-29T18:11:20.265941"
+    }
+  ],
+  "new_closed_positions": [],
+  "open_positions": [],
+  "portfolio_equity": 10046397.065445406,
+  "portfolio_realized_pnl": 46397.06544540677,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "1948": {
+      "ticker": "1948",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-28",
+      "expected_date": "2026-09-29"
+    },
+    "291A": {
+      "ticker": "291A",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-28",
+      "expected_date": "2026-09-29"
+    },
+    "3480": {
+      "ticker": "3480",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-01",
+      "expected_date": "2026-09-29"
+    },
+    "3856": {
+      "ticker": "3856",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-25",
+      "expected_date": "2026-09-29"
+    },
+    "5202": {
+      "ticker": "5202",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-28",
+      "expected_date": "2026-09-29"
+    },
+    "7067": {
+      "ticker": "7067",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-28",
+      "expected_date": "2026-09-29"
+    },
+    "7523": {
+      "ticker": "7523",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-28",
+      "expected_date": "2026-09-29"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
