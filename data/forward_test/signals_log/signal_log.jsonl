@@ -264,3 +264,11 @@
 {"ticker": "9052", "signal_date": "2026-10-06", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": "NEUTRAL", "logged_at": "2026-10-07T18:58:59.333829"}
 {"ticker": "9644", "signal_date": "2026-10-06", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": "NEUTRAL", "logged_at": "2026-10-07T18:58:59.646189"}
 {"ticker": "9882", "signal_date": "2026-10-06", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": "NEUTRAL", "logged_at": "2026-10-07T18:58:59.763410"}
+{"ticker": "409A", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": null, "logged_at": "2026-10-08T18:56:12.336701"}
+{"ticker": "4265", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": null, "logged_at": "2026-10-08T18:56:12.412919"}
+{"ticker": "7135", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": null, "logged_at": "2026-10-08T18:56:13.662207"}
+{"ticker": "7417", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 30.0, "regime": null, "logged_at": "2026-10-08T18:56:13.792829"}
+{"ticker": "7532", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 30.0, "regime": null, "logged_at": "2026-10-08T18:56:13.835558"}
+{"ticker": "7646", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": null, "logged_at": "2026-10-08T18:56:13.879352"}
+{"ticker": "9052", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": null, "logged_at": "2026-10-08T18:56:14.394875"}
+{"ticker": "9633", "signal_date": "2026-10-08", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 25.0, "regime": null, "logged_at": "2026-10-08T18:56:14.593300"}
