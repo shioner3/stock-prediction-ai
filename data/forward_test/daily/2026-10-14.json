@@ -1,0 +1,88 @@
+{
+  "run_date": "2026-10-14",
+  "universe_candidate_count": 3702,
+  "fetch_success": 3616,
+  "fetch_partial": 86,
+  "fetch_failed": 0,
+  "final_universe_count": 2816,
+  "new_signal_log_entries": [],
+  "new_closed_positions": [],
+  "open_positions": [],
+  "portfolio_equity": 9997291.925309055,
+  "portfolio_realized_pnl": -2708.0746909447753,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "143A": {
+      "ticker": "143A",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    },
+    "244A": {
+      "ticker": "244A",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    },
+    "4316": {
+      "ticker": "4316",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-30",
+      "expected_date": "2026-10-14"
+    },
+    "5951": {
+      "ticker": "5951",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    },
+    "7042": {
+      "ticker": "7042",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    },
+    "7057": {
+      "ticker": "7057",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    },
+    "7709": {
+      "ticker": "7709",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-30",
+      "expected_date": "2026-10-14"
+    },
+    "7815": {
+      "ticker": "7815",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    },
+    "9539": {
+      "ticker": "9539",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-13",
+      "expected_date": "2026-10-14"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
