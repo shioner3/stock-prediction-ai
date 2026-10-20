@@ -453,3 +453,5 @@
 {"ticker": "9256", "signal_date": "2026-10-16", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "NEUTRAL", "logged_at": "2026-10-19T18:48:47.360298"}
 {"ticker": "9264", "signal_date": "2026-10-16", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "NEUTRAL", "logged_at": "2026-10-19T18:48:47.366683"}
 {"ticker": "9436", "signal_date": "2026-10-16", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "NEUTRAL", "logged_at": "2026-10-19T18:48:47.489574"}
+{"ticker": "130A", "signal_date": "2026-10-19", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "NEUTRAL", "logged_at": "2026-10-20T16:51:57.964988"}
+{"ticker": "156A", "signal_date": "2026-10-19", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "NEUTRAL", "logged_at": "2026-10-20T16:51:58.047601"}
