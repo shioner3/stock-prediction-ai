@@ -1,0 +1,391 @@
+{
+  "run_date": "2026-10-28",
+  "universe_candidate_count": 3702,
+  "fetch_success": 3608,
+  "fetch_partial": 94,
+  "fetch_failed": 0,
+  "final_universe_count": 2820,
+  "new_signal_log_entries": [
+    {
+      "ticker": "2379",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 12.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:39.651871"
+    },
+    {
+      "ticker": "2438",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 12.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:39.682312"
+    },
+    {
+      "ticker": "2780",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 11.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:39.852671"
+    },
+    {
+      "ticker": "325A",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 0.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.168459"
+    },
+    {
+      "ticker": "3558",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 14.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.363859"
+    },
+    {
+      "ticker": "3624",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 20.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.402323"
+    },
+    {
+      "ticker": "3671",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 10.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.446284"
+    },
+    {
+      "ticker": "3779",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 15.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.524474"
+    },
+    {
+      "ticker": "4235",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 13.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.840401"
+    },
+    {
+      "ticker": "4346",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 24.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:40.921265"
+    },
+    {
+      "ticker": "469A",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 5.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.227900"
+    },
+    {
+      "ticker": "4893",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 7.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.357392"
+    },
+    {
+      "ticker": "5035",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 11.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.461571"
+    },
+    {
+      "ticker": "5240",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 6.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.531575"
+    },
+    {
+      "ticker": "5304",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 11.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.570823"
+    },
+    {
+      "ticker": "5698",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 11.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.713011"
+    },
+    {
+      "ticker": "5801",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 10.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:41.742690"
+    },
+    {
+      "ticker": "6231",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 15.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.029369"
+    },
+    {
+      "ticker": "6522",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 1.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.271598"
+    },
+    {
+      "ticker": "6594",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 2.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.333454"
+    },
+    {
+      "ticker": "6615",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 16.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.341953"
+    },
+    {
+      "ticker": "6645",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 15.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.373389"
+    },
+    {
+      "ticker": "6963",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 1.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.579111"
+    },
+    {
+      "ticker": "6997",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 7.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:42.600160"
+    },
+    {
+      "ticker": "7719",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 0.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.043676"
+    },
+    {
+      "ticker": "8381",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 16.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.468244"
+    },
+    {
+      "ticker": "8699",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 17.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.562300"
+    },
+    {
+      "ticker": "8708",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 16.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.574379"
+    },
+    {
+      "ticker": "9211",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 10.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.797809"
+    },
+    {
+      "ticker": "9337",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 11.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.877832"
+    },
+    {
+      "ticker": "9376",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 16.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.900187"
+    },
+    {
+      "ticker": "9436",
+      "signal_date": "2026-10-27",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 27.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-10-28T18:26:43.935259"
+    }
+  ],
+  "new_closed_positions": [
+    {
+      "ticker": "274A",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-10-20",
+      "entry_date": "2026-10-21",
+      "entry_price": 2088.0,
+      "exit_date": "2026-10-27",
+      "exit_price": 2062.0,
+      "trade_return": -0.01245210727969348,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 47.89272030651341,
+      "pnl": -1245.210727969348,
+      "status": "CLOSED"
+    },
+    {
+      "ticker": "9326",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-10-20",
+      "entry_date": "2026-10-21",
+      "entry_price": 438.0,
+      "exit_date": "2026-10-27",
+      "exit_price": 419.0,
+      "trade_return": -0.04337899543378998,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 228.31050228310502,
+      "pnl": -4337.899543378998,
+      "status": "CLOSED"
+    },
+    {
+      "ticker": "9376",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-10-20",
+      "entry_date": "2026-10-21",
+      "entry_price": 754.0,
+      "exit_date": "2026-10-27",
+      "exit_price": 729.0,
+      "trade_return": -0.03315649867374004,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 132.6259946949602,
+      "pnl": -3315.6498673740043,
+      "status": "CLOSED"
+    }
+  ],
+  "open_positions": [],
+  "portfolio_equity": 9793896.685029289,
+  "portfolio_realized_pnl": -206103.31497071133,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "3787": {
+      "ticker": "3787",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-09-30",
+      "expected_date": "2026-10-28"
+    },
+    "5025": {
+      "ticker": "5025",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-27",
+      "expected_date": "2026-10-28"
+    },
+    "5571": {
+      "ticker": "5571",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-27",
+      "expected_date": "2026-10-28"
+    },
+    "6662": {
+      "ticker": "6662",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-10-27",
+      "expected_date": "2026-10-28"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
