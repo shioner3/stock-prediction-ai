@@ -1,0 +1,65 @@
+{
+  "run_date": "2026-11-10",
+  "universe_candidate_count": 3693,
+  "fetch_success": 3611,
+  "fetch_partial": 82,
+  "fetch_failed": 0,
+  "final_universe_count": 2882,
+  "new_signal_log_entries": [
+    {
+      "ticker": "6038",
+      "signal_date": "2026-11-09",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 25.0,
+      "regime": "BEAR",
+      "logged_at": "2026-11-10T19:45:25.334247"
+    },
+    {
+      "ticker": "7510",
+      "signal_date": "2026-11-09",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 25.0,
+      "regime": "BEAR",
+      "logged_at": "2026-11-10T19:45:26.341260"
+    }
+  ],
+  "new_closed_positions": [],
+  "open_positions": [],
+  "portfolio_equity": 9265320.087668862,
+  "portfolio_realized_pnl": -734679.9123311375,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "8118": {
+      "ticker": "8118",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-11-09",
+      "expected_date": "2026-11-10"
+    },
+    "8139": {
+      "ticker": "8139",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-11-09",
+      "expected_date": "2026-11-10"
+    },
+    "9539": {
+      "ticker": "9539",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-11-09",
+      "expected_date": "2026-11-10"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}

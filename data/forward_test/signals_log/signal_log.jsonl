@@ -1235,3 +1235,5 @@
 {"ticker": "9880", "signal_date": "2026-11-09", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 5.0, "regime": "BEAR", "logged_at": "2026-11-09T22:28:00.113034"}
 {"ticker": "9904", "signal_date": "2026-11-09", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 20.0, "regime": "BEAR", "logged_at": "2026-11-09T22:28:00.135379"}
 {"ticker": "9934", "signal_date": "2026-11-09", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": "BEAR", "logged_at": "2026-11-09T22:28:00.150708"}
+{"ticker": "6038", "signal_date": "2026-11-09", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 25.0, "regime": "BEAR", "logged_at": "2026-11-10T19:45:25.334247"}
+{"ticker": "7510", "signal_date": "2026-11-09", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 25.0, "regime": "BEAR", "logged_at": "2026-11-10T19:45:26.341260"}
