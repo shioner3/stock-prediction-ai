@@ -1,0 +1,91 @@
+{
+  "run_date": "2026-11-17",
+  "universe_candidate_count": 3693,
+  "fetch_success": 3611,
+  "fetch_partial": 82,
+  "fetch_failed": 0,
+  "final_universe_count": 2821,
+  "new_signal_log_entries": [
+    {
+      "ticker": "6063",
+      "signal_date": "2026-10-26",
+      "direction": "LONG",
+      "signal_name": "long_oversold_rebound",
+      "total_score": 28.0,
+      "regime": "NEUTRAL",
+      "logged_at": "2026-11-17T20:59:00.620638"
+    }
+  ],
+  "new_closed_positions": [
+    {
+      "ticker": "3168",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-11-09",
+      "entry_date": "2026-11-10",
+      "entry_price": 888.0,
+      "exit_date": "2026-11-16",
+      "exit_price": 864.0,
+      "trade_return": -0.027027027027026973,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 112.61261261261261,
+      "pnl": -2702.7027027026975,
+      "status": "CLOSED"
+    },
+    {
+      "ticker": "6063",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-10-26",
+      "entry_date": "2026-10-27",
+      "entry_price": 963.0,
+      "exit_date": "2026-11-02",
+      "exit_price": 960.0,
+      "trade_return": -0.0031152647975077885,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 103.84215991692628,
+      "pnl": -311.52647975077883,
+      "status": "CLOSED"
+    },
+    {
+      "ticker": "6276",
+      "signal_name": "long_oversold_rebound",
+      "direction": "LONG",
+      "signal_date": "2026-11-09",
+      "entry_date": "2026-11-10",
+      "entry_price": 283.0,
+      "exit_date": "2026-11-16",
+      "exit_price": 330.0,
+      "trade_return": 0.16607773851590113,
+      "cost_bps": 30.0,
+      "notional": 100000.0,
+      "quantity": 353.35689045936397,
+      "pnl": 16607.773851590115,
+      "status": "CLOSED"
+    }
+  ],
+  "open_positions": [],
+  "portfolio_equity": 9294567.954936177,
+  "portfolio_realized_pnl": -705432.0450638228,
+  "portfolio_unrealized_pnl": 0,
+  "data_integrity_issues": {
+    "3953": {
+      "ticker": "3953",
+      "issues": [],
+      "is_stale": true,
+      "latest_date": "2026-11-16",
+      "expected_date": "2026-11-17"
+    }
+  },
+  "trading_integrity": {
+    "duplicate_keys": [],
+    "impossible_entries": [],
+    "impossible_exits": [],
+    "non_positive_prices": []
+  },
+  "strategy_hash_unchanged": true,
+  "strategy_hash_mismatches": [],
+  "performance_log_written": true
+}
