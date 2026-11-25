@@ -15054,5 +15054,53 @@
     "quantity": 48.78048780487805,
     "pnl": -3219.512195121954,
     "status": "CLOSED"
+  },
+  {
+    "ticker": "5355",
+    "signal_name": "long_oversold_rebound",
+    "direction": "LONG",
+    "signal_date": "2026-09-15",
+    "entry_date": "2026-09-16",
+    "entry_price": 660.0,
+    "exit_date": "2026-09-25",
+    "exit_price": 663.0,
+    "trade_return": 0.00454545454545463,
+    "cost_bps": 30.0,
+    "notional": 100000.0,
+    "quantity": 151.5151515151515,
+    "pnl": 454.54545454546303,
+    "status": "CLOSED"
+  },
+  {
+    "ticker": "6664",
+    "signal_name": "long_oversold_rebound",
+    "direction": "LONG",
+    "signal_date": "2026-11-09",
+    "entry_date": "2026-11-10",
+    "entry_price": 207.0,
+    "exit_date": "2026-11-16",
+    "exit_price": 223.0,
+    "trade_return": 0.07729468599033806,
+    "cost_bps": 30.0,
+    "notional": 100000.0,
+    "quantity": 483.09178743961354,
+    "pnl": 7729.468599033807,
+    "status": "CLOSED"
+  },
+  {
+    "ticker": "6848",
+    "signal_name": "long_oversold_rebound",
+    "direction": "LONG",
+    "signal_date": "2026-11-12",
+    "entry_date": "2026-11-13",
+    "entry_price": 794.0,
+    "exit_date": "2026-11-19",
+    "exit_price": 788.0,
+    "trade_return": -0.007556675062972307,
+    "cost_bps": 30.0,
+    "notional": 100000.0,
+    "quantity": 125.94458438287154,
+    "pnl": -755.6675062972307,
+    "status": "CLOSED"
   }
 ]

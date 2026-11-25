@@ -1781,3 +1781,11 @@
 {"ticker": "9876", "signal_date": "2026-11-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 21.0, "regime": "BEAR", "logged_at": "2026-11-24T22:22:27.094182"}
 {"ticker": "9885", "signal_date": "2026-11-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "BEAR", "logged_at": "2026-11-24T22:22:27.108287"}
 {"ticker": "9904", "signal_date": "2026-11-20", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 22.0, "regime": "BEAR", "logged_at": "2026-11-24T22:22:27.121418"}
+{"ticker": "3913", "signal_date": "2026-11-17", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 10.0, "regime": "BEAR", "logged_at": "2026-11-25T21:39:29.865328"}
+{"ticker": "3913", "signal_date": "2026-11-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 5.0, "regime": "BEAR", "logged_at": "2026-11-25T21:39:29.865344"}
+{"ticker": "5355", "signal_date": "2026-09-15", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 18.0, "regime": "NEUTRAL", "logged_at": "2026-11-25T21:39:31.012101"}
+{"ticker": "6848", "signal_date": "2026-11-12", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 19.0, "regime": "NEUTRAL", "logged_at": "2026-11-25T21:39:32.170402"}
+{"ticker": "6848", "signal_date": "2026-11-13", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 17.0, "regime": "BEAR", "logged_at": "2026-11-25T21:39:32.170415"}
+{"ticker": "6848", "signal_date": "2026-11-18", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 17.0, "regime": "NEUTRAL", "logged_at": "2026-11-25T21:39:32.170420"}
+{"ticker": "6848", "signal_date": "2026-11-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 32.0, "regime": "BEAR", "logged_at": "2026-11-25T21:39:32.170423"}
+{"ticker": "9514", "signal_date": "2026-11-24", "direction": "LONG", "signal_name": "long_oversold_rebound", "total_score": 15.0, "regime": "BEAR", "logged_at": "2026-11-25T21:39:33.804171"}
